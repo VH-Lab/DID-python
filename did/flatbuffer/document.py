@@ -3,27 +3,10 @@ import ndi.types as T
 from .schema import Document as build_document
 import json
 from .flatbuffer_object import Flatbuffer_Object
-from .context import Context
 
-
-class BinaryWrapper:
-    def __init__(self, binary_collection: T.BinaryCollection = None, id_: str =''):
-        self.id = id_
-        self.binary_collection = binary_collection
-    
-    def connect(self, binary_collection: T.BinaryCollection = None):
-        self.binary_collection = binary_collection
-
-    def open_write_stream(self):
-        return self.binary_collection.open_write_stream(self.id)
-
-    def open_read_stream(self):
-        return self.binary_collection.open_read_stream(self.id)
-
-
-class Document(Flatbuffer_Object):
+class DIDDocumentFlatbuffer(Flatbuffer_Object):
     """
-    A flatbuffer interface for documents.
+    A flatbuffer interface for did_documents. Used in FileSystem Database.
 
     .. currentmodule:: ndi.ndi_object
 
