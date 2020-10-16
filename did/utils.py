@@ -1,6 +1,6 @@
 """Utilities"""
 from __future__ import annotations
-import ndi.types as T
+import did.types as T
 import re
 
 # Captures "words" in pascal case
@@ -41,18 +41,18 @@ def flatten(nested_list: T.List[T.List]) -> T.List:
 
 
 def generate_tuple_analog(schema_enum: T.SchemaEnumClass) -> tuple:
-    """Produces a tuple from a flatbuffer schema enum class. The generated tuple is used in an :term:`NDI class`\ 's _reconstruct method.
+    """Produces a tuple from a flatbuffer schema enum class. The generated tuple is used in an :term:`DID class`\ 's _reconstruct method.
     ::
         class SchemaType(object):
             abc = 0
             def = 1
             ghi = 2
 
-        NDI_Type = generate_tuple_analog(SchemaType)
-        # NDI_Type = ('abc', 'def', 'ghi')
+        DID_Type = generate_tuple_analog(SchemaType)
+        # DID_Type = ('abc', 'def', 'ghi')
 
         t = SchemaType.def
-        NDI_enum[t]
+        DID_enum[t]
         # returns 'def'
 
     :param schema_enum: [description]

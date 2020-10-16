@@ -1,20 +1,20 @@
 from __future__ import annotations
-from .ndi_database import NDI_Database
+from .did_database import DID_Database
 from pathlib import Path
-from ..document import Document
+from ..document import DIDDocument
 from ..query import CompositeQuery, AndQuery, OrQuery
 from .utils import with_update_warning, with_delete_warning
-import ndi.types as T
+import did.types as T
 import re
 import numpy as np
 
 
-class FileSystem(NDI_Database):
+class FileSystem(DID_Database):
     """File system database API.
 
-    .. currentmodule:: ndi.database.ndi_database
+    .. currentmodule:: ndi.database.did_database
 
-    Inherits from the :class:`NDI_Database` abstract class.
+    Inherits from the :class:`DID_Database` abstract class.
     """
 
     def __init__(self, exp_dir, db_name='.ndi'):

@@ -1,4 +1,4 @@
-from .document import Document
+from .document import DIDDocument
 from .query import Query
 from .core import DID
 

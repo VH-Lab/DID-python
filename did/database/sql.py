@@ -1,5 +1,5 @@
 from __future__ import annotations
-import ndi.types as T
+import did.types as T
 from enum import Enum
 from abc import ABCMeta
 from sqlalchemy import create_engine
@@ -8,9 +8,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import Table, Column, String, LargeBinary
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import and_, or_
-from .ndi_database import NDI_Database
+from .did_database import DID_Database
 from functools import wraps
-from ..document import Document
+from ..document import DIDDocument
 from ..utils import class_to_collection_name, flatten
 from ..decorators import handle_iter, handle_list
 from ..query import Query, AndQuery, OrQuery, CompositeQuery
@@ -26,7 +26,7 @@ FLATBUFFER_KEY = 'flatbuffer'
 
 class Datatype(Enum):
     """This enum describes the 3 types of structure a document may exist as in the :class:`SQL` database class."""
-    NDI = 2
+    DID = 2
     SQL_ALCHEMY = 1
     FLATBUFFER = 0
 
@@ -34,16 +34,16 @@ class Datatype(Enum):
 #  SQL Database  #
 # ============== #
 
-class SQL(NDI_Database):
+class SQL(DID_Database):
     """Interface for SQL Databases.
 
-    .. currentmodule:: ndi.database.ndi_database
+    .. currentmodule:: ndi.database.did_database
 
-    Inherits from the :class:`NDI_Database` abstract class.
+    Inherits from the :class:`DID_Database` abstract class.
 
-    This class aims to manage high-level database operations using the sqlalchemy (SQLA) library and serve as an interface between the NDI and SQLA systems. It maintains the SQLA engine and Session generator, directs :term:`CRUD` actions to their target :class:`Collection`\ s in the database, and is responsible for setting up, configuring, and destroying collections.
+    This class aims to manage high-level database operations using the sqlalchemy (SQLA) library and serve as an interface between the DID and SQLA systems. It maintains the SQLA engine and Session generator, directs :term:`CRUD` actions to their target :class:`Collection`\ s in the database, and is responsible for setting up, configuring, and destroying collections.
 
-    It is closely tied to its :class:`Collection` class, which handles low-level SQLA operations like CRUD implementations. Decorators on the Collection methods are where most of the translation between NDI and SQLA objects occurs (:term:`NDI object` -> :term:`SQLA document`, :term:`NDI query` -> :term:`SQLA query`, etc.). Each :term:`NDI class` translates to a Collection instance.
+    It is closely tied to its :class:`Collection` class, which handles low-level SQLA operations like CRUD implementations. Decorators on the Collection methods are where most of the translation between DID and SQLA objects occurs (:term:`DID object` -> :term:`SQLA document`, :term:`DID query` -> :term:`SQLA query`, etc.). Each :term:`DID class` translates to a Collection instance.
     """
 
     _collections: T.SqlDatabaseCollections = {}
@@ -115,7 +115,7 @@ class SQL(NDI_Database):
         .. note::
            This bypasses the :class:`Collection` layer and is only useful for very specific operations involving the sqlalchemy layer.
 
-        :return: NDI class keys and their :term:`SQLA table` values.
+        :return: DID class keys and their :term:`SQLA table` values.
         :rtype: dict
         """
         return {table_name: collection.table for table_name, collection in self._collections.items()}
@@ -164,7 +164,7 @@ class SQL(NDI_Database):
     def find(self, ndi_query: T.Query = None) -> T.List[T.Document]:
         items = self._collections[DOCUMENTS_TABLENAME].find(
             query=ndi_query,
-            result_format=Datatype.NDI
+            result_format=Datatype.DID
         )
         return [item.with_ctx_database(self) for item in items]
 
@@ -180,15 +180,15 @@ class SQL(NDI_Database):
     def find_by_id(self, id_: T.NdiId) -> T.Document:
         item = self._collections[DOCUMENTS_TABLENAME].find_by_id(
             id_,
-            result_format=Datatype.NDI    
+            result_format=Datatype.DID    
         )
         return item and item.with_ctx_database(self)
 
     @with_update_warning
     def update_by_id(self, id_: T.NdiId, payload: T.SqlCollectionDocument = {}, force: bool = False) -> None:
-        """Updates the :term:`NDI object` with the given id from the specified :term:`collection` with the fields/values in the :term:`payload`. Fields that aren't included in the payload are not touched.
+        """Updates the :term:`DID object` with the given id from the specified :term:`collection` with the fields/values in the :term:`payload`. Fields that aren't included in the payload are not touched.
 
-        .. currentmodule:: ndi.ndi_database
+        .. currentmodule:: ndi.did_database
 
         :param id_: The identifier of the :term:`document` to update.
         :type id_: str
@@ -200,12 +200,12 @@ class SQL(NDI_Database):
 
     @with_delete_warning
     def delete_by_id(self, id_: T.NdiId, force:bool = False) -> None:
-        """Deletes the :term:`NDI object` with the given id from the specified :term:`collection`.
+        """Deletes the :term:`DID object` with the given id from the specified :term:`collection`.
 
-        .. currentmodule:: ndi.ndi_database
+        .. currentmodule:: ndi.did_database
 
-        :param ndi_class: The :term:`NDI class` that defines the :term:`collection` to query.
-        :type ndi_class: :class:`NDI_Database`
+        :param ndi_class: The :term:`DID class` that defines the :term:`collection` to query.
+        :type ndi_class: :class:`DID_Database`
         :param id_: The identifier of the :term:`document` to delete.
         :type id_: str
         """
@@ -223,9 +223,9 @@ class Collection:
 
     This class and its associated decorators attempt to encapsulate as much of the sqlalchemy logic as possible (not including database level systems like the Session and engine objects).
 
-    Decorators on the Collection methods are where most of the translation between NDI and SQLA objects occurs (:term:`NDI object` -> :term:`SQLA document`, :term:`NDI query` -> :term:`SQLA query`, etc.). 
+    Decorators on the Collection methods are where most of the translation between DID and SQLA objects occurs (:term:`DID object` -> :term:`SQLA document`, :term:`DID query` -> :term:`SQLA query`, etc.). 
 
-    Each Collection instance must have a corresponding :term:`NDI class`.
+    Each Collection instance must have a corresponding :term:`DID class`.
     """
 
     def __init__(
@@ -272,10 +272,10 @@ class Collection:
         return self.table(**fields)
 
     def create_document_from_ndi_object(self, ndi_object: T.NdiObject) -> T.SqlaDocument:
-        """Converts an :term:`NDI object` to a :term:`SQLA document`.
+        """Converts an :term:`DID object` to a :term:`SQLA document`.
 
         :param ndi_object:
-        :type ndi_object: :term:`NDI class`
+        :type ndi_object: :term:`DID class`
         :return: A :term:`SQLA document`.
         :rtype: :class:`sqlalchemy.ext.declarative.api.DeclarativeMeta`
         """
@@ -321,7 +321,7 @@ class Collection:
 
     @handle_list
     def ndi_objects_from_documents(self, document: T.SqlaDocument) -> T.NdiObject:
-        """Creates :term:`NDI object`\ s from documents and rehydrates relationships defined in secondary (lookup) tables.
+        """Creates :term:`DID object`\ s from documents and rehydrates relationships defined in secondary (lookup) tables.
         
         :param document: 
         :type document: T.SqlaDocument
@@ -331,7 +331,7 @@ class Collection:
         flatbuffer = self.extract_flatbuffers(document)
         if not self.ndi_class or isinstance(self.ndi_class, str):
             raise TypeError(
-                'This method may only be used on a collection with an associated NDI class. Lookup tables do not have NDI object equivalents.')
+                'This method may only be used on a collection with an associated DID class. Lookup tables do not have DID object equivalents.')
         if isinstance(flatbuffer, bytearray):
             pass
         elif isinstance(flatbuffer, bytes):
@@ -341,7 +341,7 @@ class Collection:
         return self.ndi_class.from_flatbuffer(flatbuffer)
 
     def __formatted_results(self, documents: T.SqlaDocument, result_format: T.DatatypeEnum) -> T.OneOrManySqlDatabaseDatatype:
-        """Formats the given documents as either :term:`NDI object`\ s, :term:`SQLA document`\ s, or :term:`flatbuffer`\ s.
+        """Formats the given documents as either :term:`DID object`\ s, :term:`SQLA document`\ s, or :term:`flatbuffer`\ s.
         
         .. currentmodule:: ndi.database.sql
 
@@ -377,10 +377,10 @@ class Collection:
     }
 
     def generate_sqla_filter(self, query: T.Query) -> T.Callable[[T.Query], T.SqlaFilter]:
-        """Convert an :term:`NDI query` to a :term:`SQLA query`.
+        """Convert an :term:`DID query` to a :term:`SQLA query`.
 
         :param query:
-        :type query: :term:`NDI query`
+        :type query: :term:`DID query`
         :return:
         :rtype: :term:`SQLA query`
         """
@@ -395,7 +395,7 @@ class Collection:
         return recurse(query)
 
     def _functionalize_query(self, query: T.SqlaFilter) -> T.Callable[[T.SqlaQuery], T.SqlaQuery]:
-        """This function allows us to conditionally set a filter operation on a :term:`SQLA session query`. This allows us to interpret the absence of an :term:`NDI query` or :term:`SQLA query` as being equivalent to ``SELECT *`` within the queried table.
+        """This function allows us to conditionally set a filter operation on a :term:`SQLA session query`. This allows us to interpret the absence of an :term:`DID query` or :term:`SQLA query` as being equivalent to ``SELECT *`` within the queried table.
 
         :param query:
         :type query: :term:`SQLA query` | None
@@ -409,13 +409,13 @@ class Collection:
     @recast_ndi_object_to_document
     @with_session
     def add(self, session: T.Session, item: T.SqlaDocument) -> None:
-        """Adds :term:`NDI object`\ s to the :class:`Collection` as :term:`SQLA document`\ s.
+        """Adds :term:`DID object`\ s to the :class:`Collection` as :term:`SQLA document`\ s.
 
         .. currentmodule: ndi.database
 
         :param session: See :term:`SQLA session`. Argument passed by :func:`utils.with_session`.
         :type session: :class:`sqlalchemy.orm.session.Session`
-        :param item: Argument is passed in as :term:`NDI object`\ s and is converted to :term:`SQLA document`\ s by :func:`utils.recast_ndi_object_to_document`.
+        :param item: Argument is passed in as :term:`DID object`\ s and is converted to :term:`SQLA document`\ s by :func:`utils.recast_ndi_object_to_document`.
         :type item: List<:term:`SQLA document`>
         """
         session.add(item)
@@ -423,13 +423,13 @@ class Collection:
     @recast_ndi_object_to_document
     @with_session
     def update(self, session: T.Session, item: T.SqlaDocument) -> None:
-        """Updates (replaces) the :term:`document`\ s of the given :term:`NDI object`\ s in the :class:`Collection` based on the object's id.
+        """Updates (replaces) the :term:`document`\ s of the given :term:`DID object`\ s in the :class:`Collection` based on the object's id.
 
         .. currentmodule: ndi.database
 
         :param session: See :term:`SQLA session`. Argument passed by :func:`utils.with_session`.
         :type session: :class:`sqlalchemy.orm.session.Session`
-        :param item: Argument is passed in as :term:`NDI object`\ s and is converted to :term:`SQLA document`\ s by :func:`utils.recast_ndi_object_to_document`.
+        :param item: Argument is passed in as :term:`DID object`\ s and is converted to :term:`SQLA document`\ s by :func:`utils.recast_ndi_object_to_document`.
         :type item: List<:term:`SQLA document`>
         """
         q = session.query(self.table)
@@ -440,13 +440,13 @@ class Collection:
     @recast_ndi_object_to_document
     @with_session
     def upsert(self, session: T.Session, item: T.SqlaDocument) -> None:
-        """Updates (replaces) the :term:`document`\ s of the given :term:`NDI object`\ s in the :class:`Collection`. Objects that do not already exist are added.
+        """Updates (replaces) the :term:`document`\ s of the given :term:`DID object`\ s in the :class:`Collection`. Objects that do not already exist are added.
 
         .. currentmodule: ndi.database
 
         :param session: See :term:`SQLA session`. Argument passed by :func:`utils.with_session`.
         :type session: :class:`sqlalchemy.orm.session.Session`
-        :param item: Argument is passed in as :term:`NDI object`\ s and is converted to :term:`SQLA document`\ s by :func:`utils.recast_ndi_object_to_document`.
+        :param item: Argument is passed in as :term:`DID object`\ s and is converted to :term:`SQLA document`\ s by :func:`utils.recast_ndi_object_to_document`.
         :type item: List<:term:`SQLA document`>
         """
         q = session.query(self.table)
@@ -460,13 +460,13 @@ class Collection:
     @recast_ndi_object_to_document
     @with_session
     def delete(self, session: T.Session, item: T.SqlaDocument) -> None:
-        """Removes the :term:`document`\ s of the given :term:`NDI object`\ s from the :class:`Collection`.
+        """Removes the :term:`document`\ s of the given :term:`DID object`\ s from the :class:`Collection`.
 
         .. currentmodule: ndi.database
 
         :param session: See :term:`SQLA session`. Argument passed by :func:`utils.with_session`.
         :type session: :class:`sqlalchemy.orm.session.Session`
-        :param item: Argument is passed in as :term:`NDI object`\ s and is converted to :term:`SQLA document`\ s by :func:`utils.recast_ndi_object_to_document`.
+        :param item: Argument is passed in as :term:`DID object`\ s and is converted to :term:`SQLA document`\ s by :func:`utils.recast_ndi_object_to_document`.
         :type item: List<:term:`SQLA document`>
         """
         doc = session.query(self.table).get(item.id)
@@ -474,7 +474,7 @@ class Collection:
 
     @with_session
     @translate_query
-    def find(self, session: T.Session, query: T.SqlaFilter = None, result_format: T.DatatypeEnum = Datatype.NDI) -> T.List[T.SqlDatabaseDatatype]:
+    def find(self, session: T.Session, query: T.SqlaFilter = None, result_format: T.DatatypeEnum = Datatype.DID) -> T.List[T.SqlDatabaseDatatype]:
         """.. currentmodule:: ndi.database.sql
 
         Extracts the :term:`document`\ s in the :class:`Collection` matching the given :term:`SQLA query`.
@@ -511,12 +511,12 @@ class Collection:
             session.delete(doc)
 
     @with_session
-    def find_by_id(self, session: T.Session, id_: T.NdiId, result_format: T.DatatypeEnum = Datatype.NDI) -> T.SqlDatabaseDatatype:
+    def find_by_id(self, session: T.Session, id_: T.NdiId, result_format: T.DatatypeEnum = Datatype.DID) -> T.SqlDatabaseDatatype:
         """Extracts the :term:`document` in the :class:`Collection` matching the given id.
 
         :param session: See :term:`SQLA session`. Argument passed by :func:`utils.with_session`.
         :type session: :class:`sqlalchemy.orm.session.Session`
-        :param id_: See :term:`NDI ID`.
+        :param id_: See :term:`DID ID`.
         :type id_: str
         :param as_flatbuffers: If False, find will return the results as :term:`SQLA document`\ s as ``dict``s; otherwise, will return :term:`flatbuffers`\ s as ``bytearray``s. Defaults to True.
         :type as_flatbuffers: bool, optional
@@ -537,7 +537,7 @@ class Collection:
 
         :param session: See :term:`SQLA session`. Argument passed by :func:`utils.with_session`.
         :type session: :class:`sqlalchemy.orm.session.Session`
-        :param id_: See :term:`NDI ID`.
+        :param id_: See :term:`DID ID`.
         :type id_: str
         :param payload: See :term:`payload`.
         :type payload: dict
@@ -552,7 +552,7 @@ class Collection:
 
         :param session: See :term:`SQLA session`. Argument passed by :func:`utils.with_session`.
         :type session: :class:`sqlalchemy.orm.session.Session`
-        :param id_: See :term:`NDI ID`.
+        :param id_: See :term:`DID ID`.
         :type id_: str
         """
         document = session.query(self.table).get(id_)
@@ -561,7 +561,7 @@ class Collection:
     @with_session
     @translate_query
     def update_many(self, session: T.Session, query: T.SqlaFilter = {}, payload: T.SqlCollectionDocument = {}) -> None:
-        """Updates (replaces) the :term:`document`\ s of the given :term:`NDI object`\ s in the :class:`Collection` matching the given :term:`SQLA query`.
+        """Updates (replaces) the :term:`document`\ s of the given :term:`DID object`\ s in the :class:`Collection` matching the given :term:`SQLA query`.
 
         :param session: See :term:`SQLA session`. Argument passed by :func:`utils.with_session`.
         :type session: :class:`sqlalchemy.orm.session.Session`

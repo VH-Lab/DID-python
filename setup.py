@@ -8,7 +8,7 @@ setuptools.setup(
     version="0.0.1",
     author="Squishymedia",
     author_email="info@squishymedia.com",
-    description="NDI Python",
+    description="DID Python",
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=setuptools.find_packages(),

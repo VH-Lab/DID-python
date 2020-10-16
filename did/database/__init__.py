@@ -1,3 +1,3 @@
-from .ndi_database import NDI_Database
+from .did_database import DID_Database
 from .sql import SQL
 from .file_system import FileSystem

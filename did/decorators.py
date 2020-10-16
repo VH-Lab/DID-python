@@ -1,16 +1,16 @@
 from __future__ import annotations
 from functools import wraps
-import ndi.types as T
+import did.types as T
 
 def handle_iter(func: T.Callable[[T.Self, T.Foo], None]) -> T.Callable[[T.Self, T.OneOrManyFoo], None]:
     """
-    Decorator: If passed a list of :term:`NDI object`\ s, it will call func with each one. Otherwise, it will call func(arg) once.
+    Decorator: If passed a list of :term:`DID object`\ s, it will call func with each one. Otherwise, it will call func(arg) once.
 
     :param func: The wrapped function.
     :type func: function
 
     :param arg: The first argument passed to the wrapped function.
-    :type arg: List<:term:`NDI object`> | :term:`NDI object`
+    :type arg: List<:term:`DID object`> | :term:`DID object`
 
     :rtype: None
     """
@@ -27,7 +27,7 @@ def handle_iter(func: T.Callable[[T.Self, T.Foo], None]) -> T.Callable[[T.Self, 
 def handle_list(
         func: T.Callable[ [ T.Self, T.Foo ], T.Bar]
     ) -> T.Callable[ [ T.Self, T.OneOrManyFoo], T.OneOrManyBar ]:
-    """Decorator: If passed a list of :term:`NDI object`\ s, it will call func with each one. Otherwise, it will call func(arg) once.
+    """Decorator: If passed a list of :term:`DID object`\ s, it will call func with each one. Otherwise, it will call func(arg) once.
     The return value of the decorated function corresponds the the argument(s) passed to it:
 
     ::

@@ -24,7 +24,7 @@ class Query:
             self.field = field
         else:
             raise TypeError(
-                f'The field passed in NDI_Query must be a non-empty string')
+                f'The field passed in DID_Query must be a non-empty string')
         self.__resolved = False
 
     @property

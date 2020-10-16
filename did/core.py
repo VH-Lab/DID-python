@@ -1,7 +1,7 @@
 from __future__ import annotations
-import ndi.types as T
+import did.types as T
 from did.database.file_system import BinaryCollection
-from did.did_document import DIDDocument
+from did.document import DIDDocument
 
 default_options = {
     'auto_save': False,

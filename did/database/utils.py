@@ -3,7 +3,7 @@ Database Utils Module
 *********************
 """
 from __future__ import annotations
-import ndi.types as T
+import did.types as T
 from functools import wraps
 from contextlib import contextmanager
 from ..query import Query
@@ -27,7 +27,7 @@ def listify(func: T.Callable) -> T.Callable:
     return decorator
 
 def with_update_warning(func):
-    """Decorator: meant to work with :class:`SQL` methods. Ensures that every item in the first argument is a valid :term:`NDI object`.
+    """Decorator: meant to work with :class:`SQL` methods. Ensures that every item in the first argument is a valid :term:`DID object`.
     
     :param func:
     :type func: function
@@ -42,7 +42,7 @@ def with_update_warning(func):
     return decorator
 
 def with_delete_warning(func):
-    """Decorator: meant to work with :class:`SQL` methods. Ensures that every item in the first argument is a valid :term:`NDI object`.
+    """Decorator: meant to work with :class:`SQL` methods. Ensures that every item in the first argument is a valid :term:`DID object`.
     
     :param func:
     :type func: function
@@ -57,7 +57,7 @@ def with_delete_warning(func):
     return decorator
 
 def update_flatbuffer(ndi_class, flatbuffer, payload):
-    """Decorator: meant to work with :class:`Collection` methods. Converts a list of :term:`NDI object`\ s into their :term:`SQLA document` equivalents.
+    """Decorator: meant to work with :class:`Collection` methods. Converts a list of :term:`DID object`\ s into their :term:`SQLA document` equivalents.
     
     :param func:
     :type func: function
@@ -74,7 +74,7 @@ def print_everything_in(db):
             # is a lookup table
             print(f'Lookup Table: {collection}')
         else:
-            # is an NDI class collection
+            # is an DID class collection
             results = db.find(collection)
             name = collection if isinstance(collection, str) else collection.__name__
             print(name + 's')
@@ -105,7 +105,7 @@ def reduce_ndi_objects_to_ids(ndi_objects):
         return ndi_objects.id
 
 def recast_ndi_object_to_document(func):
-    """Decorator: meant to work with :class:`Collection` methods. Converts a list of :term:`NDI object`\ s into their :term:`SQLA document` equivalents.
+    """Decorator: meant to work with :class:`Collection` methods. Converts a list of :term:`DID object`\ s into their :term:`SQLA document` equivalents.
     
     :param func:
     :type func: function
@@ -118,7 +118,7 @@ def recast_ndi_object_to_document(func):
     return decorator
 
 def translate_query(func):
-    """Decorator: meant to work with :class:`Collection` methods. Converts an :term:`NDI query` into an equivalent :term:`SQLA query`.
+    """Decorator: meant to work with :class:`Collection` methods. Converts an :term:`DID query` into an equivalent :term:`SQLA query`.
     
     :param func:
     :type func: function

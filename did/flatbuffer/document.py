@@ -1,5 +1,5 @@
 from __future__ import annotations
-import ndi.types as T
+import did.types as T
 from .schema import Document as build_document
 import json
 from .flatbuffer_object import Flatbuffer_Object
@@ -10,7 +10,7 @@ class DIDDocumentFlatbuffer(Flatbuffer_Object):
 
     .. currentmodule:: ndi.ndi_object
 
-    Inherits from the :class:`NDI_Object` abstract class.
+    Inherits from the :class:`DID_Object` abstract class.
     """
 
     def __init__(self, data: dict = {}, name: str = '', type_: str = '', experiment_id: str = '', id_=None):
@@ -78,7 +78,7 @@ class DIDDocumentFlatbuffer(Flatbuffer_Object):
     def _build(self, builder):
         """.. currentmodule:: ndi.ndi_object
 
-        Called in NDI_Object.serialize() as part of flatbuffer bytearray generation from Experiment instance.
+        Called in DID_Object.serialize() as part of flatbuffer bytearray generation from Experiment instance.
 
         :param builder: Builder class in flatbuffers module.
         :type builder: flatbuffers.Builder
