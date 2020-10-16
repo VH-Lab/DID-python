@@ -17,9 +17,17 @@ class DID_Database(ABC):
     def __init__(self):
         pass
 
+    def commit(self):
+        """ This should close whatever transaction is open and commit the new experiment version to the database """
+        pass
+
+    def unstage_changes(self):
+        """ This should close whatever transaction is open and commit the new experiment version to the database """
+        pass
+
     @abstractmethod
     def add(self, did_document):
-        """It should be able to add one or many instances of an :term:`DIDDocument object` to the appropriate :term:`collection`.
+        """It should be able to add a :term:`DIDDocument` to the database
         
         :param did_document:
         :type did_document: 
@@ -28,7 +36,7 @@ class DID_Database(ABC):
 
     @abstractmethod
     def update(self, did_document, force=False):
-        """It should be able to update one or many instances of an :term:`DIDDocument object`. Updated entries are found by their :term:`NDI class` and id.
+        """It should be able to update a :term:`DIDDocument object`. Updated entries are found by their id.
         
         :param did_document:
         :type did_document: 
