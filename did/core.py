@@ -14,11 +14,10 @@ class DID:
         self.db = database
         self.bin = BinaryCollection(binary_directory, name='data')
         self.auto_save = options.get('auto_save') or False
+        self.documents_in_transaction = []
 
     def find(self, query, version='', save=False):
-        # do stuff
-        if self.auto_save or save:
-            self.save()
+        pass
 
     def add(self, document, save=False):
         # do stuff
@@ -41,9 +40,7 @@ class DID:
             self.save()
 
     def find_by_id(self, did_id, version='', save=False):
-        # do stuff
-        if self.auto_save or save:
-            self.save()
+        pass
     
     def update_by_id(self, did_id, document_updates, version='', save=False):
         # do stuff
@@ -69,7 +66,7 @@ class DID:
         self.db.commit()
         # hash new version
         # update version history in database
-        # update new version in affected documents? is this doable?
+        # update new version in affected documents (self.documents_in_transaction)
         # self.db.commit() again to save version changes
 
     def revert(self):
