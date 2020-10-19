@@ -1,0 +1,4 @@
+#! /bin/sh
+# Opens docs in browser
+
+open docs/build/html/index.html

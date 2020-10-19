@@ -1,0 +1,26 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+autopep8 = "*"
+pytest = "*"
+sphinx = "*"
+sphinx-rtd-theme = "*"
+mypy = "*"
+
+[packages]
+numpy = "*"
+scipy = "*"
+flatbuffers = "*"
+jupyter = "*"
+matplotlib = "*"
+sqlalchemy = "*"
+psycopg2-binary = "*"
+pytest = "*"
+neo = "*"
+alchemy-mock = "*"
+
+[requires]
+python_version = "3.8"

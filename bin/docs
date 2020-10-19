@@ -1,0 +1,12 @@
+#! /bin/bash
+# Single command for running and viewing docs in browser.
+
+parent_path=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P ) &&
+cd "$parent_path/.." || exit;
+
+# run build scripts for Sphinx docs
+bin/mkdocs;
+
+# open in browser
+printf "\nOpening docs in default browser.\n\n"
+bin/viewdocs;

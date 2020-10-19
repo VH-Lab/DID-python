@@ -1,0 +1,18 @@
+#! /bin/sh
+# Build Sphinx docs and site.
+
+cd ./docs &&
+
+# Create .rst files.
+#   f: overwrite existing generated files
+#   E: no headings (we make our own)
+#   o: output path
+sphinx-apidoc -fEo ./source ../ndi &&
+
+# Reset html files to prevent old errors.
+make clean &&
+
+# Build site from source.
+make html;
+
+cd ..;
