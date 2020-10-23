@@ -12,7 +12,12 @@ def randarray(): return np.random.random(200000)
 
 @pytest.fixture
 def test_fixture():
-    did_doc = DIDDocument(data={'binary_files': ['from_fixture']})
+    did_doc = DIDDocument(data={
+        'base': {
+            'id': 1234
+        },
+        'binary_files': ['from_fixture']
+        })
     # Create collection
     collection = BinaryCollection('./test_dir')
     test_array = randarray()
