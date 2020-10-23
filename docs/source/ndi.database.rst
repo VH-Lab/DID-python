@@ -5,7 +5,7 @@ Submodules
 ----------
 
 
-.. automodule:: ndi.database.ndi_database
+.. automodule:: ndi.database.did_database
    :members:
    :undoc-members:
    :show-inheritance:

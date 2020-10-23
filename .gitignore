@@ -71,3 +71,6 @@ example/test_db/document_binary/*
 # symlinked schema
 ndi/schema
 */.ndi
+
+# mypy cache
+3.8/

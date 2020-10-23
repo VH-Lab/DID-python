@@ -4,7 +4,7 @@
 .. _chap_modref:
 
 *************************
-The NDI Package Reference
+The DID Package Reference
 *************************
 
 A quick overview of the ndi package's most important subpackages and modules. For more details on an item you can click its :code:`name`.
@@ -33,7 +33,7 @@ Databases and Tools
    sql.SQL
    query.Query
 
-NDI Objects
+DID Objects
 ------------------
 
 .. currentmodule:: ndi
