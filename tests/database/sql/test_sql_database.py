@@ -1,6 +1,7 @@
 from did.database.sql import SQL
 from did.document import DIDDocument
 import pytest
+import json
 
 mock_document_data = [
     {
@@ -114,6 +115,16 @@ class TestLookupCollection:
         for row in expected:
             assert row in results
 
+    def test_add(self, db, mocdocs, doc_count):
+        assert doc_count(db) is 0
+        
+        db.add(mocdocs[0], save=True)
+        
+        result = next(db.execute('SELECT document_id FROM document;'))[0]
+        assert result is mocdocs[0].id
+        result = next(db.execute('SELECT data FROM document;'))[0]
+        assert result == mocdocs[0].serialize()
+
     def test_save(self, db, mocdocs, doc_count):
         assert db.current_transaction is None
         assert doc_count(db) is 0
@@ -145,4 +156,3 @@ class TestLookupCollection:
         db.add(mocdocs[0], save=True)
         assert db.current_transaction is None
         assert doc_count(db) is 1
-
