@@ -56,42 +56,6 @@ def with_delete_warning(func):
             raise RuntimeWarning('Manual deletes are strongly discouraged to maintain data integrity across depenencies. To delete anyway, use the force argument: db.delete(document, force=True).')
     return decorator
 
-def update_flatbuffer(ndi_class, flatbuffer, payload):
-    """Decorator: meant to work with :class:`Collection` methods. Converts a list of :term:`DID object`\ s into their :term:`SQLA document` equivalents.
-    
-    :param func:
-    :type func: function
-    :return: Returns return value of decorated function.
-    """
-    ndi_object = ndi_class.from_flatbuffer(flatbuffer)
-    for key, value in payload.items():
-        setattr(ndi_object, key, value)
-    return ndi_object.serialize()
-
-def print_everything_in(db):
-    for collection in db._collections:
-        if isinstance(collection, str):
-            # is a lookup table
-            print(f'Lookup Table: {collection}')
-        else:
-            # is an DID class collection
-            results = db.find(collection)
-            name = collection if isinstance(collection, str) else collection.__name__
-            print(name + 's')
-            for doc in results:
-                try: print(f'  - {doc.name}')
-                except AttributeError: print(f'  - {doc.id}')
-            if not results:
-                print('  ---NONE---')
-            print('')
-
-
-def destroy_everything_in(db):
-    for collection in db._collections:
-        db.delete_many(force=True)
-
-
-
 
 """
 SQL Database Specific
@@ -135,50 +99,4 @@ def translate_query(func):
         else:
             raise TypeError(f'{query} must be of type Query or CompositeQuery.')
         return func(self, *args, query=query, **kwargs)
-    return decorator
-
-def with_session(func):
-    """Handle session instantiation, commit, and close operations for a class method. Passes session as first argument into decorated func.
-    
-    :param func:
-    :type func: function
-    :return: Returns return value of decorated function.
-    """
-    @wraps(func)
-    def decorator(self, *args, session=None, **kwargs):
-        enclosed_session = session is None
-        if enclosed_session: 
-            session = self.Session()
-        output = func(self, session, *args, **kwargs)
-        if enclosed_session:
-            session.commit()
-            session.close()
-        return output
-    return decorator
-
-def with_open_session(
-        func: T.Callable
-    ) -> T.WithOpenSessionDecorator:
-    """Handle session setup/teardown as a context manager for a class method. Returns decorated func for use as a context manager with session as its first argument.
-    
-    :param func:
-    :type func: function
-    :return: Returns return value of decorated function.
-    """
-    @wraps(func)
-    @contextmanager
-    def decorator(
-        self,
-        *args: T.Args,
-        session: T.Session = None,
-        **kwargs: T.Kwargs
-    ) -> T.Generator[T.Session, None, None]:
-        enclosed_session = session is None
-        if enclosed_session:
-            session = self.Session()
-            yield func(self, session, *args, **kwargs)
-            session.commit()
-            session.close()
-        else:
-            yield func(self, session, *args, **kwargs)
     return decorator
