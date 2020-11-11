@@ -54,14 +54,25 @@ class SQL(DID_Database):
         return engine
 
     def _create_tables(self, metadata):
+        autoload_document_table = None\
+            if self.options['hard_reset_on_init'] or self.__check_table_exists('document')\
+            else self.db
         self.tables['document'] = Table('document', metadata,
             Column('document_id', String, primary_key=True),
             Column('data', JSONB, nullable=False),
-            autoload_with=self.db,
+            autoload_with=autoload_document_table,
         )
         if self.options['hard_reset_on_init']:
             metadata.drop_all(self.db, checkfirst=True)
             metadata.create_all(self.db)
+
+    def __check_table_exists(self, table_name):
+        self.db.execute(f'''
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = '{table_name}'
+            );
+        ''')
     
     @property
     def documents(self):
