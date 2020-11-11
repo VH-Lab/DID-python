@@ -17,10 +17,8 @@ class DID:
     def find(self, query, version='', save=False):
         pass
 
-    def add(self, document, save=False):
-        # do stuff
-        if self.auto_save or save:
-            self.save()
+    def add(self, document, save=False) -> None:
+        self.db.add(document, save = self.auto_save or save)
 
     def update(self, document, save=False):
         # do stuff

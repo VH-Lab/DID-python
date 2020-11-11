@@ -148,7 +148,7 @@ class SQL(DID_Database):
             data=document.serialize()
         )
         with self.transaction_handler(save) as connection:
-            result = connection.execute(insertion)
+            connection.execute(insertion)
 
     def update(self, document, save=False) -> None:
         pass
