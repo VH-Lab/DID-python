@@ -99,7 +99,7 @@ def doc_count(db):
 
 class TestLookupCollection:
     def test_document_collection_creation(self, db):
-        results = db.execute("""
+        results = list(db.execute("""
             SELECT 
                 table_name, 
                 column_name, 
@@ -108,7 +108,7 @@ class TestLookupCollection:
                 information_schema.columns
             WHERE
                 table_name = 'document';
-        """)
+        """))
         expected = [
             ('document', 'document_id', 'character varying'),
             ('document', 'data', 'jsonb'),
