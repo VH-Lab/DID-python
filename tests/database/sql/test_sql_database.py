@@ -113,8 +113,8 @@ class TestLookupCollection:
             ('document', 'document_id', 'character varying'),
             ('document', 'data', 'jsonb'),
         ]
-        for result, expected in zip(results, expected):
-            assert result == expected
+        for row in expected:
+            assert row in results
 
     def test_save(self, db, mocdocs, doc_count):
         assert doc_count(db) is 0
