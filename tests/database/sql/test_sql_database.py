@@ -115,26 +115,34 @@ class TestLookupCollection:
             assert row in results
 
     def test_save(self, db, mocdocs, doc_count):
+        assert db.current_transaction is None
         assert doc_count(db) is 0
         db.add(mocdocs[0], save=True)
+        assert db.current_transaction is None
         assert doc_count(db) is 1
 
         db.add(mocdocs[1])
+        assert db.current_transaction.is_active
         assert doc_count(db) is 1
         db.add(mocdocs[2])
         assert doc_count(db) is 1
 
         db.save()
+        assert db.current_transaction is None
         assert doc_count(db) is 3
 
     def test_revert(self, db, mocdocs, doc_count):
+        assert db.current_transaction is None
         assert doc_count(db) is 0
         for doc in mocdocs:
             db.add(doc)
             assert doc_count(db) is 0
+        assert db.current_transaction.is_active
         db.revert()
+        assert db.current_transaction is None
         assert doc_count(db) is 0
 
         db.add(mocdocs[0], save=True)
+        assert db.current_transaction is None
         assert doc_count(db) is 1
 
