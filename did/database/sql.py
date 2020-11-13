@@ -11,7 +11,7 @@ from sqlalchemy_utils import database_exists, create_database
 
 from .did_database import DID_Database
 from ..query import Query, AndQuery, OrQuery, CompositeQuery
-from ..exception import NoTransaction
+from ..exception import NoTransactionError
 
 from contextlib import contextmanager
 
@@ -114,7 +114,7 @@ class SQL(DID_Database):
             if self.options.verbose_feedback:
                 print('No current transactions to save.')
             else:
-                raise NoTransaction('No current transactions to save.')
+                raise NoTransactionError('No current transactions to save.')
 
     def revert(self):
         if self.current_transaction:
@@ -127,7 +127,7 @@ class SQL(DID_Database):
             if self.options.verbose_feedback:
                 print('No current transactions to revert.')
             else:
-                raise NoTransaction('No current transactions to revert.')
+                raise NoTransactionError('No current transactions to revert.')
 
     @contextmanager
     def transaction_handler(self, save) -> T.Generator:

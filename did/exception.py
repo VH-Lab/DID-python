@@ -1,2 +1,2 @@
-class NoTransaction(Exception):
+class NoTransactionError(Exception):
     pass
