@@ -57,7 +57,7 @@ class SQL(DID_Database):
         if not database_exists(connection_string):
             create_database(connection_string)
             self.options.hard_reset_on_init = True
-            
+
         engine = create_engine(
             connection_string,
             echo = 'debug' if self.options.debug_mode else False
@@ -65,25 +65,27 @@ class SQL(DID_Database):
         return engine
 
     def _create_tables(self, metadata):
+        table_exists = self.__check_table_exists('document')
         autoload_document_table = None\
-            if self.options.hard_reset_on_init or self.__check_table_exists('document')\
+            if self.options.hard_reset_on_init or not table_exists\
             else self.db
         self.tables['document'] = Table('document', metadata,
             Column('document_id', String, primary_key=True),
             Column('data', JSONB, nullable=False),
             autoload_with=autoload_document_table,
         )
-        if self.options.hard_reset_on_init:
+        if self.options.hard_reset_on_init or not table_exists:
             metadata.drop_all(self.db, checkfirst=True)
             metadata.create_all(self.db)
 
     def __check_table_exists(self, table_name):
-        self.db.execute(f'''
+        results = self.db.execute(f'''
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
                 WHERE table_name = '{table_name}'
             );
         ''')
+        return next(results)[0]
     
     @property
     def documents(self):
