@@ -3,10 +3,6 @@ import did.types as T
 from did.database.file_system import BinaryCollection
 from did.document import DIDDocument
 
-default_options = {
-    'auto_save': False,
-}
-
 class DID:
     def __init__(self, database, binary_directory, auto_save=False):
         self.database = database

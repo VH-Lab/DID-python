@@ -11,6 +11,7 @@ from sqlalchemy_utils import database_exists, create_database
 
 from .did_database import DID_Database
 from ..query import Query, AndQuery, OrQuery, CompositeQuery
+from ..exception import NoTransaction
 
 from contextlib import contextmanager
 
@@ -23,11 +24,13 @@ class SQLOptions:
         self,
         auto_save: bool = False,
         hard_reset_on_init: bool = False,
-        debug_mode: bool = False
+        debug_mode: bool = False,
+        verbose_feedback: bool = True,
     ):
         self.auto_save = auto_save
         self.hard_reset_on_init = hard_reset_on_init
         self.debug_mode = debug_mode
+        self.verbose_feedback = verbose_feedback
 
 class SQL(DID_Database):
     """"""
@@ -38,13 +41,14 @@ class SQL(DID_Database):
         auto_save: bool = False,
         hard_reset_on_init: bool = False,
         debug_mode: bool = False,
+        verbose_feedback: bool = True,
     ) -> None:
         """Sets up a SQL database with collections, binds a sqlAlchemy sessionmaker, and instantiates a slqAlchemy metadata Base.
 
         :param connection_string: A standard SQL Server connection string.
         :type connection_string: str
         """
-        self.options = SQLOptions(auto_save, hard_reset_on_init, debug_mode)
+        self.options = SQLOptions(auto_save, hard_reset_on_init, debug_mode, verbose_feedback)
 
         self.db = self._init_database(connection_string)
         self.metadata = MetaData()
@@ -104,12 +108,26 @@ class SQL(DID_Database):
             self.current_transaction.commit()
             self.current_transaction = None
             self.connection = None
+            if self.options.verbose_feedback:
+                print('Changes saved.')
+        else:
+            if self.options.verbose_feedback:
+                print('No current transactions to save.')
+            else:
+                raise NoTransaction('No current transactions to save.')
 
     def revert(self):
         if self.current_transaction:
             self.current_transaction.rollback()
             self.current_transaction = None
             self.connection = None
+            if self.options.verbose_feedback:
+                print('Changes reverted.')
+        else:
+            if self.options.verbose_feedback:
+                print('No current transactions to revert.')
+            else:
+                raise NoTransaction('No current transactions to revert.')
 
     @contextmanager
     def transaction_handler(self, save) -> T.Generator:

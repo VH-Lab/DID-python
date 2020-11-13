@@ -1,0 +1,2 @@
+class NoTransaction(Exception):
+    pass
