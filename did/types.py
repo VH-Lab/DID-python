@@ -32,3 +32,16 @@ if TYPE_CHECKING:
 
     from flatbuffers import Builder
     from abc import ABCMeta
+
+    from did import Query, DIDDocument
+
+    from sqlalchemy import Column, Query as SqlaQuery
+    from sqlalchemy.orm import relationship, Session
+    from sqlalchemy.ext.declarative import DeclarativeMeta
+    from sqlalchemy.engine import Engine
+    from sqlalchemy.util._collections import _LW as SqlaDocument
+    from sqlalchemy.sql.elements import ClauseElement as SqlaFilter 
+    from sqlalchemy.engine import Connection, Transaction
+
+
+    SqlFilterMap = Dict[Union[type, str], Callable[..., SqlaFilter]]

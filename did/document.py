@@ -1,3 +1,5 @@
+import json
+
 class DIDDocument:
     def __init__(self, data):
         try:
@@ -12,4 +14,4 @@ class DIDDocument:
         return self.data.get('binary_files')
 
     def serialize(self):
-        pass
+        return json.dumps(self.data)
