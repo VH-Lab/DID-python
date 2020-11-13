@@ -81,10 +81,8 @@ mock_document_data = [
 def db():
     database = SQL(
         'postgres://postgres:password@localhost:5432/did_tests', 
-        {
-            'hard_reset_on_init': True,
-            'debug_mode': False,
-        }
+        hard_reset_on_init = True,
+        debug_mode = False,
     )
     yield database
 

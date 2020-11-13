@@ -14,26 +14,37 @@ from ..query import Query, AndQuery, OrQuery, CompositeQuery
 
 from contextlib import contextmanager
 
-default_options = {
-    'auto_save': False,
-    'hard_reset_on_init': False,
-    'debug_mode': False,
-}
-
 # ============== #
 #  SQL Database  #
 # ============== #
 
+class SQLOptions:
+    def __init__(
+        self,
+        auto_save: bool = False,
+        hard_reset_on_init: bool = False,
+        debug_mode: bool = False
+    ):
+        self.auto_save = auto_save
+        self.hard_reset_on_init = hard_reset_on_init
+        self.debug_mode = debug_mode
+
 class SQL(DID_Database):
     """"""
 
-    def __init__(self, connection_string: str, options={}) -> None:
+    def __init__(
+        self, 
+        connection_string: str,
+        auto_save: bool = False,
+        hard_reset_on_init: bool = False,
+        debug_mode: bool = False,
+    ) -> None:
         """Sets up a SQL database with collections, binds a sqlAlchemy sessionmaker, and instantiates a slqAlchemy metadata Base.
 
         :param connection_string: A standard SQL Server connection string.
         :type connection_string: str
         """
-        self.options = { **default_options, **options }
+        self.options = SQLOptions(auto_save, hard_reset_on_init, debug_mode)
 
         self.db = self._init_database(connection_string)
         self.metadata = MetaData()
@@ -45,24 +56,24 @@ class SQL(DID_Database):
     def _init_database(self, connection_string):
         engine = create_engine(
             connection_string,
-            echo = 'debug' if self.options['debug_mode'] else False
+            echo = 'debug' if self.options.debug_mode else False
         )
 
         if not database_exists(connection_string):
             create_database(connection_string)
-            self.options['hard_reset_on_init'] = True
+            self.options.hard_reset_on_init = True
         return engine
 
     def _create_tables(self, metadata):
         autoload_document_table = None\
-            if self.options['hard_reset_on_init'] or self.__check_table_exists('document')\
+            if self.options.hard_reset_on_init or self.__check_table_exists('document')\
             else self.db
         self.tables['document'] = Table('document', metadata,
             Column('document_id', String, primary_key=True),
             Column('data', JSONB, nullable=False),
             autoload_with=autoload_document_table,
         )
-        if self.options['hard_reset_on_init']:
+        if self.options.hard_reset_on_init:
             metadata.drop_all(self.db, checkfirst=True)
             metadata.create_all(self.db)
 
@@ -105,7 +116,7 @@ class SQL(DID_Database):
             self.connection = self.db.connect()
             self.current_transaction = self.connection.begin()
         yield self.connection
-        if save:
+        if save or self.options.auto_save:
             self.save()
 
     def find(self, query=None):
