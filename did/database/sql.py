@@ -54,14 +54,14 @@ class SQL(DID_Database):
         self.current_transaction: T.Optional[T.Transaction] = None
 
     def _init_database(self, connection_string):
+        if not database_exists(connection_string):
+            create_database(connection_string)
+            self.options.hard_reset_on_init = True
+            
         engine = create_engine(
             connection_string,
             echo = 'debug' if self.options.debug_mode else False
         )
-
-        if not database_exists(connection_string):
-            create_database(connection_string)
-            self.options.hard_reset_on_init = True
         return engine
 
     def _create_tables(self, metadata):
