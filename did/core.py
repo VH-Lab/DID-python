@@ -14,8 +14,8 @@ class DID:
     def db(self):
         return self.database
 
-    def find(self, query, version='', save=False):
-        pass
+    def find(self, query=None, version=''):
+        return self.db.find(query=query)
 
     def add(self, document, save=False) -> None:
         self.db.add(document, save = self.auto_save or save)
@@ -35,8 +35,8 @@ class DID:
         if self.auto_save or save:
             self.save()
 
-    def find_by_id(self, did_id, version='', save=False):
-        pass
+    def find_by_id(self, did_id, version=''):
+        return self.db.find_by_id(did_id)
     
     def update_by_id(self, did_id, document_updates, version='', save=False):
         # do stuff
