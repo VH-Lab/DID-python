@@ -4,7 +4,7 @@ import did.types as T
 from sqlalchemy import create_engine
 from sqlalchemy.schema import MetaData
 from sqlalchemy import Table, Column, Integer, String, Boolean, Date, DateTime, Interval, Time, type_coerce, cast
-from sqlalchemy.dialects.postgresql import JSONB, JSON
+from sqlalchemy.dialects.postgresql import JSONB, JSON, insert
 from sqlalchemy.sql import select
 from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
@@ -13,6 +13,7 @@ from sqlalchemy_utils import database_exists, create_database
 from .did_database import DID_Database, DIDDocument
 from ..query import Query, AndQuery, OrQuery, CompositeQuery
 from ..exception import NoTransactionError
+from .utils import merge_dicts
 
 from contextlib import contextmanager
 
@@ -156,10 +157,26 @@ class SQL(DID_Database):
             connection.execute(insertion)
 
     def update(self, document, save=False) -> None:
-        pass
+        update = self.documents.update() \
+            .where(self.documents.c.document_id == document.id) \
+            .values(data=document.data)
+        with self.transaction_handler(save) as connection:
+            connection.execute(update)
 
     def upsert(self, document, save=False) -> None:
-        pass
+        insertion = insert(self.documents).values(
+            document_id=document.id,
+            data=document.data
+        )
+        upsertion = insertion.on_conflict_do_update(
+            index_elements=['document_id'],
+            set_=dict({
+                c.name: c
+                for c in insertion.excluded
+            })
+        )
+        with self.transaction_handler(save) as connection:
+            connection.execute(upsertion)
 
     def delete(self, document, save=False) -> None:
         pass
@@ -170,15 +187,36 @@ class SQL(DID_Database):
         rows = self.connection.execute(s)
         return self._did_doc_from_row(next(rows))
 
-
     def update_by_id(self, id_, updates={}, save=False) -> None:
-        pass
+        doc = self.find_by_id(id_)
+        if not doc:
+            raise Exception(f'Update failed: document {id_} does not exist')
+        existing_data = doc.data
+        updated_data = merge_dicts(existing_data, updates)
+        update = self.documents.update() \
+            .where(self.documents.c.document_id == id_) \
+            .values(data = updated_data)
+        with self.transaction_handler(save) as connection:
+            connection.execute(update)
 
     def delete_by_id(self, id_, save=False) -> None:
         pass
 
     def update_many(self, query=None, updates={}, save=False) -> None:
-        pass
+        s = select([self.tables['document']])
+        if query:
+            filter_ = self.generate_sqla_filter(query) 
+            s = s.where(filter_)
+        docs = self.connection.execute(s).fetchall()
+        for doc in docs:
+            existing_data = doc['data']
+            updated_data = merge_dicts(existing_data, updates)
+            update = self.documents.update() \
+                .where(self.documents.c.document_id == doc['document_id']) \
+                .values(data = updated_data)
+            with self.transaction_handler(save) as connection:
+                connection.execute(update)
+
 
     def delete_many(self, query=None, save=False) -> None:
         pass

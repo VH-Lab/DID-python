@@ -30,8 +30,8 @@ mock_document_data = [
             }],
         },
         'app': {
-            'a': 'b',
-            'c': 'd',
+            'a': True,
+            'b': True
         },
     },
     {
@@ -54,8 +54,8 @@ mock_document_data = [
             }],
         },
         'app': {
-            'a': 'b',
-            'c': 'd',
+            'a': True,
+            'b': False
         },
     },
     {
@@ -78,8 +78,8 @@ mock_document_data = [
             }],
         },
         'app': {
-            'a': 'b',
-            'c': 'd',
+            'a': False,
+            'b': False
         },
     },
 ]
@@ -216,3 +216,77 @@ class TestLookupCollection:
         db.save()
 
         assert db.find_by_id('0').id == '0'
+
+    def test_update(self, db, mocdocs):
+        for doc in mocdocs:
+            db.add(doc)
+        db.save()
+
+        mocdocs[0].data['app']['b'] = False
+        mocdocs[0].data['app']['c'] = False
+        db.update(mocdocs[0])
+
+        updated_data = db.find_by_id(mocdocs[0].id).data
+        expected_data = mocdocs[0].data
+        assert updated_data == expected_data
+
+    def test_update_by_id(self, db, mocdocs):
+        for doc in mocdocs:
+            db.add(doc)
+        db.save()
+
+        updates = { 'app': {
+                'a': False,
+                'c': True,
+        } }
+        db.update_by_id(mocdocs[0].id, updates, save=True)
+        merged_data = db.find_by_id(mocdocs[0].id).data 
+        expected_data = {
+            **mocdocs[0].data,
+            'app': {
+                **mocdocs[0].data['app'],
+                **updates['app']
+            }
+        }
+        assert merged_data == expected_data
+
+        # TODO: test update with nonexistant id
+
+    def test_update_many(self, db, mocdocs):
+        for doc in mocdocs:
+            db.add(doc)
+        db.save()
+
+        updates = { 'app': {
+                'a': False,
+                'c': True,
+        } }
+        query = Q('app.b') == False
+        db.update_many(query=query, updates=updates, save=True)
+        merged_data = [doc.data for doc in db.find()]
+        expected_data = [
+            (
+                {
+                    **doc.data,
+                    'app': {
+                        **doc.data['app'],
+                        **updates['app'],
+                    }
+                } 
+                if doc.data['app']['b'] == False 
+                else doc.data
+            )
+            for doc in mocdocs
+        ]
+        assert merged_data == expected_data
+    
+    def test_upsert(self, db, mocdocs, doc_count):
+        assert doc_count(db) is 0
+        db.upsert(mocdocs[0], save=True)
+        assert doc_count(db) is 1
+
+        mocdocs[0].data['app']['a'] = False
+        db.upsert(mocdocs[0], save=True)
+        assert doc_count(db) is 1
+        updated_data = db.find_by_id(mocdocs[0].id).data
+        assert updated_data == mocdocs[0].data

@@ -21,12 +21,12 @@ class DID:
         self.db.add(document, save = self.auto_save or save)
 
     def update(self, document, save=False):
-        # do stuff
+        self.db.update(document, save=save)
         if self.auto_save or save:
             self.save()
 
     def upsert(self, document, save=False):
-        # do stuff
+        self.db.upsert(document, save=save)
         if self.auto_save or save:
             self.save()
 
@@ -39,7 +39,7 @@ class DID:
         return self.db.find_by_id(did_id)
     
     def update_by_id(self, did_id, document_updates, version='', save=False):
-        # do stuff
+        self.db.update_by_id(did_id, updates=document_updates, save=save)
         if self.auto_save or save:
             self.save()
 
@@ -48,8 +48,8 @@ class DID:
         if self.auto_save or save:
             self.save()
 
-    def update_many(self, query, document_updates, version='', save=False):
-        # do stuff
+    def update_many(self, query=None, document_updates, version='', save=False):
+        self.db.update_many(query=query, updates=document_updates, save=save)
         if self.auto_save or save:
             self.save()
     
