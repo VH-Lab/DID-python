@@ -6,6 +6,9 @@ import pytest
 from sqlalchemy.sql import select
 from sqlalchemy.orm import sessionmaker
 
+from sqlalchemy.sql import select
+from sqlalchemy.orm import sessionmaker
+
 mock_document_data = [
     {
         'base': {
