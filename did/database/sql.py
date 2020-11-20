@@ -3,17 +3,20 @@ import did.types as T
 
 from sqlalchemy import create_engine
 from sqlalchemy.schema import MetaData
-from sqlalchemy import Table, Column, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Table, Column, Integer, String, Boolean, Date, DateTime, Interval, Time, type_coerce, cast
+from sqlalchemy.dialects.postgresql import JSONB, JSON
+from sqlalchemy.sql import select
 from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy_utils import database_exists, create_database
 
-from .did_database import DID_Database
+from .did_database import DID_Database, DIDDocument
 from ..query import Query, AndQuery, OrQuery, CompositeQuery
 from ..exception import NoTransactionError
 
 from contextlib import contextmanager
+
+import datetime
 
 # ============== #
 #  SQL Database  #
@@ -54,7 +57,7 @@ class SQL(DID_Database):
         self.metadata = MetaData()
         self.tables = { 'document': None }
         self._create_tables(self.metadata)
-        self.connection: T.Optional[T.Connection] = None
+        self.connection: T.Optional[T.Connection] = self.db.connect()
         self.current_transaction: T.Optional[T.Transaction] = None
 
     def _init_database(self, connection_string):
@@ -107,7 +110,6 @@ class SQL(DID_Database):
         if self.current_transaction:
             self.current_transaction.commit()
             self.current_transaction = None
-            self.connection = None
             if self.options.verbose_feedback:
                 print('Changes saved.')
         else:
@@ -120,7 +122,6 @@ class SQL(DID_Database):
         if self.current_transaction:
             self.current_transaction.rollback()
             self.current_transaction = None
-            self.connection = None
             if self.options.verbose_feedback:
                 print('Changes reverted.')
         else:
@@ -130,22 +131,26 @@ class SQL(DID_Database):
                 raise NoTransactionError('No current transactions to revert.')
 
     @contextmanager
-    def transaction_handler(self, save) -> T.Generator:
+    def transaction_handler(self, save, read_only = False) -> T.Generator:
         # TODO: when implementing versioning, will probably need to make this a two-phase transaction in order to do rollbacks on commits within session
         if not self.current_transaction:
-            self.connection = self.db.connect()
             self.current_transaction = self.connection.begin()
         yield self.connection
         if save or self.options.auto_save:
             self.save()
 
-    def find(self, query=None):
-        pass
+    def find(self, query=None) -> T.List:
+        s = select([self.tables['document']])
+        if query:
+            filter_ = self.generate_sqla_filter(query) 
+            s = s.where(filter_)
+        rows = self.connection.execute(s).fetchall()
+        return [self._did_doc_from_row(r) for r in rows]
 
     def add(self, document, save=False) -> None:
         insertion = self.documents.insert().values(
             document_id=document.id,
-            data=document.serialize()
+            data=document.data
         )
         with self.transaction_handler(save) as connection:
             connection.execute(insertion)
@@ -160,7 +165,11 @@ class SQL(DID_Database):
         pass
 
     def find_by_id(self, id_):
-        pass
+        doc_tbl = self.tables['document']
+        s = select([doc_tbl]).where(doc_tbl.c.document_id == id_)
+        rows = self.connection.execute(s)
+        return self._did_doc_from_row(next(rows))
+
 
     def update_by_id(self, id_, updates={}, save=False) -> None:
         pass
@@ -173,6 +182,13 @@ class SQL(DID_Database):
 
     def delete_many(self, query=None, save=False) -> None:
         pass
+
+    def _did_doc_from_row(self, row):
+        try:
+            doc_id = row['document_id']
+            return DIDDocument(row['data'])
+        except:
+            raise Exception(f'Failure to load DID document {doc_id}. Data appears to be corrupted.')
 
     _sqla_filter_ops: T.SqlFilterMap = {
         # composite types
@@ -192,7 +208,7 @@ class SQL(DID_Database):
         'in': lambda field, value: field.in_(value),
     }
 
-    def generate_sqla_filter(self, document, query: T.Query):
+    def generate_sqla_filter(self, query: T.Query):
         """Convert an :term:`DID query` to a :term:`SQLA query`.
 
         :param query:
@@ -206,18 +222,27 @@ class SQL(DID_Database):
                 return self._sqla_filter_ops[type(q)](nested_queries)
             else:
                 field, operator, value = q.query
-                column = document.data[tuple(field.split('.'))].astext
-                return self._sqla_filter_ops[operator](column, str(value))
+                column = self.tables['document'].c.data[tuple(field.split('.'))]
+                column = self._cast_column_by_value(column, value)
+                return self._sqla_filter_ops[operator](column, value)
         return recurse(query)
-
-    def _functionalize_query(self, query) -> T.Callable:
-        """This function allows us to conditionally set a filter operation on a :term:`SQLA session query`. This allows us to interpret the absence of an :term:`DID query` or :term:`SQLA query` as being equivalent to ``SELECT *`` within the queried table.
-
-        :param query:
-        :type query: :term:`SQLA query` | None
-        :return: A :term:`SQLA session query`.
-        :rtype: sqlalchemy.orm.query.Query
-        """
-        def filter_(expr):
-            return expr if query is None else expr.filter(query)
-        return filter_
+    
+    def _cast_column_by_value(self, column, value):
+        type_ = type(value)
+        if type_ is str:
+            return column.astext
+        elif type_ is int:
+            return column.cast(Integer)
+        elif type_ is bool:
+            return column.cast(Boolean)
+        elif type_ is datetime.date:
+            return column.cast(Date)
+        elif type_ is datetime.datetime:
+            return column.cast(DateTime)
+        elif type_ is datetime.timedelta:
+            return column.cast(Interval)
+        elif type_ is datetime.time:
+            return column.cast(Time)
+        else:
+            return column.astext
+            
