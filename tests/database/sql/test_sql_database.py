@@ -125,7 +125,8 @@ class TestLookupCollection:
     def test_add(self, db, mocdocs, doc_count):
         assert doc_count(db) is 0
         
-        db.add(mocdocs[0], save=True)
+        db.add(mocdocs[0])
+        db.save()
         
         result = next(db.execute('SELECT document_id FROM document;'))[0]
         assert result is mocdocs[0].id
@@ -135,7 +136,8 @@ class TestLookupCollection:
     def test_save(self, db, mocdocs, doc_count):
         assert db.current_transaction is None
         assert doc_count(db) is 0
-        db.add(mocdocs[0], save=True)
+        db.add(mocdocs[0])
+        db.save()
         assert db.current_transaction is None
         assert doc_count(db) is 1
 
@@ -160,7 +162,8 @@ class TestLookupCollection:
         assert db.current_transaction is None
         assert doc_count(db) is 0
 
-        db.add(mocdocs[0], save=True)
+        db.add(mocdocs[0])
+        db.save()
         assert db.current_transaction is None
         assert doc_count(db) is 1
 
@@ -239,7 +242,8 @@ class TestLookupCollection:
                 'a': False,
                 'c': True,
         } }
-        db.update_by_id(mocdocs[0].id, updates, save=True)
+        db.update_by_id(mocdocs[0].id, updates)
+        db.save()
         merged_data = db.find_by_id(mocdocs[0].id).data 
         expected_data = {
             **mocdocs[0].data,
@@ -262,7 +266,8 @@ class TestLookupCollection:
                 'c': True,
         } }
         query = Q('app.b') == False
-        db.update_many(query=query, updates=updates, save=True)
+        db.update_many(query=query, updates=updates)
+        db.save()
         merged_data = [doc.data for doc in db.find()]
         expected_data = [
             (
@@ -282,11 +287,13 @@ class TestLookupCollection:
     
     def test_upsert(self, db, mocdocs, doc_count):
         assert doc_count(db) is 0
-        db.upsert(mocdocs[0], save=True)
+        db.upsert(mocdocs[0])
+        db.save()
         assert doc_count(db) is 1
 
         mocdocs[0].data['app']['a'] = False
-        db.upsert(mocdocs[0], save=True)
+        db.upsert(mocdocs[0])
+        db.save()
         assert doc_count(db) is 1
         updated_data = db.find_by_id(mocdocs[0].id).data
         assert updated_data == mocdocs[0].data
