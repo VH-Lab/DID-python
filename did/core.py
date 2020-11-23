@@ -56,7 +56,7 @@ class DID:
             self.save()
     
     def delete_many(self, query, version='', save=False):
-        self.db.update_many(query=query)
+        self.db.delete_many(query=query)
         if self.auto_save or save:
             self.save()
 
