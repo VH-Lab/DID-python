@@ -136,7 +136,7 @@ class SQL(DID_Database):
         yield self.connection
 
     def find(self, query=None) -> T.List:
-        s = select([self.tables['document']])
+        s = select([self.documents])
         if query:
             filter_ = self.generate_sqla_filter(query) 
             s = s.where(filter_)
@@ -174,11 +174,14 @@ class SQL(DID_Database):
             connection.execute(upsertion)
 
     def delete(self, document) -> None:
-        pass
+        delete = self.documents.delete() \
+            .where(self.documents.c.document_id == document.id)
+        with self.transaction_handler() as connection:
+            connection.execute(delete)
 
     def find_by_id(self, id_):
-        doc_tbl = self.tables['document']
-        s = select([doc_tbl]).where(doc_tbl.c.document_id == id_)
+        s = select([self.documents]) \
+            .where(self.documents.c.document_id == id_)
         rows = self.connection.execute(s)
         try:
             return self._did_doc_from_row(next(rows))
@@ -198,10 +201,13 @@ class SQL(DID_Database):
             connection.execute(update)
 
     def delete_by_id(self, id_) -> None:
-        pass
+        delete = self.documents.delete() \
+            .where(self.documents.c.document_id == id_)
+        with self.transaction_handler() as connection:
+            connection.execute(delete)
 
     def update_many(self, query=None, updates={}) -> None:
-        s = select([self.tables['document']])
+        s = select([self.documents])
         if query:
             filter_ = self.generate_sqla_filter(query) 
             s = s.where(filter_)
@@ -217,7 +223,18 @@ class SQL(DID_Database):
 
 
     def delete_many(self, query=None) -> None:
-        pass
+        """ Deletes all documents matching query.
+              If no query is provided, deletes ALL documents.
+
+        :param query: [description], defaults to None
+        :type query: [type], optional
+        """
+        delete = self.documents.delete()
+        if query:
+            filter_ = self.generate_sqla_filter(query) 
+            delete = delete.where(filter_)
+        with self.transaction_handler() as connection:
+            connection.execute(delete)
 
     def _did_doc_from_row(self, row):
         try:
@@ -258,7 +275,7 @@ class SQL(DID_Database):
                 return self._sqla_filter_ops[type(q)](nested_queries)
             else:
                 field, operator, value = q.query
-                column = self.tables['document'].c.data[tuple(field.split('.'))]
+                column = self.documents.c.data[tuple(field.split('.'))]
                 column = self._cast_column_by_value(column, value)
                 return self._sqla_filter_ops[operator](column, value)
         return recurse(query)
