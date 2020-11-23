@@ -4,7 +4,7 @@ import did.types as T
 from sqlalchemy import create_engine
 from sqlalchemy.schema import MetaData
 from sqlalchemy import Table, Column, Integer, String, Boolean, Date, DateTime, Interval, Time, type_coerce, cast
-from sqlalchemy.dialects.postgresql import JSONB, JSON
+from sqlalchemy.dialects.postgresql import JSONB, JSON, insert
 from sqlalchemy.sql import select
 from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
@@ -13,6 +13,7 @@ from sqlalchemy_utils import database_exists, create_database
 from .did_database import DID_Database, DIDDocument
 from ..query import Query, AndQuery, OrQuery, CompositeQuery
 from ..exception import NoTransactionError
+from .utils import merge_dicts
 
 from contextlib import contextmanager
 
@@ -25,12 +26,10 @@ import datetime
 class SQLOptions:
     def __init__(
         self,
-        auto_save: bool = False,
         hard_reset_on_init: bool = False,
         debug_mode: bool = False,
         verbose_feedback: bool = True,
     ):
-        self.auto_save = auto_save
         self.hard_reset_on_init = hard_reset_on_init
         self.debug_mode = debug_mode
         self.verbose_feedback = verbose_feedback
@@ -41,7 +40,6 @@ class SQL(DID_Database):
     def __init__(
         self, 
         connection_string: str,
-        auto_save: bool = False,
         hard_reset_on_init: bool = False,
         debug_mode: bool = False,
         verbose_feedback: bool = True,
@@ -51,7 +49,7 @@ class SQL(DID_Database):
         :param connection_string: A standard SQL Server connection string.
         :type connection_string: str
         """
-        self.options = SQLOptions(auto_save, hard_reset_on_init, debug_mode, verbose_feedback)
+        self.options = SQLOptions(hard_reset_on_init, debug_mode, verbose_feedback)
 
         self.db = self._init_database(connection_string)
         self.metadata = MetaData()
@@ -131,13 +129,11 @@ class SQL(DID_Database):
                 raise NoTransactionError('No current transactions to revert.')
 
     @contextmanager
-    def transaction_handler(self, save, read_only = False) -> T.Generator:
+    def transaction_handler(self, read_only = False) -> T.Generator:
         # TODO: when implementing versioning, will probably need to make this a two-phase transaction in order to do rollbacks on commits within session
         if not self.current_transaction:
             self.current_transaction = self.connection.begin()
         yield self.connection
-        if save or self.options.auto_save:
-            self.save()
 
     def find(self, query=None) -> T.List:
         s = select([self.tables['document']])
@@ -147,40 +143,80 @@ class SQL(DID_Database):
         rows = self.connection.execute(s).fetchall()
         return [self._did_doc_from_row(r) for r in rows]
 
-    def add(self, document, save=False) -> None:
+    def add(self, document) -> None:
         insertion = self.documents.insert().values(
             document_id=document.id,
             data=document.data
         )
-        with self.transaction_handler(save) as connection:
+        with self.transaction_handler() as connection:
             connection.execute(insertion)
 
-    def update(self, document, save=False) -> None:
-        pass
+    def update(self, document) -> None:
+        update = self.documents.update() \
+            .where(self.documents.c.document_id == document.id) \
+            .values(data=document.data)
+        with self.transaction_handler() as connection:
+            connection.execute(update)
 
-    def upsert(self, document, save=False) -> None:
-        pass
+    def upsert(self, document) -> None:
+        insertion = insert(self.documents).values(
+            document_id=document.id,
+            data=document.data
+        )
+        upsertion = insertion.on_conflict_do_update(
+            index_elements=['document_id'],
+            set_=dict({
+                c.name: c
+                for c in insertion.excluded
+            })
+        )
+        with self.transaction_handler() as connection:
+            connection.execute(upsertion)
 
-    def delete(self, document, save=False) -> None:
+    def delete(self, document) -> None:
         pass
 
     def find_by_id(self, id_):
         doc_tbl = self.tables['document']
         s = select([doc_tbl]).where(doc_tbl.c.document_id == id_)
         rows = self.connection.execute(s)
-        return self._did_doc_from_row(next(rows))
+        try:
+            return self._did_doc_from_row(next(rows))
+        except StopIteration:
+            return None
 
+    def update_by_id(self, id_, updates={}) -> None:
+        doc = self.find_by_id(id_)
+        if not doc:
+            raise Exception(f'Update failed: document {id_} does not exist')
+        existing_data = doc.data
+        updated_data = merge_dicts(existing_data, updates)
+        update = self.documents.update() \
+            .where(self.documents.c.document_id == id_) \
+            .values(data = updated_data)
+        with self.transaction_handler() as connection:
+            connection.execute(update)
 
-    def update_by_id(self, id_, updates={}, save=False) -> None:
+    def delete_by_id(self, id_) -> None:
         pass
 
-    def delete_by_id(self, id_, save=False) -> None:
-        pass
+    def update_many(self, query=None, updates={}) -> None:
+        s = select([self.tables['document']])
+        if query:
+            filter_ = self.generate_sqla_filter(query) 
+            s = s.where(filter_)
+        docs = self.connection.execute(s).fetchall()
+        for doc in docs:
+            existing_data = doc['data']
+            updated_data = merge_dicts(existing_data, updates)
+            update = self.documents.update() \
+                .where(self.documents.c.document_id == doc['document_id']) \
+                .values(data = updated_data)
+            with self.transaction_handler() as connection:
+                connection.execute(update)
 
-    def update_many(self, query=None, updates={}, save=False) -> None:
-        pass
 
-    def delete_many(self, query=None, save=False) -> None:
+    def delete_many(self, query=None) -> None:
         pass
 
     def _did_doc_from_row(self, row):

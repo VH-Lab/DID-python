@@ -100,3 +100,17 @@ def translate_query(func):
             raise TypeError(f'{query} must be of type Query or CompositeQuery.')
         return func(self, *args, query=query, **kwargs)
     return decorator
+
+def merge_dicts(a, b):
+    "merges b into a"
+    for key in b:
+        if key in a:
+            if isinstance(a[key], dict) and isinstance(b[key], dict):
+                merge_dicts(a[key], b[key])
+            elif a[key] == b[key]:
+                pass
+            else:
+                a[key] = b[key]
+        else:
+            a[key] = b[key]
+    return a
