@@ -327,7 +327,7 @@ class TestSqlDatabase:
         assert doc_count(db) is len(mocdocs)
 
         query = Q('app.b') == False
-        db.delete_many(query=query, deletes=deletes)
+        db.delete_many(query=query)
         db.save()
 
         expected_doc_count = len([
