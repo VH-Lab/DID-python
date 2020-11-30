@@ -103,7 +103,7 @@ def mocdocs():
 def doc_count(db):
     return lambda db: list(db.execute('select count(*) from (select * from document) src;'))[0][0]
 
-class TestLookupCollection:
+class TestSqlDatabase:
     def test_document_collection_creation(self, db):
         results = list(db.execute("""
             SELECT 
@@ -254,8 +254,6 @@ class TestLookupCollection:
         }
         assert merged_data == expected_data
 
-        # TODO: test update with nonexistant id
-
     def test_update_many(self, db, mocdocs):
         for doc in mocdocs:
             db.add(doc)
@@ -297,3 +295,45 @@ class TestLookupCollection:
         assert doc_count(db) is 1
         updated_data = db.find_by_id(mocdocs[0].id).data
         assert updated_data == mocdocs[0].data
+
+    def test_delete(self, db, mocdocs, doc_count):
+        for doc in mocdocs:
+            db.add(doc)
+        db.save()
+        assert doc_count(db) is len(mocdocs)
+
+        db.delete(mocdocs[0])
+        db.save()
+        assert doc_count(db) is len(mocdocs) - 1
+
+        assert not db.find_by_id(mocdocs[0].id)
+
+    def test_delete_by_id(self, db, mocdocs, doc_count):
+        for doc in mocdocs:
+            db.add(doc)
+        db.save()
+        assert doc_count(db) is len(mocdocs)
+
+        db.delete_by_id(mocdocs[0].id)
+        db.save()
+        assert doc_count(db) is len(mocdocs) - 1
+
+        assert not db.find_by_id(mocdocs[0].id)
+
+    def test_delete_many(self, db, mocdocs, doc_count):
+        for doc in mocdocs:
+            db.add(doc)
+        db.save()
+        assert doc_count(db) is len(mocdocs)
+
+        query = Q('app.b') == False
+        db.delete_many(query=query)
+        db.save()
+
+        expected_doc_count = len([
+            1 for doc in mocdocs if doc.data['app']['b'] != False 
+        ])
+
+        docs_in_db = db.find()
+        assert len(docs_in_db) == expected_doc_count
+        assert all(doc.data['app']['b'] != False for doc in docs_in_db)

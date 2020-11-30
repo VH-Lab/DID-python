@@ -33,7 +33,7 @@ class DID:
             self.save()
 
     def delete(self, document, save=False):
-        # do stuff
+        self.db.delete(document)
         if self.auto_save or save:
             self.save()
 
@@ -46,7 +46,7 @@ class DID:
             self.save()
 
     def delete_by_id(self, did_id, version='', save=False):
-        # do stuff
+        self.db.delete_by_id(did_id)
         if self.auto_save or save:
             self.save()
 
@@ -56,16 +56,17 @@ class DID:
             self.save()
     
     def delete_many(self, query, version='', save=False):
-        # do stuff
+        self.db.delete_many(query=query)
         if self.auto_save or save:
             self.save()
 
     def save(self):
+        # TODO:
+        #   hash new version
+        #   update version history in database
+        #   update new version in affected documents (self.documents_in_transaction)
+        #   self.db.commit() again to save version changes
         self.db.save()
-        # hash new version
-        # update version history in database
-        # update new version in affected documents (self.documents_in_transaction)
-        # self.db.commit() again to save version changes
 
     def revert(self):
         """Revert database to point of last save"""
