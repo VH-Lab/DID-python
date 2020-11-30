@@ -331,7 +331,7 @@ class TestSqlDatabase:
         db.save()
 
         expected_doc_count = len([
-            1 for doc in mocdocs if doc.data['app']['b'] == False 
+            1 for doc in mocdocs if doc.data['app']['b'] != False 
         ])
 
         docs_in_db = db.find()
