@@ -1,12 +1,12 @@
 from __future__ import annotations
 import did.types as T
-from did.database.file_system import BinaryCollection
+from did.database.binary_collection import BinaryCollection
 from did.document import DIDDocument
 
 class DID:
     def __init__(self, database, binary_directory, auto_save=False):
         self.database = database
-        self.bin = BinaryCollection(binary_directory, name='data')
+        self.bin = BinaryCollection(binary_directory)
         self.auto_save = auto_save
         self.documents_in_transaction = []
 
@@ -71,9 +71,3 @@ class DID:
     def revert(self):
         """Revert database to point of last save"""
         self.db.revert()
-
-    def open_binary_read(self, document, filename='', version=''):
-        pass
-
-    def open_binary_write(self, document, filename='', version=''):
-        pass
