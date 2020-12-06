@@ -5,6 +5,7 @@ from did.document import DIDDocument
 from did.versioning import hash_document, hash_snapshot, hash_commit
 from did.exception import NoChangesToSave
 from did.time import current_time
+from did.database.utils import merge_dicts
 
 
 class DID:
@@ -34,8 +35,10 @@ class DID:
         with self.db.transaction_handler():
             document.data['base']['versions'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
+
             self.db.add(document, hash_)
             self.db.add_to_snapshot(hash_)
+
             old_hash = self.db.get_document_hash(document)
             self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
@@ -61,22 +64,47 @@ class DID:
     def find_by_id(self, did_id, version=None):
         return self.db.find_by_id(did_id, commit_hash=version)
     
-    def update_by_id(self, did_id, document_updates={}, version='', save=None):
-        self.db.update_by_id(did_id, updates=document_updates)
+    def update_by_id(self, did_id, document_updates={}, save=None):
+        with self.db.transaction_handler():
+            doc = self.db.find_by_id(did_id)
+            old_hash = self.db.get_document_hash(doc)
+            doc.data = merge_dicts(doc.data, document_updates)
+            diff_hash = hash_document(doc)
+            if old_hash != diff_hash:
+                doc.data['base']['versions'].insert(0, self.db.working_snapshot_id)
+                hash_ = hash_document(doc)
+
+                self.db.add(doc, hash_)
+                self.db.add_to_snapshot(hash_)
+
+                self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
 
-    def delete_by_id(self, did_id, version='', save=None):
+    def delete_by_id(self, did_id, save=None):
         self.db.delete_by_id(did_id)
         if save if save is not None else self.auto_save:
             self.save()
 
-    def update_many(self, query=None, document_updates={}, version='', save=None):
-        self.db.update_many(query=query, updates=document_updates)
+    def update_many(self, query=None, document_updates={}, save=None):
+        with self.db.transaction_handler():
+            documents = self.db.find(query=query)
+            for doc in documents:
+                old_hash = self.db.get_document_hash(doc)
+                doc.data = merge_dicts(doc.data, document_updates)
+                diff_hash = hash_document(doc)
+                if old_hash != diff_hash:
+                    doc.data['base']['versions'].insert(0, self.db.working_snapshot_id)
+                    hash_ = hash_document(doc)
+
+                    self.db.add(doc, hash_)
+                    self.db.add_to_snapshot(hash_)
+
+                    self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
     
-    def delete_many(self, query, version='', save=None):
+    def delete_many(self, query, save=None):
         self.db.delete_many(query=query)
         if save if save is not None else self.auto_save:
             self.save()

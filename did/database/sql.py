@@ -482,8 +482,9 @@ class SQL(DID_Database):
     def remove_from_snapshot(self, document_hash):
         if not self.working_snapshot_id:
             raise NoWorkingSnapshotError('There is no snapshot open for modification.')
-        delete = self.table.snapshot_document.delete().where(
-            self.table.snapshot_document.c.document_hash == document_hash)
+        delete = self.table.snapshot_document.delete().where(and_(
+            self.table.snapshot_document.c.document_hash == document_hash, self.table.snapshot_document.c.snapshot_id == self.working_snapshot_id
+        ))
         self.connection.execute(delete)
 
     def get_document_hash(self, document):

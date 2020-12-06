@@ -11,6 +11,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import select
 from sqlalchemy.orm import sessionmaker
 
+from copy import deepcopy
+
 mock_document_data = [
     {
         'base': {
@@ -103,7 +105,7 @@ def did():
 @pytest.fixture
 def mocdocs():
     # names are 'A', 'B', and 'C'
-    yield [DIDDocument(data) for data in mock_document_data]
+    yield [DIDDocument(data) for data in deepcopy(mock_document_data)]
 
 @pytest.fixture
 def doc_count(did):
@@ -233,7 +235,7 @@ class TestSqlVersioning:
             SELECT * FROM commit;
         """))]
         for commit in history:
-            assert commit[0] in all_commits
+            assert commit[1] in all_commits
 
     def test_add(self, did, mocdocs, doc_count):
         assert doc_count(did) is 0
@@ -264,10 +266,10 @@ class TestSqlVersioning:
         doc.data['app']['c'] = True
         did.update(doc, save=True)
 
-        results = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
-        assert len(results) == 1
+        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        assert len(current_documents) == 2
 
-        results = [
+        current_documents = [
             { 'app': doc.data['app'], 'versions': doc.data['base']['versions'] }
             for doc in did.database.execute(f"""
                 SELECT * FROM document
@@ -275,7 +277,7 @@ class TestSqlVersioning:
             """)
         ]
 
-        assert results == [
+        assert current_documents == [
             {'app': {'a': True, 'b': True}, 'versions': [1]}, 
             {'app': {'a': True, 'b': True, 'c': True}, 'versions': [2, 1]}
         ]
@@ -284,14 +286,36 @@ class TestSqlVersioning:
         doc = mocdocs[0]
         did.upsert(doc, save=True)
 
-        results = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
-        assert len(results) == 1
+        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        assert len(current_documents) == 1
 
         doc.data['app']['c'] = True
         did.upsert(doc, save=True)
 
+        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        assert len(current_documents) == 2
+
+        current_documents = [
+            { 'app': doc.data['app'], 'versions': doc.data['base']['versions'] }
+            for doc in did.database.execute(f"""
+                SELECT * FROM document
+                WHERE document_id = '{doc.id}';
+            """)
+        ]
+
+        assert current_documents == [
+            {'app': {'a': True, 'b': True}, 'versions': [1]}, 
+            {'app': {'a': True, 'b': True, 'c': True}, 'versions': [2, 1]}
+        ]
+
+    def test_update_by_id(self, did, mocdocs):
+        doc = mocdocs[0]
+        did.add(doc, save=True)
+        updates = { 'app': {'a': True, 'b': True, 'c': True} }
+        did.update_by_id(doc.id, document_updates=updates, save=True)
+
         results = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
-        assert len(results) == 1
+        assert len(results) == 2
 
         results = [
             { 'app': doc.data['app'], 'versions': doc.data['base']['versions'] }
@@ -305,3 +329,31 @@ class TestSqlVersioning:
             {'app': {'a': True, 'b': True}, 'versions': [1]}, 
             {'app': {'a': True, 'b': True, 'c': True}, 'versions': [2, 1]}
         ]
+
+    def test_update_many(self, did, mocdocs):
+        for doc in mocdocs:
+            did.add(doc)
+        did.save()
+
+        by_app_a = Q('app.a') == True
+        updates = { 'app': { 'c': False } }
+
+        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        assert len(current_documents) == 3
+
+        did.update_many(by_app_a, updates, save=True)
+
+        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        assert len(current_documents) == 6
+
+        current_documents = did.find()
+
+        for doc in current_documents:
+            if doc.data['app']['a']:
+                assert doc.data['app']['c'] == False
+            else:
+                try:
+                    doc.data['app']['c']
+                    assert False
+                except KeyError:
+                    pass
