@@ -18,8 +18,8 @@ class DID:
     def db(self):
         return self.database
 
-    def find(self, query=None, version=''):
-        return self.db.find(query=query)
+    def find(self, query=None, version=None):
+        return self.db.find(query=query, commit_hash=version)
 
     def add(self, document, save=None) -> None:
         hash_ = hash_document(document)
@@ -43,8 +43,8 @@ class DID:
         if save if save is not None else self.auto_save:
             self.save()
 
-    def find_by_id(self, did_id, version=''):
-        return self.db.find_by_id(did_id)
+    def find_by_id(self, did_id, version=None):
+        return self.db.find_by_id(did_id, commit_hash=version)
     
     def update_by_id(self, did_id, document_updates={}, version='', save=None):
         self.db.update_by_id(did_id, updates=document_updates)

@@ -174,8 +174,8 @@ class SQL(DID_Database):
             self.working_snapshot_id = self.__create_snapshot()
         yield self.connection
 
-    def find(self, query=None) -> T.List:
-        s = select([self.documents])
+    def find(self, query=None, commit_hash=None) -> T.List:
+        s = self.select_documents_from_commit(commit_hash=commit_hash)
         if query:
             filter_ = self.generate_sqla_filter(query) 
             s = s.where(filter_)
@@ -231,8 +231,8 @@ class SQL(DID_Database):
         with self.transaction_handler() as connection:
             connection.execute(delete)
 
-    def find_by_id(self, id_):
-        s = select([self.documents]) \
+    def find_by_id(self, id_, commit_hash=None):
+        s = self.select_documents_from_commit(commit_hash=commit_hash) \
             .where(self.documents.c.document_id == id_)
         rows = self.connection.execute(s)
         try:
@@ -420,12 +420,13 @@ class SQL(DID_Database):
             except StopIteration:
                 raise RuntimeError('Failed to get snapshot associated with ref.name == "CURRENT".')
             
-    def select_current_documents(self):
-        """ Snapshot associated with CURRENT ref.
+    def select_documents_from_commit(self, commit_hash=None):
+        """ Defaults to commits associated with CURRENT ref.
 
         Note: not necessarily equivalent to working snapshot.
         """
-        name, commit_hash = self.current_ref
+        name, current_commit_hash = self.current_ref
+        commit_hash = commit_hash or current_commit_hash
         if commit_hash:
             commit__snapshot__snapshot_document__document = self.table.commit \
                 .join(self.table.snapshot, 
@@ -455,7 +456,7 @@ class SQL(DID_Database):
         """
         snapshot_id = self.__create_empty_snapshot()
         if self.current_ref:
-            current_documents = self.connection.execute(self.select_current_documents())
+            current_documents = self.connection.execute(self.select_documents_from_commit())
             self.connection.execute(self.table.snapshot_document.insert(), 
                 [{ 'snapshot_id': snapshot_id, 'document_hash': doc.hash} for doc in current_documents])
         return snapshot_id

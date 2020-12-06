@@ -253,4 +253,5 @@ class TestSqlVersioning:
         result = next(did.database.execute('SELECT document_hash FROM snapshot_document;'))[0]
         assert result == expected_document_hash
 
-    
+    def test_find(self, did, mocdocs):
+        pass
