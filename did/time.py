@@ -2,6 +2,8 @@
 from astropy.time import Time, TimeISO
 from .exception import InvalidTimeFormat
 
+from datetime import datetime
+
 def current_time():
     time = Time.now()
     time.format = 'isot'
@@ -9,8 +11,8 @@ def current_time():
 
 def check_time_format(thing):
     try:
-        Time(str(thing), 'isot')
+        datetime.fromisoformat(thing)
         return True
-    except ValueError:
+    except ValueError as error:
+        print(error)
         raise InvalidTimeFormat('Expected [ISOT format](https://docs.astropy.org/en/stable/api/astropy.time.TimeISOT.html#astropy.time.TimeISOT).')
-    

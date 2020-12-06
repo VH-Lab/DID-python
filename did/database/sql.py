@@ -356,8 +356,8 @@ class SQL(DID_Database):
     def current_ref(self):
         try:
             return next(self.execute("""
-                SELECT * FROM ref WHERE name = 'CURRENT'
-            """))
+                SELECT commit_hash FROM ref WHERE name = 'CURRENT'
+            """)).commit_hash
         except StopIteration:
             return None
             

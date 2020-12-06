@@ -161,7 +161,7 @@ class TestSqlVersioning:
 
         snapshot_hash = next(did.database.execute(f"""
             SELECT hash FROM snapshot
-            WHERE snapshot_id = {new_snapshot_id};
+            WHERE snapshot_id = {snapshot_id};
         """)).hash
 
         expected_commit_hash = hash_commit(snapshot_hash)
@@ -169,7 +169,7 @@ class TestSqlVersioning:
         # check new commit
         new_commit = next(did.database.execute(f"""
             SELECT * FROM commit
-            WHERE snapshot_id = {new_snapshot_id};
+            WHERE snapshot_id = {snapshot_id};
         """))
         assert new_commit.snapshot_id == snapshot_id
         assert not new_commit.parent
@@ -179,7 +179,7 @@ class TestSqlVersioning:
         # check new ref
         new_ref = next(did.database.execute(f"""
             SELECT * FROM ref
-            WHERE commit_hash = {new_commit.hash};
+            WHERE commit_hash = '{new_commit.hash}';
         """))
         assert new_ref.name == 'CURRENT'
 
