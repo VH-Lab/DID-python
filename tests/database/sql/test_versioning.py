@@ -20,7 +20,7 @@ mock_document_data = [
             'session_id': '2387492',
             'name': 'A',
             'datestamp': '2020-10-28T08:12:20+0000',
-            'versions': [],
+            'snapshots': [],
         },
         'depends_on': [],
         'binary_files': [],
@@ -45,7 +45,7 @@ mock_document_data = [
             'session_id': '2387492',
             'name': 'B',
             'datestamp': '2020-10-28T08:12:20+0000',
-            'versions': [],
+            'snapshots': [],
         },
         'depends_on': [],
         'binary_files': [],
@@ -70,7 +70,7 @@ mock_document_data = [
             'session_id': '2387492',
             'name': 'C',
             'datestamp': '2020-10-28T08:12:20+0000',
-            'versions': [],
+            'snapshots': [],
         },
         'depends_on': [],
         'binary_files': [],
@@ -261,7 +261,23 @@ class TestSqlVersioning:
         assert result == expected_document_hash
 
     def test_find(self, did, mocdocs):
-        pass
+        doc = mocdocs[0]
+        did.add(doc, save=True)
+        did.update_by_id(doc.id, {'app': {'c': True}}, save=True)
+        did.update_by_id(doc.id, {'app': {'c': False}}, save=True)
+        did.update_by_id(doc.id, {'app': {'d': True}}, save=True)
+
+        # test get by snapshot
+        doc = did.find_by_id(doc.id)
+        first_doc = did.find_by_id(doc.id, snapshot=doc.data['base']['snapshots'][-1])
+        assert first_doc.data['app'] == {'a': True, 'b': True}
+
+        # test get by commit
+        history = did.get_history()
+        second_commit = next(commit for commit in history if commit[0] == 2)
+        print(second_commit)
+        second_doc = did.find_by_id(doc.id, commit=second_commit[1])
+        assert second_doc.data['app'] == {'a': True, 'b': True, 'c': True}
 
     def test_update(self, did, mocdocs):
         doc = mocdocs[0]
@@ -273,7 +289,7 @@ class TestSqlVersioning:
         assert len(current_documents) == 2
 
         current_documents = [
-            { 'app': doc.data['app'], 'versions': doc.data['base']['versions'] }
+            { 'app': doc.data['app'], 'snapshots': doc.data['base']['snapshots'] }
             for doc in did.database.execute(f"""
                 SELECT * FROM document
                 WHERE document_id = '{doc.id}';
@@ -281,8 +297,8 @@ class TestSqlVersioning:
         ]
 
         assert current_documents == [
-            {'app': {'a': True, 'b': True}, 'versions': [1]}, 
-            {'app': {'a': True, 'b': True, 'c': True}, 'versions': [2, 1]}
+            {'app': {'a': True, 'b': True}, 'snapshots': [1]}, 
+            {'app': {'a': True, 'b': True, 'c': True}, 'snapshots': [2, 1]}
         ]
 
     def test_upsert(self, did, mocdocs):
@@ -299,7 +315,7 @@ class TestSqlVersioning:
         assert len(current_documents) == 2
 
         current_documents = [
-            { 'app': doc.data['app'], 'versions': doc.data['base']['versions'] }
+            { 'app': doc.data['app'], 'snapshots': doc.data['base']['snapshots'] }
             for doc in did.database.execute(f"""
                 SELECT * FROM document
                 WHERE document_id = '{doc.id}';
@@ -307,8 +323,8 @@ class TestSqlVersioning:
         ]
 
         assert current_documents == [
-            {'app': {'a': True, 'b': True}, 'versions': [1]}, 
-            {'app': {'a': True, 'b': True, 'c': True}, 'versions': [2, 1]}
+            {'app': {'a': True, 'b': True}, 'snapshots': [1]}, 
+            {'app': {'a': True, 'b': True, 'c': True}, 'snapshots': [2, 1]}
         ]
 
     def test_update_by_id(self, did, mocdocs):
@@ -321,7 +337,7 @@ class TestSqlVersioning:
         assert len(results) == 2
 
         results = [
-            { 'app': doc.data['app'], 'versions': doc.data['base']['versions'] }
+            { 'app': doc.data['app'], 'snapshots': doc.data['base']['snapshots'] }
             for doc in did.database.execute(f"""
                 SELECT * FROM document
                 WHERE document_id = '{doc.id}';
@@ -329,8 +345,8 @@ class TestSqlVersioning:
         ]
 
         assert results == [
-            {'app': {'a': True, 'b': True}, 'versions': [1]}, 
-            {'app': {'a': True, 'b': True, 'c': True}, 'versions': [2, 1]}
+            {'app': {'a': True, 'b': True}, 'snapshots': [1]}, 
+            {'app': {'a': True, 'b': True, 'c': True}, 'snapshots': [2, 1]}
         ]
 
     def test_update_many(self, did, mocdocs):

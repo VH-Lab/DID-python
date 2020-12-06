@@ -174,14 +174,6 @@ class SQL(DID_Database):
             self.working_snapshot_id = self.__create_snapshot()
         yield self.connection
 
-    def find(self, query=None, commit_hash=None) -> T.List:
-        s = self.select_documents_from_commit(commit_hash=commit_hash)
-        if query:
-            filter_ = self.generate_sqla_filter(query) 
-            s = s.where(filter_)
-        rows = self.connection.execute(s).fetchall()
-        return [self._did_doc_from_row(r) for r in rows]
-
     def add(self, document, hash_) -> None:
         insertion = self.documents.insert().values(
             document_id=document.id,
@@ -190,8 +182,16 @@ class SQL(DID_Database):
         )
         self.connection.execute(insertion)
 
-    def find_by_id(self, id_, commit_hash=None):
-        s = self.select_documents_from_commit(commit_hash=commit_hash) \
+    def find(self, query=None, snapshot_id=None, commit_hash=None) -> T.List:
+        s = self.select_documents(snapshot_id, commit_hash)
+        if query:
+            filter_ = self.generate_sqla_filter(query) 
+            s = s.where(filter_)
+        rows = self.connection.execute(s).fetchall()
+        return [self._did_doc_from_row(r) for r in rows]
+
+    def find_by_id(self, id_, snapshot_id=None, commit_hash=None):
+        s = self.select_documents(snapshot_id, commit_hash) \
             .where(self.documents.c.document_id == id_)
         rows = self.connection.execute(s)
         try:
@@ -356,7 +356,15 @@ class SQL(DID_Database):
                 return next(self.connection.execute(get_associated_documents))
             except StopIteration:
                 raise RuntimeError('Failed to get snapshot associated with ref.name == "CURRENT".')
-            
+    
+    def select_documents(self, snapshot_id, commit_hash):
+        if snapshot_id and commit_hash:
+            print(f'Warning: You are attempting to select document(s) by both snapshot and commit. The given snapshot {snapshot_id} will take precedence over the given commit {commit_hash}.')
+        if snapshot_id:
+            return self.select_documents_from_snapshot(snapshot_id)
+        else:
+            return self.select_documents_from_commit(commit_hash)
+
     def select_documents_from_commit(self, commit_hash=None):
         """ Defaults to commits associated with CURRENT ref.
 
@@ -377,6 +385,13 @@ class SQL(DID_Database):
                 .where(self.table.commit.c.hash == commit_hash)
         else:
             return select([self.table.document])
+            
+    def select_documents_from_snapshot(self, snapshot_id):
+        snapshot_document__document = self.table.snapshot_document.join(self.table.document, 
+            self.table.snapshot_document.c.document_hash == self.table.document.c.hash)
+        return select([self.table.document]) \
+            .select_from(snapshot_document__document) \
+            .where(self.table.snapshot_document.c.snapshot_id == snapshot_id)
 
     def __create_empty_snapshot(self):
         insert_empty_snapshot = self.table.snapshot.insert()\

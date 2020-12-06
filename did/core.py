@@ -19,14 +19,14 @@ class DID:
     def db(self):
         return self.database
 
-    def find(self, query=None, version=None):
-        return self.db.find(query=query, commit_hash=version)
+    def find(self, query=None, snapshot=None, commit=None):
+        return self.db.find(query=query, snapshot_id=snapshot, commit_hash=commit)
 
     def add(self, document, save=None) -> None:
         with self.db.transaction_handler():
             if self.db.find_by_id(document.id):
                 raise IntegrityError(f'Duplicate Key error for document {document.id}')
-            document.data['base']['versions'].insert(0, self.db.working_snapshot_id)
+            document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
             self.db.add(document, hash_)
             self.db.add_to_snapshot(hash_)
@@ -36,7 +36,7 @@ class DID:
 
     def update(self, document, save=None):
         with self.db.transaction_handler():
-            document.data['base']['versions'].insert(0, self.db.working_snapshot_id)
+            document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
 
             self.db.add(document, hash_)
@@ -50,7 +50,7 @@ class DID:
     def upsert(self, document, save=None):
         with self.db.transaction_handler():
             old_hash = self.db.get_document_hash(document)
-            document.data['base']['versions'].insert(0, self.db.working_snapshot_id)
+            document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
             self.db.add(document, hash_)
             self.db.add_to_snapshot(hash_)
@@ -62,8 +62,8 @@ class DID:
     def delete(self, document, save=None):
         self.delete_by_id(document.id, save=save)
 
-    def find_by_id(self, did_id, version=None):
-        return self.db.find_by_id(did_id, commit_hash=version)
+    def find_by_id(self, did_id, snapshot=None, commit=None):
+        return self.db.find_by_id(did_id, snapshot_id=snapshot, commit_hash=commit)
     
     def update_by_id(self, did_id, document_updates={}, save=None):
         with self.db.transaction_handler():
@@ -72,7 +72,7 @@ class DID:
             doc.data = merge_dicts(doc.data, document_updates)
             diff_hash = hash_document(doc)
             if old_hash != diff_hash:
-                doc.data['base']['versions'].insert(0, self.db.working_snapshot_id)
+                doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                 hash_ = hash_document(doc)
 
                 self.db.add(doc, hash_)
@@ -98,7 +98,7 @@ class DID:
                 doc.data = merge_dicts(doc.data, document_updates)
                 diff_hash = hash_document(doc)
                 if old_hash != diff_hash:
-                    doc.data['base']['versions'].insert(0, self.db.working_snapshot_id)
+                    doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                     hash_ = hash_document(doc)
 
                     self.db.add(doc, hash_)
@@ -140,3 +140,6 @@ class DID:
     def revert(self):
         """Revert database to point of last save"""
         self.db.revert()
+
+    def get_history(self):
+        return self.db.get_history()
