@@ -188,8 +188,7 @@ class SQL(DID_Database):
             data=document.data,
             hash=hash_
         )
-        with self.transaction_handler() as connection:
-            connection.execute(insertion)
+        self.connection.execute(insertion)
 
     def __DANGEROUS__add(self, document) -> None:
         """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
@@ -478,6 +477,13 @@ class SQL(DID_Database):
             document_hash=document_hash,
         )
         self.connection.execute(insert_new_row)
+    
+    def remove_from_snapshot(self, document_hash):
+        if not self.working_snapshot_id:
+            raise NoWorkingSnapshotError('There is no snapshot open for modification.')
+        delete = self.table.snapshot_document.delete().where(
+            self.table.snapshot_document.c.document_hash == document_hash)
+        connection.execute(delete)
 
     def get_working_document_hashes(self):
         get_associated_documents = select([self.table.snapshot_document]) \

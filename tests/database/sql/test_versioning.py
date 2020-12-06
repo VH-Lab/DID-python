@@ -18,7 +18,7 @@ mock_document_data = [
             'session_id': '2387492',
             'name': 'A',
             'datestamp': '2020-10-28T08:12:20+0000',
-            'version': '1',
+            'versions': [],
         },
         'depends_on': [],
         'document_class': {
@@ -42,7 +42,7 @@ mock_document_data = [
             'session_id': '2387492',
             'name': 'B',
             'datestamp': '2020-10-28T08:12:20+0000',
-            'version': '1',
+            'versions': [],
         },
         'depends_on': [],
         'document_class': {
@@ -66,7 +66,7 @@ mock_document_data = [
             'session_id': '2387492',
             'name': 'C',
             'datestamp': '2020-10-28T08:12:20+0000',
-            'version': '2',
+            'versions': [],
         },
         'depends_on': [],
         'document_class': {

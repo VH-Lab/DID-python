@@ -22,9 +22,11 @@ class DID:
         return self.db.find(query=query, commit_hash=version)
 
     def add(self, document, save=None) -> None:
-        hash_ = hash_document(document)
-        self.db.add(document, hash_)
-        self.db.add_to_snapshot(hash_)
+        with self.db.transaction_handler():
+            document.data['base']['versions'].insert(0, self.db.working_snapshot_id)
+            hash_ = hash_document(document)
+            self.db.add(document, hash_)
+            self.db.add_to_snapshot(hash_)
         if save if save is not None else self.auto_save:
             self.save()
 
