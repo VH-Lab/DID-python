@@ -186,14 +186,14 @@ class TestSqlVersioning:
     def test_commit_from_existing_ref(self, did, mocdocs, doc_count):
         assert not did.database.current_ref
 
-        first_doc_hash = hash_document(mocdocs[0])
         did.add(mocdocs[0])
+        first_doc_hash = hash_document(mocdocs[0])
         first_snapshot_id = did.database.working_snapshot_id
         did.save()
         first_commit = did.database.current_ref.commit_hash
 
-        second_doc_hash = hash_document(mocdocs[1])
         did.add(mocdocs[1])
+        second_doc_hash = hash_document(mocdocs[1])
         second_snapshot_id = did.database.working_snapshot_id
         did.save()
         second_commit = did.database.current_ref.commit_hash
@@ -207,6 +207,8 @@ class TestSqlVersioning:
             (second_snapshot_id, first_doc_hash),
             (second_snapshot_id, second_doc_hash),
         ]
+        print(snapshot_documents)
+        print(expected_snapshot_documents)
         assert snapshot_documents == expected_snapshot_documents
 
         # check commit was added correctly
@@ -255,3 +257,25 @@ class TestSqlVersioning:
 
     def test_find(self, did, mocdocs):
         pass
+
+    def test_update(self, did, mocdocs):
+        doc = mocdocs[0]
+        did.add(doc, save=True)
+        doc.data['app']['c'] = True
+        did.update(doc, save=True)
+
+        results = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        assert len(results) == 1
+
+        results = [
+            { 'app': doc.data['app'], 'versions': doc.data['base']['versions'] }
+            for doc in did.database.execute(f"""
+                SELECT * FROM document
+                WHERE document_id = '{doc.id}';
+            """)
+        ]
+
+        assert results == [
+            {'app': {'a': True, 'b': True}, 'versions': [1]}, 
+            {'app': {'a': True, 'b': True, 'c': True}, 'versions': [2, 1]}
+        ]

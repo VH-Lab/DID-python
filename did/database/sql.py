@@ -356,7 +356,7 @@ class SQL(DID_Database):
     
     def get_history(self, commit_hash=None):
         """Returns history from given commit, with each commit including 
-        the commit_hash, timestamp, ref_names:List[str], and depth.
+        the snapshot_id, commit_hash, timestamp, ref_names:List[str], and depth.
         Ordered from recent first.
         commit_hash defaults to current commit.
         """
@@ -376,9 +376,10 @@ class SQL(DID_Database):
                     WHERE log.hash IS NOT NULL
                 )
                 SELECT DISTINCT ON (commit.hash)
-                    commit.hash, commit.timestamp, COALESCE(ref.names, '[]') as names, depth
+                    snapshot.snapshot_id, commit.hash, commit.timestamp, COALESCE(ref.names, '[]') as names, depth
                 FROM log
                 JOIN commit on (log.hash = commit.hash)
+                JOIN snapshot on (commit.snapshot_id = snapshot.snapshot_id)
                 LEFT JOIN LATERAL (
                     SELECT json_agg(ref.name) as names
                     FROM ref
@@ -483,7 +484,13 @@ class SQL(DID_Database):
             raise NoWorkingSnapshotError('There is no snapshot open for modification.')
         delete = self.table.snapshot_document.delete().where(
             self.table.snapshot_document.c.document_hash == document_hash)
-        connection.execute(delete)
+        self.connection.execute(delete)
+
+    def remove_document_from_snapshot(self, document):
+        s = self.select_documents_from_commit()\
+            .where(self.table.document.c.document_id == document.id)
+        doc = self.connection.execute(s).fetchone()
+        self.remove_from_snapshot(doc.hash)
 
     def get_working_document_hashes(self):
         get_associated_documents = select([self.table.snapshot_document]) \
