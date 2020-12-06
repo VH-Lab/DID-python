@@ -2,9 +2,12 @@ from __future__ import annotations
 import did.types as T
 import json
 from blake3 import blake3
+from copy import deepcopy
 
 def hash_document(document):
-    serialized_data = bytes(json.dumps(document.data), 'utf8')
+    doc = deepcopy(document)
+    doc.data['base']['versions'] = None # ignore this field
+    serialized_data = bytes(json.dumps(doc.data), 'utf8')
     return blake3(serialized_data).hexdigest()
 
 def hash_snapshot(snapshot_id:str, document_hashes: T.List[str]):

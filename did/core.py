@@ -28,6 +28,7 @@ class DID:
                 raise IntegrityError(f'Duplicate Key error for document {document.id}')
             document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
+            document.data['base']['versions'].insert(0, hash_)
             self.db.add(document, hash_)
             self.db.add_to_snapshot(hash_)
         if save if save is not None else self.auto_save:
@@ -38,6 +39,7 @@ class DID:
         with self.db.transaction_handler():
             document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
+            document.data['base']['versions'].insert(0, hash_)
 
             self.db.add(document, hash_)
             self.db.add_to_snapshot(hash_)
@@ -52,6 +54,7 @@ class DID:
             old_hash = self.db.get_document_hash(document)
             document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
+            document.data['base']['versions'].insert(0, hash_)
             self.db.add(document, hash_)
             self.db.add_to_snapshot(hash_)
             if old_hash:
@@ -74,6 +77,7 @@ class DID:
             if old_hash != diff_hash:
                 doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                 hash_ = hash_document(doc)
+                doc.data['base']['versions'].insert(0, hash_)
 
                 self.db.add(doc, hash_)
                 self.db.add_to_snapshot(hash_)
@@ -100,6 +104,7 @@ class DID:
                 if old_hash != diff_hash:
                     doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                     hash_ = hash_document(doc)
+                    doc.data['base']['versions'].insert(0, hash_)
 
                     self.db.add(doc, hash_)
                     self.db.add_to_snapshot(hash_)
