@@ -183,6 +183,43 @@ class TestSqlVersioning:
         """))
         assert new_ref.name == 'CURRENT'
 
+    def test_commit_from_existing_ref(self, did, mocdocs, doc_count):
+        assert not did.database.current_ref
+
+        first_doc_hash = hash_document(mocdocs[0])
+        did.add(mocdocs[0])
+        first_snapshot_id = did.database.working_snapshot_id
+        did.save()
+        first_commit = did.database.current_ref.commit_hash
+
+        second_doc_hash = hash_document(mocdocs[1])
+        did.add(mocdocs[1])
+        second_snapshot_id = did.database.working_snapshot_id
+        did.save()
+        second_commit = did.database.current_ref.commit_hash
+
+        # check documents were staged correctly
+        snapshot_documents = list(did.database.execute(f"""
+            SELECT * FROM snapshot_document;
+        """))
+        expected_snapshot_documents = [
+            (first_snapshot_id, first_doc_hash),
+            (second_snapshot_id, first_doc_hash),
+            (second_snapshot_id, second_doc_hash),
+        ]
+        assert snapshot_documents == expected_snapshot_documents
+
+        # check commit was added correctly
+        latest_commit = next(did.database.execute(f"""
+            SELECT * FROM commit
+            WHERE hash = '{second_commit}';
+        """))
+        assert latest_commit.parent == first_commit
+        assert latest_commit.snapshot_id == second_snapshot_id 
+
+        # check ref was updated
+        assert did.database.current_ref.commit_hash == second_commit
+
     def test_add(self, did, mocdocs, doc_count):
         assert doc_count(did) is 0
         

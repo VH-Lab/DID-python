@@ -75,16 +75,16 @@ class DID:
             raise NoChangesToSave('The current snapshot has no changes.')
         snapshot_hash = hash_snapshot(self.db.working_snapshot_id, document_hashes)
         self.db.sign_working_snapshot(snapshot_hash)
+
         # add commit
-        if not self.db.current_ref():
-            commit_hash = hash_commit(snapshot_hash)
-            snapshot_id = self.db.working_snapshot_id
-            timestamp = current_time()
-            self.db.add_commit(commit_hash, snapshot_id, timestamp)
-        else:
-            #TODO: handle case with parent_commit
-            pass
+        commit_hash = hash_commit(snapshot_hash)
+        snapshot_id = self.db.working_snapshot_id
+        timestamp = current_time()
+        current_ref = self.db.current_ref
+        previous_commit_hash = current_ref.commit_hash if current_ref else None
+        self.db.add_commit(commit_hash, snapshot_id, timestamp, parent=previous_commit_hash)
         self.db.upsert_ref('CURRENT', commit_hash)
+
         # close transaction
         self.db.save()
 

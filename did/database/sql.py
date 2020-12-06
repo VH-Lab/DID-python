@@ -6,9 +6,10 @@ from sqlalchemy.schema import MetaData, ForeignKey
 from sqlalchemy import Table, Column, Integer, String, Boolean, Date, DateTime, Interval, Time, type_coerce, cast
 from sqlalchemy.dialects.postgresql import JSONB, JSON, insert
 from sqlalchemy.sql import select
-from sqlalchemy import and_, or_
+from sqlalchemy import join, and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy_utils import database_exists, create_database
+from sqlalchemy_views import CreateView
 
 from .did_database import DID_Database, DIDDocument
 from ..query import Query, AndQuery, OrQuery, CompositeQuery
@@ -144,6 +145,7 @@ class SQL(DID_Database):
         if self.current_transaction:
             self.current_transaction.commit()
             self.current_transaction = None
+            self.working_snapshot_id = None
             if self.options.verbose_feedback:
                 print('Changes saved.')
         else:
@@ -353,23 +355,76 @@ class SQL(DID_Database):
         else:
             return column.astext
 
+    @property
     def current_ref(self):
         try:
             return next(self.execute("""
-                SELECT commit_hash FROM ref WHERE name = 'CURRENT'
-            """)).commit_hash
+                SELECT * FROM ref WHERE name = 'CURRENT'
+            """))
         except StopIteration:
             return None
+
+    @property
+    def current_snapshot(self):
+        """ Snapshot associated with CURRENT ref.
+
+        Note: not necessarily equivalent to working snapshot.
+        """
+        commit_hash = self.current_ref.commit_hash
+        if commit_hash:
+            commit_to_snapshot = self.table.commit \
+                .join(self.table.snapshot, 
+                    self.table.commit.c.snapshot_id == self.table.snapshot.c.snapshot_id)
+            get_associated_documents = select([
+                self.table.snapshot
+            ]) \
+                .select_from(commit_to_snapshot) \
+                .where(self.table.commit.c.hash == commit_hash)
+            try:
+                return next(self.connection.execute(get_associated_documents))
+            except StopIteration:
+                raise RuntimeError('Failed to get snapshot associated with ref.name == "CURRENT".')
             
-    def __create_snapshot(self):
-        if not self.current_ref():
-            insert_empty_snapshot = self.table.snapshot.insert()\
-                .returning(self.table.snapshot.c.snapshot_id)
-            response = next(self.connection.execute(insert_empty_snapshot))
-            return response.snapshot_id
+    def select_current_documents(self):
+        """ Snapshot associated with CURRENT ref.
+
+        Note: not necessarily equivalent to working snapshot.
+        """
+        name, commit_hash = self.current_ref
+        if commit_hash:
+            commit__snapshot__snapshot_document__document = self.table.commit \
+                .join(self.table.snapshot, 
+                    self.table.commit.c.snapshot_id == self.table.snapshot.c.snapshot_id) \
+                .join(self.table.snapshot_document, 
+                    self.table.snapshot.c.snapshot_id == self.table.snapshot_document.c.snapshot_id) \
+                .join(self.table.document, 
+                    self.table.snapshot_document.c.document_hash == self.table.document.c.hash)
+            return select([self.table.document]) \
+                .select_from(commit__snapshot__snapshot_document__document) \
+                .where(self.table.commit.c.hash == commit_hash)
         else:
-            # TODO: build snapshot from current ref
-            pass
+            return select([self.table.document])
+
+    def __create_empty_snapshot(self):
+        insert_empty_snapshot = self.table.snapshot.insert()\
+            .returning(self.table.snapshot.c.snapshot_id)
+        response = next(self.connection.execute(insert_empty_snapshot))
+        return response.snapshot_id
+
+    def __create_snapshot(self):
+        """ Creates new transaction's working snapshot.
+        Contents of working snapshot are equivalent to git objects in staging.
+
+        :return: [description]
+        :rtype: [type]
+        """
+        snapshot_id = self.__create_empty_snapshot()
+        if self.current_ref:
+            current_documents = self.connection.execute(self.select_current_documents())
+            self.connection.execute(self.table.snapshot_document.insert(), 
+                [{ 'snapshot_id': snapshot_id, 'document_hash': doc.hash} for doc in current_documents])
+        return snapshot_id
+
 
     def __check_working_snapshot_is_mutable(self):
         get_working_snapshot = select([self.table.snapshot]) \
