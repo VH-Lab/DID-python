@@ -29,6 +29,7 @@ class DID:
             self.db.add(document, hash_)
             self.db.add_to_snapshot(hash_)
         if save if save is not None else self.auto_save:
+            print('saving...')
             self.save()
 
     def update(self, document, save=None):
