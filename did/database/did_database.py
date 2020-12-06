@@ -35,7 +35,7 @@ class DID_Database(ABC):
         pass
 
     @abstractmethod
-    def add(self, document):
+    def add(self, document, hash_):
         """It should be able to add a :term:`DIDDocument` to the database
         
         :param document:

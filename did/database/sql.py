@@ -75,8 +75,9 @@ class SQL(DID_Database):
             if self.options.hard_reset_on_init or not table_exists\
             else self.db
         self.tables['document'] = Table('document', metadata,
-            Column('document_id', String, primary_key=True),
+            Column('document_id', String, nullable=False),
             Column('data', JSONB, nullable=False),
+            Column('hash', String, primary_key=True),
             autoload_with=autoload_document_table,
         )
         if self.options.hard_reset_on_init or not table_exists:
@@ -143,7 +144,17 @@ class SQL(DID_Database):
         rows = self.connection.execute(s).fetchall()
         return [self._did_doc_from_row(r) for r in rows]
 
-    def add(self, document) -> None:
+    def add(self, document, hash_) -> None:
+        insertion = self.documents.insert().values(
+            document_id=document.id,
+            data=document.data,
+            hash=hash_,
+        )
+        with self.transaction_handler() as connection:
+            connection.execute(insertion)
+
+    def __DANGEROUS__add(self, document) -> None:
+        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         insertion = self.documents.insert().values(
             document_id=document.id,
             data=document.data
@@ -151,14 +162,16 @@ class SQL(DID_Database):
         with self.transaction_handler() as connection:
             connection.execute(insertion)
 
-    def update(self, document) -> None:
+    def __DANGEROUS__update(self, document) -> None:
+        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         update = self.documents.update() \
             .where(self.documents.c.document_id == document.id) \
             .values(data=document.data)
         with self.transaction_handler() as connection:
             connection.execute(update)
 
-    def upsert(self, document) -> None:
+    def __DANGEROUS__upsert(self, document) -> None:
+        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         insertion = insert(self.documents).values(
             document_id=document.id,
             data=document.data
@@ -173,7 +186,8 @@ class SQL(DID_Database):
         with self.transaction_handler() as connection:
             connection.execute(upsertion)
 
-    def delete(self, document) -> None:
+    def __DANGEROUS__delete(self, document) -> None:
+        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         delete = self.documents.delete() \
             .where(self.documents.c.document_id == document.id)
         with self.transaction_handler() as connection:
@@ -188,7 +202,8 @@ class SQL(DID_Database):
         except StopIteration:
             return None
 
-    def update_by_id(self, id_, updates={}) -> None:
+    def __DANGEROUS__update_by_id(self, id_, updates={}) -> None:
+        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         doc = self.find_by_id(id_)
         if not doc:
             raise Exception(f'Update failed: document {id_} does not exist')
@@ -200,13 +215,15 @@ class SQL(DID_Database):
         with self.transaction_handler() as connection:
             connection.execute(update)
 
-    def delete_by_id(self, id_) -> None:
+    def __DANGEROUS__delete_by_id(self, id_) -> None:
+        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         delete = self.documents.delete() \
             .where(self.documents.c.document_id == id_)
         with self.transaction_handler() as connection:
             connection.execute(delete)
 
-    def update_many(self, query=None, updates={}) -> None:
+    def __DANGEROUS__update_many(self, query=None, updates={}) -> None:
+        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         s = select([self.documents])
         if query:
             filter_ = self.generate_sqla_filter(query) 
@@ -222,7 +239,8 @@ class SQL(DID_Database):
                 connection.execute(update)
 
 
-    def delete_many(self, query=None) -> None:
+    def __DANGEROUS__delete_many(self, query=None) -> None:
+        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         """ Deletes all documents matching query.
               If no query is provided, deletes ALL documents.
 

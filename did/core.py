@@ -2,6 +2,8 @@ from __future__ import annotations
 import did.types as T
 from did.database.binary_collection import BinaryCollection
 from did.document import DIDDocument
+from did.versioning import hash_document
+
 
 class DID:
     def __init__(self, database, binary_directory, auto_save=False):
@@ -18,7 +20,8 @@ class DID:
         return self.db.find(query=query)
 
     def add(self, document, save=None) -> None:
-        self.db.add(document)
+        hash_ = hash_document(document)
+        self.db.add(document, hash_)
         if save if save is not None else self.auto_save:
             self.save()
 
