@@ -190,46 +190,6 @@ class SQL(DID_Database):
         )
         self.connection.execute(insertion)
 
-    def __DANGEROUS__add(self, document) -> None:
-        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
-        insertion = self.documents.insert().values(
-            document_id=document.id,
-            data=document.data
-        )
-        with self.transaction_handler() as connection:
-            connection.execute(insertion)
-
-    def __DANGEROUS__update(self, document) -> None:
-        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
-        update = self.documents.update() \
-            .where(self.documents.c.document_id == document.id) \
-            .values(data=document.data)
-        with self.transaction_handler() as connection:
-            connection.execute(update)
-
-    def __DANGEROUS__upsert(self, document) -> None:
-        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
-        insertion = insert(self.documents).values(
-            document_id=document.id,
-            data=document.data
-        )
-        upsertion = insertion.on_conflict_do_update(
-            index_elements=['document_id'],
-            set_=dict({
-                c.name: c
-                for c in insertion.excluded
-            })
-        )
-        with self.transaction_handler() as connection:
-            connection.execute(upsertion)
-
-    def __DANGEROUS__delete(self, document) -> None:
-        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
-        delete = self.documents.delete() \
-            .where(self.documents.c.document_id == document.id)
-        with self.transaction_handler() as connection:
-            connection.execute(delete)
-
     def find_by_id(self, id_, commit_hash=None):
         s = self.select_documents_from_commit(commit_hash=commit_hash) \
             .where(self.documents.c.document_id == id_)
@@ -239,18 +199,12 @@ class SQL(DID_Database):
         except StopIteration:
             return None
 
-    def __DANGEROUS__update_by_id(self, id_, updates={}) -> None:
+    def __DANGEROUS__delete(self, document) -> None:
         """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
-        doc = self.find_by_id(id_)
-        if not doc:
-            raise Exception(f'Update failed: document {id_} does not exist')
-        existing_data = doc.data
-        updated_data = merge_dicts(existing_data, updates)
-        update = self.documents.update() \
-            .where(self.documents.c.document_id == id_) \
-            .values(data = updated_data)
+        delete = self.documents.delete() \
+            .where(self.documents.c.document_id == document.id)
         with self.transaction_handler() as connection:
-            connection.execute(update)
+            connection.execute(delete)
 
     def __DANGEROUS__delete_by_id(self, id_) -> None:
         """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
@@ -258,23 +212,6 @@ class SQL(DID_Database):
             .where(self.documents.c.document_id == id_)
         with self.transaction_handler() as connection:
             connection.execute(delete)
-
-    def __DANGEROUS__update_many(self, query=None, updates={}) -> None:
-        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
-        s = select([self.documents])
-        if query:
-            filter_ = self.generate_sqla_filter(query) 
-            s = s.where(filter_)
-        docs = self.connection.execute(s).fetchall()
-        for doc in docs:
-            existing_data = doc['data']
-            updated_data = merge_dicts(existing_data, updates)
-            update = self.documents.update() \
-                .where(self.documents.c.document_id == doc['document_id']) \
-                .values(data = updated_data)
-            with self.transaction_handler() as connection:
-                connection.execute(update)
-
 
     def __DANGEROUS__delete_many(self, query=None) -> None:
         """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""

@@ -3,7 +3,7 @@ import did.types as T
 from did.database.binary_collection import BinaryCollection
 from did.document import DIDDocument
 from did.versioning import hash_document, hash_snapshot, hash_commit
-from did.exception import NoChangesToSave
+from did.exception import NoChangesToSave, NoWorkingSnapshotError, IntegrityError
 from did.time import current_time
 from did.database.utils import merge_dicts
 
@@ -24,6 +24,8 @@ class DID:
 
     def add(self, document, save=None) -> None:
         with self.db.transaction_handler():
+            if self.db.find_by_id(document.id):
+                raise IntegrityError(f'Duplicate Key error for document {document.id}')
             document.data['base']['versions'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
             self.db.add(document, hash_)

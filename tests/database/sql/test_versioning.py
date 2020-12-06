@@ -23,6 +23,7 @@ mock_document_data = [
             'versions': [],
         },
         'depends_on': [],
+        'binary_files': [],
         'document_class': {
             'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
             'validation': '$NDISCHEMAPATH\/ndi_document_app_schema.json',
@@ -47,6 +48,7 @@ mock_document_data = [
             'versions': [],
         },
         'depends_on': [],
+        'binary_files': [],
         'document_class': {
             'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
             'validation': '$NDISCHEMAPATH\/ndi_document_app_schema.json',
@@ -71,6 +73,7 @@ mock_document_data = [
             'versions': [],
         },
         'depends_on': [],
+        'binary_files': [],
         'document_class': {
             'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
             'validation': '$NDISCHEMAPATH\/ndi_document_app_schema.json',
