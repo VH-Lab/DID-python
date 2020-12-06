@@ -2,7 +2,9 @@ from __future__ import annotations
 import did.types as T
 from did.database.binary_collection import BinaryCollection
 from did.document import DIDDocument
-from did.versioning import hash_document
+from did.versioning import hash_document, hash_snapshot, hash_commit
+from did.exception import NoChangesToSave
+from did.time import current_time
 
 
 class DID:
@@ -65,11 +67,25 @@ class DID:
             self.save()
 
     def save(self):
-        # TODO:
-        #   hash new version
-        #   update version history in database
-        #   update new version in affected documents (self.documents_in_transaction)
-        #   self.db.commit() again to save version changes
+        # create snapshot
+        if not self.db.working_snapshot_id:
+            raise NoWorkingSnapshotError('There is no snapshot open to write.')
+        document_hashes = self.db.get_working_document_hashes()
+        if not document_hashes:
+            raise NoChangesToSave('The current snapshot has no changes.')
+        snapshot_hash = hash_snapshot(self.db.working_snapshot_id, document_hashes)
+        self.db.sign_working_snapshot(snapshot_hash)
+        # add commit
+        if not self.db.current_ref():
+            commit_hash = hash_commit(snapshot_hash)
+            snapshot_id = self.db.working_snapshot_id
+            timestamp = current_time()
+            self.db.add_commit(commit_hash, snapshot_id, timestamp)
+        else:
+            #TODO: handle case with parent_commit
+            pass
+        self.db.upsert_ref('CURRENT', commit_hash)
+        # close transaction
         self.db.save()
 
     def revert(self):

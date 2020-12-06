@@ -12,7 +12,7 @@ from sqlalchemy_utils import database_exists, create_database
 
 from .did_database import DID_Database, DIDDocument
 from ..query import Query, AndQuery, OrQuery, CompositeQuery
-from ..exception import NoTransactionError, NoWorkingSnapshotError
+from ..exception import NoTransactionError, NoWorkingSnapshotError, SnapshotIntegrityError
 from .utils import merge_dicts
 
 from contextlib import contextmanager
@@ -91,8 +91,9 @@ class SQL(DID_Database):
             ),
             Table('commit', metadata,
                 Column('hash', String, primary_key=True),
-                Column('parent', String, ForeignKey('commit.hash'), nullable=False),
+                Column('parent', String, ForeignKey('commit.hash')),
                 Column('snapshot_id', Integer, ForeignKey('snapshot.snapshot_id'), nullable=False),
+                Column('timestamp', String),
                 autoload_with=autoload_document_table,
             ),
             Table('snapshot', metadata, # snapshot + snapshot_documents are analogous to git tree nodes
@@ -168,9 +169,7 @@ class SQL(DID_Database):
         # TODO: when implementing versioning, will probably need to make this a two-phase transaction in order to do rollbacks on commits within session
         if not self.current_transaction:
             self.current_transaction = self.connection.begin()
-            self.working_snapshot_id = self._create_snapshot()
-        else:
-            print('UUUUUUH')
+            self.working_snapshot_id = self.__create_snapshot()
         yield self.connection
 
     def find(self, query=None) -> T.List:
@@ -354,7 +353,7 @@ class SQL(DID_Database):
         else:
             return column.astext
 
-    def _current_ref(self):
+    def current_ref(self):
         try:
             return next(self.execute("""
                 SELECT * FROM ref WHERE name = 'CURRENT'
@@ -362,10 +361,8 @@ class SQL(DID_Database):
         except StopIteration:
             return None
             
-    def _create_snapshot(self):
-        if not self.current_transaction:
-            raise NoTransactionError('Snapshots must be created in the context of a transaction.')
-        if not self._current_ref():
+    def __create_snapshot(self):
+        if not self.current_ref():
             insert_empty_snapshot = self.table.snapshot.insert()\
                 .returning(self.table.snapshot.c.snapshot_id)
             response = next(self.connection.execute(insert_empty_snapshot))
@@ -375,10 +372,12 @@ class SQL(DID_Database):
             pass
 
     def __check_working_snapshot_is_mutable(self):
-        s = select([self.table.snapshot]) \
+        get_working_snapshot = select([self.table.snapshot]) \
             .where(self.table.snapshot.c.snapshot_id == self.working_snapshot_id)
-        result = next(self.connection.execute(s))
-        return True if result.hash is None else False
+        result = next(self.connection.execute(get_working_snapshot))
+        if result.hash:
+            raise SnapshotIntegrityError('Hashed snapshots cannot be ')
+
 
     def add_to_snapshot(self, document_hash):
         if not self.working_snapshot_id:
@@ -388,3 +387,39 @@ class SQL(DID_Database):
             document_hash=document_hash,
         )
         self.connection.execute(insert_new_row)
+
+    def get_working_document_hashes(self):
+        get_associated_documents = select([self.table.snapshot_document]) \
+            .where(self.table.snapshot_document.c.snapshot_id == self.working_snapshot_id)
+        results = self.connection.execute(get_associated_documents)
+        return [row.document_hash for row in results]
+
+    def sign_working_snapshot(self, snapshot_hash):
+        self.__check_working_snapshot_is_mutable()
+        update = self.table.snapshot.update() \
+            .where(self.table.snapshot.c.snapshot_id == self.working_snapshot_id) \
+            .values(hash = snapshot_hash)
+        self.connection.execute(update)
+    
+    def add_commit(self, commit_hash, snapshot_id, timestamp, parent=None):
+        insert_commit = self.table.commit.insert().values(
+            hash=commit_hash,
+            snapshot_id=snapshot_id,
+            timestamp=timestamp,
+            parent=parent
+        )
+        self.connection.execute(insert_commit)
+    
+    def upsert_ref(self, name, commit_hash):
+        insertion = insert(self.table.ref).values(
+            name=name,
+            commit_hash=commit_hash
+        )
+        upsertion = insertion.on_conflict_do_update(
+            index_elements=['name'],
+            set_=dict({
+                c.name: c
+                for c in insertion.excluded
+            })
+        )
+        self.connection.execute(upsertion)

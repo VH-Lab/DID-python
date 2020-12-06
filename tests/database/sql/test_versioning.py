@@ -1,7 +1,8 @@
 from did import DID, Query as Q
 from did.database.sql import SQL
 from did.document import DIDDocument
-from did.versioning import hash_document
+from did.versioning import hash_document, hash_snapshot, hash_commit
+from did.time import check_time_format
 import pytest
 
 from sqlalchemy.sql import select
@@ -132,12 +133,55 @@ class TestSqlVersioning:
         assert not did.database.current_transaction
         with did.database.transaction_handler() as connection:
             new_snapshot_id = did.database.working_snapshot_id
-        did.save()
+        did.db.save()
         results = next(did.database.execute(f"""
             SELECT snapshot_id FROM snapshot
             WHERE snapshot_id = {new_snapshot_id};
         """))
         assert results.snapshot_id == 1
+
+    def test_write_snapshot(self, did, mocdocs):
+        for doc in mocdocs:
+            did.add(doc)
+        new_snapshot_id = did.database.working_snapshot_id
+        document_hashes = [hash_document(doc) for doc in mocdocs]
+        did.save()
+        expected_snapshot_hash = hash_snapshot(new_snapshot_id, document_hashes)
+        results = next(did.database.execute(f"""
+            SELECT hash FROM snapshot
+            WHERE snapshot_id = {new_snapshot_id};
+        """))
+        assert results.hash == expected_snapshot_hash
+    
+    def test_initial_commit(self, did, mocdocs):
+        for doc in mocdocs:
+            did.add(doc)
+        snapshot_id = did.database.working_snapshot_id
+        did.save()
+
+        snapshot_hash = next(did.database.execute(f"""
+            SELECT hash FROM snapshot
+            WHERE snapshot_id = {new_snapshot_id};
+        """)).hash
+
+        expected_commit_hash = hash_commit(snapshot_hash)
+
+        # check new commit
+        new_commit = next(did.database.execute(f"""
+            SELECT * FROM commit
+            WHERE snapshot_id = {new_snapshot_id};
+        """))
+        assert new_commit.snapshot_id == snapshot_id
+        assert not new_commit.parent
+        assert check_time_format(new_commit.timestamp)
+        assert new_commit.hash == expected_commit_hash
+
+        # check new ref
+        new_ref = next(did.database.execute(f"""
+            SELECT * FROM ref
+            WHERE commit_hash = {new_commit.hash};
+        """))
+        assert new_ref.name == 'CURRENT'
 
     def test_add(self, did, mocdocs, doc_count):
         assert doc_count(did) is 0
