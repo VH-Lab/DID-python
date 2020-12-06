@@ -57,9 +57,7 @@ class DID:
             self.save()
 
     def delete(self, document, save=None):
-        self.db.delete(document)
-        if save if save is not None else self.auto_save:
-            self.save()
+        self.delete_by_id(document.id, save=save)
 
     def find_by_id(self, did_id, version=None):
         return self.db.find_by_id(did_id, commit_hash=version)
@@ -82,7 +80,10 @@ class DID:
             self.save()
 
     def delete_by_id(self, did_id, save=None):
-        self.db.delete_by_id(did_id)
+        with self.db.transaction_handler():
+            doc = self.db.find_by_id(did_id)
+            old_hash = self.db.get_document_hash(doc)
+            self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
 
@@ -105,7 +106,11 @@ class DID:
             self.save()
     
     def delete_many(self, query, save=None):
-        self.db.delete_many(query=query)
+        with self.db.transaction_handler():
+            documents = self.db.find(query=query)
+            for doc in documents:
+                old_hash = self.db.get_document_hash(doc)
+                self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
 
@@ -114,8 +119,6 @@ class DID:
         if not self.db.working_snapshot_id:
             raise NoWorkingSnapshotError('There is no snapshot open to write.')
         document_hashes = self.db.get_working_document_hashes()
-        if not document_hashes:
-            raise NoChangesToSave('The current snapshot has no changes.')
         snapshot_hash = hash_snapshot(self.db.working_snapshot_id, document_hashes)
         self.db.sign_working_snapshot(snapshot_hash)
 

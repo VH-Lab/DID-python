@@ -357,3 +357,34 @@ class TestSqlVersioning:
                     assert False
                 except KeyError:
                     pass
+
+    def test_delete(self, did, mocdocs):
+        """DID.delete is a wrapper for DID.delete_by_id"""
+        doc = mocdocs[0]
+
+        assert len(did.find()) == 0
+
+        did.add(doc, save=True)
+        assert len(did.find()) == 1
+
+        did.delete(doc, save=True)
+        assert len(did.find()) == 0
+
+        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        assert len(current_documents) == 1
+
+    def test_delete_many(self, did, mocdocs):
+        """DID.delete is a wrapper for DID.delete_by_id"""
+        assert len(did.find()) == 0
+
+        for doc in mocdocs:
+            did.add(doc)
+        did.save()
+        assert len(did.find()) == 3
+
+        by_app_a = Q('app.a') == True
+        did.delete_many(by_app_a, save=True)
+        assert len(did.find()) == 1
+
+        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        assert len(current_documents) == 4
