@@ -143,11 +143,20 @@ class TestSqlVersioning:
         assert doc_count(did) is 0
         
         did.add(mocdocs[0])
+        snapshot_id = did.database.working_snapshot_id
+        expected_document_hash = hash_document(mocdocs[0])
         did.save()
         
+        # document is added to document table
         result = next(did.database.execute('SELECT document_id FROM document;'))[0]
         assert result is mocdocs[0].id
         result = next(did.database.execute('SELECT data FROM document;'))[0]
         assert result == mocdocs[0].data
         result = next(did.database.execute('SELECT hash FROM document;'))[0]
-        assert result == hash_document(mocdocs[0])
+        assert result == expected_document_hash
+
+        # document is added to JOIN table
+        result = next(did.database.execute('SELECT document_hash FROM snapshot_document;'))[0]
+        assert result == expected_document_hash
+
+    

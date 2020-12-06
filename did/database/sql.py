@@ -12,7 +12,7 @@ from sqlalchemy_utils import database_exists, create_database
 
 from .did_database import DID_Database, DIDDocument
 from ..query import Query, AndQuery, OrQuery, CompositeQuery
-from ..exception import NoTransactionError
+from ..exception import NoTransactionError, NoWorkingSnapshotError
 from .utils import merge_dicts
 
 from contextlib import contextmanager
@@ -168,7 +168,6 @@ class SQL(DID_Database):
         # TODO: when implementing versioning, will probably need to make this a two-phase transaction in order to do rollbacks on commits within session
         if not self.current_transaction:
             self.current_transaction = self.connection.begin()
-            print('creating_snapshot')
             self.working_snapshot_id = self._create_snapshot()
         else:
             print('UUUUUUH')
@@ -186,8 +185,7 @@ class SQL(DID_Database):
         insertion = self.documents.insert().values(
             document_id=document.id,
             data=document.data,
-            hash=hash_,
-            snapshot_id='PLACEHOLDER',
+            hash=hash_
         )
         with self.transaction_handler() as connection:
             connection.execute(insertion)
@@ -368,10 +366,25 @@ class SQL(DID_Database):
         if not self.current_transaction:
             raise NoTransactionError('Snapshots must be created in the context of a transaction.')
         if not self._current_ref():
-            empty_snapshot = self.table.snapshot.insert().returning(self.table.snapshot.c.snapshot_id)
-            response = next(self.connection.execute(empty_snapshot))
-            print(response.snapshot_id)
+            insert_empty_snapshot = self.table.snapshot.insert()\
+                .returning(self.table.snapshot.c.snapshot_id)
+            response = next(self.connection.execute(insert_empty_snapshot))
             return response.snapshot_id
         else:
             # TODO: build snapshot from current ref
             pass
+
+    def __check_working_snapshot_is_mutable(self):
+        s = select([self.table.snapshot]) \
+            .where(self.table.snapshot.c.snapshot_id == self.working_snapshot_id)
+        result = next(self.connection.execute(s))
+        return True if result.hash is None else False
+
+    def add_to_snapshot(self, document_hash):
+        if not self.working_snapshot_id:
+            raise NoWorkingSnapshotError('There is no snapshot open for modification.')
+        insert_new_row = self.table.snapshot_document.insert().values(
+            snapshot_id=self.working_snapshot_id,
+            document_hash=document_hash,
+        )
+        self.connection.execute(insert_new_row)

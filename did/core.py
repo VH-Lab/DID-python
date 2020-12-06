@@ -22,6 +22,7 @@ class DID:
     def add(self, document, save=None) -> None:
         hash_ = hash_document(document)
         self.db.add(document, hash_)
+        self.db.add_to_snapshot(hash_)
         if save if save is not None else self.auto_save:
             self.save()
 
