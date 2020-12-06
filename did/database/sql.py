@@ -354,6 +354,41 @@ class SQL(DID_Database):
             return column.cast(Time)
         else:
             return column.astext
+    
+    def get_history(self, commit_hash=None):
+        """Returns history from given commit, with each commit including 
+        the commit_hash, timestamp, ref_names:List[str], and depth.
+        Ordered from recent first.
+        commit_hash defaults to current commit.
+        """
+        current_ref = self.current_ref
+        if not current_ref and not commit_hash:
+            return []
+        commit_hash = commit_hash or current_ref.commit_hash
+        return list(self.execute(f"""
+            SELECT * FROM (
+                WITH RECURSIVE log(parent, hash, depth) AS (
+                    SELECT  
+                        NULL::varchar, '{commit_hash}'::varchar, 1
+                    UNION
+                    SELECT  log.hash, commit.parent, depth + 1
+                    FROM log
+                    LEFT JOIN commit ON commit.hash = log.hash
+                    WHERE log.hash IS NOT NULL
+                )
+                SELECT DISTINCT ON (commit.hash)
+                    commit.hash, commit.timestamp, COALESCE(ref.names, '[]') as names, depth
+                FROM log
+                JOIN commit on (log.hash = commit.hash)
+                LEFT JOIN LATERAL (
+                    SELECT json_agg(ref.name) as names
+                    FROM ref
+                    WHERE log.hash = ref.commit_hash
+                ) ref ON true
+                ORDER BY commit.hash, depth
+            ) t
+            ORDER BY depth
+        """))
 
     @property
     def current_ref(self):

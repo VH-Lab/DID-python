@@ -220,6 +220,19 @@ class TestSqlVersioning:
         # check ref was updated
         assert did.database.current_ref.commit_hash == second_commit
 
+    def test_get_history(self, did, mocdocs):
+        history = did.database.get_history()
+        for doc in mocdocs:
+            did.add(doc, save=True)
+        did.database.upsert_ref('branch-name', did.database.current_ref.commit_hash)
+        history = did.database.get_history()
+
+        all_commits = [row.hash for row in (did.database.execute(f"""
+            SELECT * FROM commit;
+        """))]
+        for commit in history:
+            assert commit[0] in all_commits
+
     def test_add(self, did, mocdocs, doc_count):
         assert doc_count(did) is 0
         
