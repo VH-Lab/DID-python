@@ -36,12 +36,20 @@ class DID:
             hash_ = hash_document(document)
             self.db.add(document, hash_)
             self.db.add_to_snapshot(hash_)
-            self.db.remove_document_from_snapshot(document)
+            old_hash = self.db.get_document_hash(document)
+            self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
 
     def upsert(self, document, save=None):
-        self.db.upsert(document)
+        with self.db.transaction_handler():
+            old_hash = self.db.get_document_hash(document)
+            document.data['base']['versions'].insert(0, self.db.working_snapshot_id)
+            hash_ = hash_document(document)
+            self.db.add(document, hash_)
+            self.db.add_to_snapshot(hash_)
+            if old_hash:
+                self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
 

@@ -279,3 +279,29 @@ class TestSqlVersioning:
             {'app': {'a': True, 'b': True}, 'versions': [1]}, 
             {'app': {'a': True, 'b': True, 'c': True}, 'versions': [2, 1]}
         ]
+
+    def test_upsert(self, did, mocdocs):
+        doc = mocdocs[0]
+        did.upsert(doc, save=True)
+
+        results = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        assert len(results) == 1
+
+        doc.data['app']['c'] = True
+        did.upsert(doc, save=True)
+
+        results = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        assert len(results) == 1
+
+        results = [
+            { 'app': doc.data['app'], 'versions': doc.data['base']['versions'] }
+            for doc in did.database.execute(f"""
+                SELECT * FROM document
+                WHERE document_id = '{doc.id}';
+            """)
+        ]
+
+        assert results == [
+            {'app': {'a': True, 'b': True}, 'versions': [1]}, 
+            {'app': {'a': True, 'b': True, 'c': True}, 'versions': [2, 1]}
+        ]

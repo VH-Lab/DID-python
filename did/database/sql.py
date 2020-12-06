@@ -425,8 +425,8 @@ class SQL(DID_Database):
 
         Note: not necessarily equivalent to working snapshot.
         """
-        name, current_commit_hash = self.current_ref
-        commit_hash = commit_hash or current_commit_hash
+        current_ref = self.current_ref
+        commit_hash = commit_hash or current_ref and current_ref.commit_hash
         if commit_hash:
             commit__snapshot__snapshot_document__document = self.table.commit \
                 .join(self.table.snapshot, 
@@ -486,11 +486,14 @@ class SQL(DID_Database):
             self.table.snapshot_document.c.document_hash == document_hash)
         self.connection.execute(delete)
 
-    def remove_document_from_snapshot(self, document):
+    def get_document_hash(self, document):
         s = self.select_documents_from_commit()\
             .where(self.table.document.c.document_id == document.id)
         doc = self.connection.execute(s).fetchone()
-        self.remove_from_snapshot(doc.hash)
+        try:
+            return doc.hash
+        except AttributeError:
+            return None
 
     def get_working_document_hashes(self):
         get_associated_documents = select([self.table.snapshot_document]) \
