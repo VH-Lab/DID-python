@@ -128,6 +128,17 @@ class TestSqlVersioning:
         for row in results:
             assert row in expected
 
+    def test_initial_snapshot(self, did, mocdocs):
+        assert not did.database.current_transaction
+        with did.database.transaction_handler() as connection:
+            new_snapshot_id = did.database.working_snapshot_id
+        did.save()
+        results = next(did.database.execute(f"""
+            SELECT snapshot_id FROM snapshot
+            WHERE snapshot_id = {new_snapshot_id};
+        """))
+        assert results.snapshot_id == 1
+
     def test_add(self, did, mocdocs, doc_count):
         assert doc_count(did) is 0
         

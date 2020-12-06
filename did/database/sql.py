@@ -2,7 +2,7 @@ from __future__ import annotations
 import did.types as T
 
 from sqlalchemy import create_engine
-from sqlalchemy.schema import MetaData
+from sqlalchemy.schema import MetaData, ForeignKey
 from sqlalchemy import Table, Column, Integer, String, Boolean, Date, DateTime, Interval, Time, type_coerce, cast
 from sqlalchemy.dialects.postgresql import JSONB, JSON, insert
 from sqlalchemy.sql import select
@@ -34,6 +34,14 @@ class SQLOptions:
         self.debug_mode = debug_mode
         self.verbose_feedback = verbose_feedback
 
+class SQLTables:
+    def __init__(self, ref, commit, snapshot, snapshot_document, document):
+        self.ref = ref
+        self.commit = commit
+        self.snapshot = snapshot
+        self.snapshot_document = snapshot_document
+        self.document = document
+
 class SQL(DID_Database):
     """"""
 
@@ -53,10 +61,10 @@ class SQL(DID_Database):
 
         self.db = self._init_database(connection_string)
         self.metadata = MetaData()
-        self.tables = { 'document': None }
-        self._create_tables(self.metadata)
-        self.connection: T.Optional[T.Connection] = self.db.connect()
+        self.table = self._create_tables(self.metadata)
+        self.connection: T.Connection = self.db.connect()
         self.current_transaction: T.Optional[T.Transaction] = None
+        self.working_snapshot_id = None
 
     def _init_database(self, connection_string):
         if not database_exists(connection_string):
@@ -74,15 +82,41 @@ class SQL(DID_Database):
         autoload_document_table = None\
             if self.options.hard_reset_on_init or not table_exists\
             else self.db
-        self.tables['document'] = Table('document', metadata,
-            Column('document_id', String, nullable=False),
-            Column('data', JSONB, nullable=False),
-            Column('hash', String, primary_key=True),
-            autoload_with=autoload_document_table,
+
+        tables = SQLTables(
+            Table('ref', metadata,
+                Column('name', String, primary_key=True),
+                Column('commit_hash', String, ForeignKey('commit.hash'), nullable=False),
+                autoload_with=autoload_document_table,
+            ),
+            Table('commit', metadata,
+                Column('hash', String, primary_key=True),
+                Column('parent', String, ForeignKey('commit.hash'), nullable=False),
+                Column('snapshot_id', Integer, ForeignKey('snapshot.snapshot_id'), nullable=False),
+                autoload_with=autoload_document_table,
+            ),
+            Table('snapshot', metadata, # snapshot + snapshot_documents are analogous to git tree nodes
+                Column('snapshot_id', Integer, primary_key=True),
+                Column('hash', String),
+                autoload_with=autoload_document_table,
+            ),
+            Table('snapshot_document', metadata,
+                Column('snapshot_id', Integer, ForeignKey('snapshot.snapshot_id'), nullable=False),           
+                Column('document_hash', String, ForeignKey('document.hash'), nullable=False),
+            ),
+            Table('document', metadata, # Analog to git objects
+                Column('document_id', String, nullable=False),
+                Column('data', JSONB, nullable=False),
+                Column('hash', String, primary_key=True),
+                autoload_with=autoload_document_table,
+            ),
         )
+
         if self.options.hard_reset_on_init or not table_exists:
             metadata.drop_all(self.db, checkfirst=True)
             metadata.create_all(self.db)
+        
+        return tables
 
     def __check_table_exists(self, table_name):
         results = self.db.execute(f'''
@@ -95,7 +129,7 @@ class SQL(DID_Database):
     
     @property
     def documents(self):
-        return self.tables['document']
+        return self.table.document
 
     def execute(self, query: str):
         """Runs a `sqlAlchemy query <https://docs.sqlalchemy.org/en/13/core/connections.html>`_. Only for use by developers wanting to access the underlying sqlAlchemy layer.
@@ -134,6 +168,10 @@ class SQL(DID_Database):
         # TODO: when implementing versioning, will probably need to make this a two-phase transaction in order to do rollbacks on commits within session
         if not self.current_transaction:
             self.current_transaction = self.connection.begin()
+            print('creating_snapshot')
+            self.working_snapshot_id = self._create_snapshot()
+        else:
+            print('UUUUUUH')
         yield self.connection
 
     def find(self, query=None) -> T.List:
@@ -149,6 +187,7 @@ class SQL(DID_Database):
             document_id=document.id,
             data=document.data,
             hash=hash_,
+            snapshot_id='PLACEHOLDER',
         )
         with self.transaction_handler() as connection:
             connection.execute(insertion)
@@ -316,4 +355,23 @@ class SQL(DID_Database):
             return column.cast(Time)
         else:
             return column.astext
+
+    def _current_ref(self):
+        try:
+            return next(self.execute("""
+                SELECT * FROM ref WHERE name = 'CURRENT'
+            """))
+        except StopIteration:
+            return None
             
+    def _create_snapshot(self):
+        if not self.current_transaction:
+            raise NoTransactionError('Snapshots must be created in the context of a transaction.')
+        if not self._current_ref():
+            empty_snapshot = self.table.snapshot.insert().returning(self.table.snapshot.c.snapshot_id)
+            response = next(self.connection.execute(empty_snapshot))
+            print(response.snapshot_id)
+            return response.snapshot_id
+        else:
+            # TODO: build snapshot from current ref
+            pass
