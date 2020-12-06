@@ -93,6 +93,7 @@ def db():
         verbose_feedback = False,
     )
     yield database
+    database.connection.close()
 
 @pytest.fixture
 def mocdocs():

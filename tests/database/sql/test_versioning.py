@@ -1,0 +1,142 @@
+from did import DID, Query as Q
+from did.database.sql import SQL
+from did.document import DIDDocument
+from did.versioning import hash_document
+import pytest
+
+from sqlalchemy.sql import select
+from sqlalchemy.orm import sessionmaker
+
+from sqlalchemy.sql import select
+from sqlalchemy.orm import sessionmaker
+
+mock_document_data = [
+    {
+        'base': {
+            'id': '0',
+            'session_id': '2387492',
+            'name': 'A',
+            'datestamp': '2020-10-28T08:12:20+0000',
+            'version': '1',
+        },
+        'depends_on': [],
+        'document_class': {
+            'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
+            'validation': '$NDISCHEMAPATH\/ndi_document_app_schema.json',
+            'class_name': 'ndi_document_app',
+            'property_list_name': 'app',
+            'class_version': 1,
+            'superclasses': [{
+                'definition': '$NDIDOCUMENTPATH\/base_document.json'
+            }],
+        },
+        'app': {
+            'a': True,
+            'b': True
+        },
+    },
+    {
+        'base': {
+            'id': '1',
+            'session_id': '2387492',
+            'name': 'B',
+            'datestamp': '2020-10-28T08:12:20+0000',
+            'version': '1',
+        },
+        'depends_on': [],
+        'document_class': {
+            'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
+            'validation': '$NDISCHEMAPATH\/ndi_document_app_schema.json',
+            'class_name': 'ndi_document_app',
+            'property_list_name': 'app',
+            'class_version': 1,
+            'superclasses': [{
+                'definition': '$NDIDOCUMENTPATH\/base_document.json'
+            }],
+        },
+        'app': {
+            'a': True,
+            'b': False
+        },
+    },
+    {
+        'base': {
+            'id': '2',
+            'session_id': '2387492',
+            'name': 'C',
+            'datestamp': '2020-10-28T08:12:20+0000',
+            'version': '2',
+        },
+        'depends_on': [],
+        'document_class': {
+            'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
+            'validation': '$NDISCHEMAPATH\/ndi_document_app_schema.json',
+            'class_name': 'ndi_document_app',
+            'property_list_name': 'app',
+            'class_version': 1,
+            'superclasses': [{
+                'definition': '$NDIDOCUMENTPATH\/base_document.json'
+            }],
+        },
+        'app': {
+            'a': False,
+            'b': False
+        },
+    },
+]
+
+@pytest.fixture
+def did():
+    did = DID(
+        database = SQL(
+            'postgres://postgres:password@localhost:5432/did_versioning_tests', 
+            hard_reset_on_init = True,
+            debug_mode = False,
+            verbose_feedback = False,
+        ),
+        binary_directory='./tests/database/sql/test_versioning_binary_data',
+    )
+    yield did
+    did.database.connection.close()
+
+@pytest.fixture
+def mocdocs():
+    # names are 'A', 'B', and 'C'
+    yield [DIDDocument(data) for data in mock_document_data]
+
+@pytest.fixture
+def doc_count(did):
+    return lambda did: list(did.database.execute('select count(*) from (select * from document) src;'))[0][0]
+
+class TestSqlVersioning:
+    def test_document_collection_creation(self, did):
+        results = list(did.database.execute("""
+            SELECT 
+                table_name, 
+                column_name, 
+                data_type 
+            FROM 
+                information_schema.columns
+            WHERE
+                table_name = 'document';
+        """))
+        expected = [
+            ('document', 'document_id', 'character varying'),
+            ('document', 'data', 'jsonb'),
+            ('document', 'hash', 'character varying'),
+        ]
+        for row in results:
+            assert row in expected
+
+    def test_add(self, did, mocdocs, doc_count):
+        assert doc_count(did) is 0
+        
+        did.add(mocdocs[0])
+        did.save()
+        
+        result = next(did.database.execute('SELECT document_id FROM document;'))[0]
+        assert result is mocdocs[0].id
+        result = next(did.database.execute('SELECT data FROM document;'))[0]
+        assert result == mocdocs[0].data
+        result = next(did.database.execute('SELECT hash FROM document;'))[0]
+        assert result == hash_document(mocdocs[0])
