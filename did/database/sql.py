@@ -235,28 +235,28 @@ class SQL(DID_Database):
         except StopIteration:
             return None
 
-    def __DANGEROUS__delete(self, document) -> None:
+    def _DANGEROUS__delete(self, document) -> None:
         """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         delete = self.documents.delete() \
             .where(self.documents.c.document_id == document.id)
         with self.transaction_handler() as connection:
             connection.execute(delete)
 
-    def __DANGEROUS__delete_by_id(self, id_) -> None:
+    def _DANGEROUS__delete_by_id(self, id_) -> None:
         """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         delete = self.documents.delete() \
             .where(self.documents.c.document_id == id_)
         with self.transaction_handler() as connection:
             connection.execute(delete)
 
-    def __DANGEROUS__delete_by_hash(self, hash_) -> None:
+    def _DANGEROUS__delete_by_hash(self, hash_) -> None:
         """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         delete = self.documents.delete() \
-            .where(self.documents.c.hash == document_hash)
+            .where(self.documents.c.hash == hash_)
         with self.transaction_handler() as connection:
             connection.execute(delete)
 
-    def __DANGEROUS__delete_many(self, query=None) -> None:
+    def _DANGEROUS__delete_many(self, query=None) -> None:
         """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         """ Deletes all documents matching query.
               If no query is provided, deletes ALL documents.
