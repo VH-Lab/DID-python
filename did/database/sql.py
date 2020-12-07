@@ -515,7 +515,7 @@ class SQL(DID_Database):
         self.connection.execute(delete)
 
     def get_document_hash(self, document):
-        s = self.select_documents_from_commit()\
+        s = self.select_documents_from_snapshot(self.working_snapshot_id)\
             .where(self.table.document.c.document_id == document.id)
         doc = self.connection.execute(s).fetchone()
         try:

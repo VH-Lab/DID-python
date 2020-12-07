@@ -163,7 +163,10 @@ class DID:
         with self.db.transaction_handler():
             documents = self.db.find(query=query)
             for doc in documents:
+                print('sql')
+                print(doc.data.get('app'))
                 old_hash = self.db.get_document_hash(doc)
+                print(old_hash)
                 self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
