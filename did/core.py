@@ -3,7 +3,7 @@ import did.types as T
 from did.database.binary_collection import BinaryCollection
 from did.document import DIDDocument
 from did.versioning import hash_document, hash_snapshot, hash_commit
-from did.exception import NoChangesToSave, NoWorkingSnapshotError, IntegrityError
+from did.exception import NoChangesToSave, NoChangesToSave, IntegrityError
 from did.time import current_time
 from did.database.utils import merge_dicts
 
@@ -28,7 +28,7 @@ class DID:
                 raise IntegrityError(f'Duplicate Key error for document {document.id}')
             document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
-            document.data['base']['versions'].insert(0, hash_)
+            document.data['base']['records'].insert(0, hash_)
             self.db.add(document, hash_)
             self.db.add_to_snapshot(hash_)
         if save if save is not None else self.auto_save:
@@ -39,7 +39,7 @@ class DID:
         with self.db.transaction_handler():
             document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
-            document.data['base']['versions'].insert(0, hash_)
+            document.data['base']['records'].insert(0, hash_)
 
             self.db.add(document, hash_)
             self.db.add_to_snapshot(hash_)
@@ -54,7 +54,7 @@ class DID:
             old_hash = self.db.get_document_hash(document)
             document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
-            document.data['base']['versions'].insert(0, hash_)
+            document.data['base']['records'].insert(0, hash_)
             self.db.add(document, hash_)
             self.db.add_to_snapshot(hash_)
             if old_hash:
@@ -77,7 +77,7 @@ class DID:
             if old_hash != diff_hash:
                 doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                 hash_ = hash_document(doc)
-                doc.data['base']['versions'].insert(0, hash_)
+                doc.data['base']['records'].insert(0, hash_)
 
                 self.db.add(doc, hash_)
                 self.db.add_to_snapshot(hash_)
@@ -104,7 +104,7 @@ class DID:
                 if old_hash != diff_hash:
                     doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                     hash_ = hash_document(doc)
-                    doc.data['base']['versions'].insert(0, hash_)
+                    doc.data['base']['records'].insert(0, hash_)
 
                     self.db.add(doc, hash_)
                     self.db.add_to_snapshot(hash_)
@@ -124,10 +124,10 @@ class DID:
 
     def save(self):
         # create snapshot
-        if not self.db.working_snapshot_id:
-            raise NoWorkingSnapshotError('There is no snapshot open to write.')
         document_hashes = self.db.get_working_document_hashes()
-        snapshot_hash = hash_snapshot(self.db.working_snapshot_id, document_hashes)
+        snapshot_hash = hash_snapshot(document_hashes)
+        if self.db.current_snapshot.hash:
+            raise NoChangesToSave('The staged snapshot is equivalent to the previous one.')
         self.db.sign_working_snapshot(snapshot_hash)
 
         # add commit

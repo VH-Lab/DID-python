@@ -42,7 +42,6 @@ class SQLTables:
         self.snapshot = snapshot
         self.snapshot_document = snapshot_document
         self.document = document
-
 class SQL(DID_Database):
     """"""
 
@@ -65,7 +64,13 @@ class SQL(DID_Database):
         self.table = self._create_tables(self.metadata)
         self.connection: T.Connection = self.db.connect()
         self.current_transaction: T.Optional[T.Transaction] = None
-        self.working_snapshot_id = None
+        self.__working_snapshot_id = None
+
+    @property
+    def working_snapshot_id(self):
+        if not self.__working_snapshot_id:
+            self.__working_snapshot_id = self.__create_empty_snapshot()
+        return self.__working_snapshot_id
 
     def _init_database(self, connection_string):
         if not database_exists(connection_string):
@@ -111,7 +116,7 @@ class SQL(DID_Database):
                 Column('data', JSONB, nullable=False),
                 Column('hash', String, primary_key=True),
                 autoload_with=autoload_document_table,
-            ),
+            )
         )
 
         if self.options.hard_reset_on_init or not table_exists:
@@ -135,6 +140,8 @@ class SQL(DID_Database):
 
     def execute(self, query: str):
         """Runs a `sqlAlchemy query <https://docs.sqlalchemy.org/en/13/core/connections.html>`_. Only for use by developers wanting to access the underlying sqlAlchemy layer.
+
+            Note: This query is run outside of the current transaction, so no unsaved changes will be visible.
 
         :param query: A SQL query in the format of the given database.
         :type query: str

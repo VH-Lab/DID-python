@@ -1,4 +1,5 @@
 from pathlib import Path
+from did.versioning import hash_document
 
 
 class BinaryCollection:
@@ -27,5 +28,6 @@ class BinaryCollection:
         return did_document.data['binary_files']
     
     def get_filepath(self, did_document, name):
-        return self.dir_path / f'{did_document.id}-{name}.bin'
+        hash_ = hash_document(did_document)
+        return self.dir_path / f'{did_document.id}-{name}--{hash_}.bin'
 

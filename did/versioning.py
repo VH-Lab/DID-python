@@ -6,15 +6,13 @@ from copy import deepcopy
 
 def hash_document(document):
     doc = deepcopy(document)
-    doc.data['base']['versions'] = None # ignore this field
+    doc.data['base']['records'] = None # ignore this field
     serialized_data = bytes(json.dumps(doc.data), 'utf8')
     return blake3(serialized_data).hexdigest()
 
-def hash_snapshot(snapshot_id:str, document_hashes: T.List[str]):
-    snapshot_id = bytes(snapshot_id)
+def hash_snapshot(document_hashes: T.List[str]):
     document_hashes = [bytes(doc_hash, 'utf8') for doc_hash in document_hashes]
     hasher = blake3()
-    hasher.update(snapshot_id)
     for document_hash in sorted(document_hashes):
         hasher.update(document_hash)
     return hasher.hexdigest()
