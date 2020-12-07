@@ -72,6 +72,10 @@ class SQL(DID_Database):
             self.__working_snapshot_id = self.__create_empty_snapshot()
         return self.__working_snapshot_id
 
+    @working_snapshot_id.setter
+    def working_snapshot_id(self, value):
+        self.__working_snapshot_id = value
+
     def _init_database(self, connection_string):
         if not database_exists(connection_string):
             create_database(connection_string)
@@ -349,7 +353,10 @@ class SQL(DID_Database):
 
         Note: not necessarily equivalent to working snapshot.
         """
-        commit_hash = self.current_ref.commit_hash
+        try:
+            commit_hash = self.current_ref.commit_hash
+        except AttributeError:
+            return None
         if commit_hash:
             commit_to_snapshot = self.table.commit \
                 .join(self.table.snapshot, 

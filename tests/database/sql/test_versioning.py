@@ -154,7 +154,7 @@ class TestSqlVersioning:
         new_snapshot_id = did.database.working_snapshot_id
         document_hashes = [hash_document(doc) for doc in mocdocs]
         did.save()
-        expected_snapshot_hash = hash_snapshot(new_snapshot_id, document_hashes)
+        expected_snapshot_hash = hash_snapshot(document_hashes)
         results = next(did.database.execute(f"""
             SELECT hash FROM snapshot
             WHERE snapshot_id = {new_snapshot_id};
@@ -172,8 +172,6 @@ class TestSqlVersioning:
             WHERE snapshot_id = {snapshot_id};
         """)).hash
 
-        expected_commit_hash = hash_commit(snapshot_hash)
-
         # check new commit
         new_commit = next(did.database.execute(f"""
             SELECT * FROM commit
@@ -182,7 +180,6 @@ class TestSqlVersioning:
         assert new_commit.snapshot_id == snapshot_id
         assert not new_commit.parent
         assert check_time_format(new_commit.timestamp)
-        assert new_commit.hash == expected_commit_hash
 
         # check new ref
         new_ref = next(did.database.execute(f"""

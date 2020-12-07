@@ -17,10 +17,13 @@ def hash_snapshot(document_hashes: T.List[str]):
         hasher.update(document_hash)
     return hasher.hexdigest()
 
-def hash_commit(snapshot_hash, parent_commit_hash = None):
-    snapshot_hash = bytes(snapshot_hash, 'utf8')
+def hash_commit(snapshot_hash, snapshot_id, timestamp, parent_commit_hash = None):
     hasher = blake3()
-    hasher.update(snapshot_hash)
+
+    hasher.update(bytes(snapshot_hash, 'utf8'))
+    hasher.update(bytes(snapshot_id))
+    hasher.update(bytes(timestamp, 'utf8'))
+
     if parent_commit_hash:
         parent_commit_hash = bytes(parent_commit_hash, 'utf8')
         hasher.update(parent_commit_hash)

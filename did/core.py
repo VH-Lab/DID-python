@@ -126,16 +126,16 @@ class DID:
         # create snapshot
         document_hashes = self.db.get_working_document_hashes()
         snapshot_hash = hash_snapshot(document_hashes)
-        if self.db.current_snapshot.hash:
+        if self.db.current_snapshot == snapshot_hash:
             raise NoChangesToSave('The staged snapshot is equivalent to the previous one.')
         self.db.sign_working_snapshot(snapshot_hash)
 
         # add commit
-        commit_hash = hash_commit(snapshot_hash)
         snapshot_id = self.db.working_snapshot_id
         timestamp = current_time()
         current_ref = self.db.current_ref
         previous_commit_hash = current_ref.commit_hash if current_ref else None
+        commit_hash = hash_commit(snapshot_hash, snapshot_id, timestamp, previous_commit_hash)
         self.db.add_commit(commit_hash, snapshot_id, timestamp, parent=previous_commit_hash)
         self.db.upsert_ref('CURRENT', commit_hash)
 
