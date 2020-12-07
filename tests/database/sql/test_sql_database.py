@@ -160,9 +160,9 @@ class TestSqlDatabase:
 
         did.add(mocdocs[1])
         assert did.db.current_transaction.is_active
-        assert doc_count(did) is 1
+        assert doc_count(did) is 2
         did.add(mocdocs[2])
-        assert doc_count(did) is 1
+        assert doc_count(did) is 3
 
         did.save()
         assert did.db.current_transaction is None

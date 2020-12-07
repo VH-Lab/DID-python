@@ -20,6 +20,7 @@ class DID:
         return self.database
 
     def add(self, document, save=None) -> None:
+        print(document.id)
         with self.db.transaction_handler():
             if self.db.find_by_id(document.id):
                 raise IntegrityError(f'Duplicate Key error for document id={document.id}.')
@@ -150,7 +151,7 @@ class DID:
     def delete_by_id(self, did_id, save=None):
         with self.db.transaction_handler():
             doc = self.db.find_by_id(did_id)
-            old_hash = self.db.get_document_hash(doc)
+            old_hash = doc.data['base']['records'][0]
             self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
@@ -159,7 +160,7 @@ class DID:
         with self.db.transaction_handler():
             documents = self.db.find(query=query)
             for doc in documents:
-                old_hash = self.db.get_document_hash(doc)
+                old_hash = doc.data['base']['records'][0]
                 self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()

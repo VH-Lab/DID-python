@@ -69,7 +69,7 @@ class SQL(DID_Database):
     @property
     def working_snapshot_id(self):
         if not self.__working_snapshot_id:
-            self.__working_snapshot_id = self.__create_empty_snapshot()
+            self.__working_snapshot_id = self.__create_snapshot()
         return self.__working_snapshot_id
 
     @working_snapshot_id.setter
@@ -427,8 +427,10 @@ class SQL(DID_Database):
             print(f'Warning: You are attempting to select document(s) by both snapshot and commit. The given snapshot {snapshot_id} will take precedence over the given commit {commit_hash}.')
         if snapshot_id:
             return self.select_documents_from_snapshot(snapshot_id)
-        else:
+        elif commit_hash:
             return self.select_documents_from_commit(commit_hash)
+        else:
+            return self.select_documents_from_snapshot(self.working_snapshot_id)
 
     def select_documents_from_commit(self, commit_hash=None):
         """ Defaults to commits associated with CURRENT ref.
@@ -454,7 +456,6 @@ class SQL(DID_Database):
     def select_documents_from_snapshot(self, snapshot_id):
         snapshot_document__document = self.table.snapshot_document.join(self.table.document, 
             self.table.snapshot_document.c.document_hash == self.table.document.c.hash)
-        print(f'selecting documents from snapshot {snapshot_id}')
         return select([self.table.document]) \
             .select_from(snapshot_document__document) \
             .where(self.table.snapshot_document.c.snapshot_id == snapshot_id)
