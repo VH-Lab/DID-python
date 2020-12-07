@@ -298,7 +298,9 @@ class TestSqlDatabase:
             )
             for doc in mocdocs
         ]
-        assert merged_data == expected_data
+        assert len(merged_data) == len(expected_data)
+        for expected in expected_data:
+            assert expected in merged_data
     
     def test_upsert(self, did, mocdocs, doc_count):
         assert doc_count(did) is 0

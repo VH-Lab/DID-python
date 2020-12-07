@@ -6,7 +6,11 @@ from copy import deepcopy
 
 def hash_document(document):
     doc = deepcopy(document)
-    doc.data['base']['records'] = None # ignore this field
+
+    # The following fields are ignored for versioning purposes
+    doc.data['base']['records'] = None 
+    doc.data['dependencies'] = None
+
     serialized_data = bytes(json.dumps(doc.data), 'utf8')
     return blake3(serialized_data).hexdigest()
 

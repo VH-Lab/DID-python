@@ -2,7 +2,7 @@ from __future__ import annotations
 import did.types as T
 
 from sqlalchemy import create_engine
-from sqlalchemy.schema import MetaData, ForeignKey
+from sqlalchemy.schema import MetaData, ForeignKey, UniqueConstraint
 from sqlalchemy import Table, Column, Integer, String, Boolean, Date, DateTime, Interval, Time, type_coerce, cast
 from sqlalchemy.dialects.postgresql import JSONB, JSON, insert
 from sqlalchemy.sql import select
@@ -114,6 +114,7 @@ class SQL(DID_Database):
             Table('snapshot_document', metadata,
                 Column('snapshot_id', Integer, ForeignKey('snapshot.snapshot_id'), nullable=False),           
                 Column('document_hash', String, ForeignKey('document.hash'), nullable=False),
+                UniqueConstraint('snapshot_id', 'document_hash')
             ),
             Table('document', metadata, # Analog to git objects
                 Column('document_id', String, nullable=False),
@@ -192,6 +193,21 @@ class SQL(DID_Database):
             hash=hash_
         )
         self.connection.execute(insertion)
+    
+    def upsert(self, document, hash_):
+        insertion = insert(self.documents).values(
+            document_id=document.id,
+            data=document.data,
+            hash=hash_
+        )
+        upsertion = insertion.on_conflict_do_update(
+            index_elements=['hash'],
+            set_=dict({
+                c.name: c
+                for c in insertion.excluded
+            })
+        )
+        self.connection.execute(upsertion)
 
     def find(self, query=None, snapshot_id=None, commit_hash=None) -> T.List:
         s = self.select_documents(snapshot_id, commit_hash)
@@ -452,7 +468,10 @@ class SQL(DID_Database):
             snapshot_id=self.working_snapshot_id,
             document_hash=document_hash,
         )
-        self.connection.execute(insert_new_row)
+        try:
+            self.connection.execute(insert_new_row)
+        except IntegrityError:
+            pass # simple equivalent to upsert, but with 2 index elements
     
     def remove_from_snapshot(self, document_hash):
         if not self.working_snapshot_id:

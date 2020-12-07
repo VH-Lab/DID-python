@@ -26,7 +26,8 @@ class DID:
             document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
             document.data['base']['records'].insert(0, hash_)
-            self.db.add(document, hash_)
+            # upsert is used to account for cases where a hash is unchanged due to ignored fields
+            self.db.upsert(document, hash_)
             self.db.add_to_snapshot(hash_)
         if save if save is not None else self.auto_save:
             print('saving...')
@@ -47,7 +48,7 @@ class DID:
             hash_ = hash_document(document)
             document.data['base']['records'].insert(0, hash_)
 
-            self.db.add(document, hash_)
+            self.db.upsert(document, hash_)
             self.db.add_to_snapshot(hash_)
 
             old_hash = self.db.get_document_hash(document)
@@ -61,7 +62,7 @@ class DID:
             document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
             document.data['base']['records'].insert(0, hash_)
-            self.db.add(document, hash_)
+            self.db.upsert(document, hash_)
             self.db.add_to_snapshot(hash_)
             if old_hash:
                 self.db.remove_from_snapshot(old_hash)
@@ -79,7 +80,7 @@ class DID:
                 hash_ = hash_document(doc)
                 doc.data['base']['records'].insert(0, hash_)
 
-                self.db.add(doc, hash_)
+                self.db.upsert(doc, hash_)
                 self.db.add_to_snapshot(hash_)
 
                 self.db.remove_from_snapshot(old_hash)
@@ -98,7 +99,7 @@ class DID:
                     hash_ = hash_document(doc)
                     doc.data['base']['records'].insert(0, hash_)
 
-                    self.db.add(doc, hash_)
+                    self.db.upsert(doc, hash_)
                     self.db.add_to_snapshot(hash_)
 
                     self.db.remove_from_snapshot(old_hash)
