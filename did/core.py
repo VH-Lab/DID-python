@@ -95,9 +95,9 @@ class DID:
             if old_hash != diff_hash:
                 last_snapshot = doc.data['base']['snapshots'] and doc.data['base']['snapshots'][0]
                 if last_snapshot == self.db.working_snapshot_id:
-                    document.data['base']['snapshots'][0] = self.db.working_snapshot_id
+                    doc.data['base']['snapshots'][0] = self.db.working_snapshot_id
                     self.db.remove_from_snapshot(old_hash)
-                    self.db._DANGEROUS__delete_by_hash(previous_hash)
+                    self.db._DANGEROUS__delete_by_hash(old_hash)
                 else:
                     doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                     self.db.remove_from_snapshot(old_hash)
@@ -120,9 +120,9 @@ class DID:
                 if old_hash != diff_hash:
                     last_snapshot = doc.data['base']['snapshots'] and doc.data['base']['snapshots'][0]
                     if last_snapshot == self.db.working_snapshot_id:
-                        document.data['base']['snapshots'][0] = self.db.working_snapshot_id
+                        doc.data['base']['snapshots'][0] = self.db.working_snapshot_id
                         self.db.remove_from_snapshot(old_hash)
-                        self.db._DANGEROUS__delete_by_hash(previous_hash)
+                        self.db._DANGEROUS__delete_by_hash(old_hash)
                     else:
                         doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                         self.db.remove_from_snapshot(old_hash)
