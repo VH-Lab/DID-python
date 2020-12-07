@@ -22,7 +22,7 @@ class DID:
     def add(self, document, save=None) -> None:
         with self.db.transaction_handler():
             if self.db.find_by_id(document.id):
-                raise IntegrityError(f'Duplicate Key error for document {document.id}')
+                raise IntegrityError(f'Duplicate Key error for document id={document.id}.')
             document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
             hash_ = hash_document(document)
             document.data['base']['records'].insert(0, hash_)
@@ -103,6 +103,15 @@ class DID:
                     self.db.add_to_snapshot(hash_)
 
                     self.db.remove_from_snapshot(old_hash)
+        if save if save is not None else self.auto_save:
+            self.save()
+
+    def update_dependencies(self, document_hash, dependencies, save=None):
+        with self.db.transaction_handler():
+            doc = self.db.find_by_hash(document_hash)
+            doc.data['dependencies'] = dependencies
+            self.db.upsert(doc, document_hash)
+
         if save if save is not None else self.auto_save:
             self.save()
 

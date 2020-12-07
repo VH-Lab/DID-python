@@ -117,9 +117,9 @@ class SQL(DID_Database):
                 UniqueConstraint('snapshot_id', 'document_hash')
             ),
             Table('document', metadata, # Analog to git objects
+                Column('hash', String, primary_key=True),
                 Column('document_id', String, nullable=False),
                 Column('data', JSONB, nullable=False),
-                Column('hash', String, primary_key=True),
                 autoload_with=autoload_document_table,
             )
         )

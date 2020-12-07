@@ -23,6 +23,7 @@ mock_document_data = [
             'records': [],
         },
         'depends_on': [],
+        'dependencies': [],
         'binary_files': [],
         'document_class': {
             'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
@@ -49,6 +50,7 @@ mock_document_data = [
             'records': [],
         },
         'depends_on': [],
+        'dependencies': [],
         'binary_files': [],
         'document_class': {
             'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
@@ -75,6 +77,7 @@ mock_document_data = [
             'records': [],
         },
         'depends_on': [],
+        'dependencies': [],
         'binary_files': [],
         'document_class': {
             'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
@@ -314,6 +317,20 @@ class TestSqlDatabase:
         assert doc_count(did) is 1
         updated_data = did.find_by_id(mocdocs[0].id).data
         assert updated_data == mocdocs[0].data
+    
+    def test_update_dependencies(self, did, mocdocs):
+        for doc in mocdocs:
+            did.add(doc, save=True)
+
+        document = mocdocs[1]
+        hash_ = hash_document(document)
+        document.data['dependencies'].append('1234567')
+        did.update_dependencies(hash_, document.data['dependencies'], save=True)
+        document.data['dependencies'].append('76trfg')
+        did.update_dependencies(hash_, document.data['dependencies'], save=True)
+
+        updated_doc = did.find_by_hash(hash_)
+        assert updated_doc.data['dependencies'] == ['1234567', '76trfg']
 
     def test_delete(self, did, mocdocs, doc_count):
         for doc in mocdocs:

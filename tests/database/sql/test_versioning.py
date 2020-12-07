@@ -24,6 +24,7 @@ mock_document_data = [
             'records': [],
         },
         'depends_on': [],
+        'dependencies': [],
         'binary_files': [],
         'document_class': {
             'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
@@ -50,6 +51,7 @@ mock_document_data = [
             'records': [],
         },
         'depends_on': [],
+        'dependencies': [],
         'binary_files': [],
         'document_class': {
             'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
@@ -76,6 +78,7 @@ mock_document_data = [
             'records': [],
         },
         'depends_on': [],
+        'dependencies': [],
         'binary_files': [],
         'document_class': {
             'definition': '$NDIDOCUMENTPATH\/ndi_document_app.json',
