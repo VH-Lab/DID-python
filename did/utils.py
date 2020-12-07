@@ -74,3 +74,6 @@ def generate_tuple_analog(schema_enum: T.SchemaEnumClass) -> tuple:
         enum_list.append(enum_map[i])
 
     return tuple(enum_list)
+
+def has_single_snapshot(document):
+    return len(document.data['base']['snapshots']) == 0

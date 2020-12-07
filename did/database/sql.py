@@ -183,7 +183,8 @@ class SQL(DID_Database):
         # TODO: when implementing versioning, will probably need to make this a two-phase transaction in order to do rollbacks on commits within session
         if not self.current_transaction:
             self.current_transaction = self.connection.begin()
-            self.working_snapshot_id = self.__create_snapshot()
+            if not self.working_snapshot_id:
+                self.working_snapshot_id = self.__create_snapshot()
         yield self.connection
 
     def add(self, document, hash_) -> None:
@@ -478,8 +479,10 @@ class SQL(DID_Database):
         snapshot_id = self.__create_empty_snapshot()
         if self.current_ref:
             current_documents = self.connection.execute(self.select_documents_from_commit())
-            self.connection.execute(self.table.snapshot_document.insert(), 
-                [{ 'snapshot_id': snapshot_id, 'document_hash': doc.hash} for doc in current_documents])
+            current_documents = list(current_documents)
+            if (current_documents):
+                self.connection.execute(self.table.snapshot_document.insert(), 
+                    [{ 'snapshot_id': snapshot_id, 'document_hash': doc.hash} for doc in current_documents])
         return snapshot_id
 
 

@@ -6,7 +6,7 @@ from did.versioning import hash_document, hash_snapshot, hash_commit
 from did.exception import NoChangesToSave, NoChangesToSave, IntegrityError
 from did.time import current_time
 from did.database.utils import merge_dicts
-
+from did.utils import has_single_snapshot
 
 class DID:
     def __init__(self, database, binary_directory, auto_save=False):
@@ -52,7 +52,8 @@ class DID:
                 document.data['base']['records'][0] = hash_
 
                 self.db.remove_from_snapshot(previous_hash)
-                self.db._DANGEROUS__delete_by_hash(previous_hash)
+                if has_single_snapshot(document):
+                    self.db._DANGEROUS__delete_by_hash(previous_hash)
             else:
                 document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                 hash_ = hash_document(document)
@@ -74,7 +75,8 @@ class DID:
                 document.data['base']['snapshots'][0] = self.db.working_snapshot_id
                 document.data['base']['records'][0] = hash_
                 self.db.remove_from_snapshot(previous_hash)
-                self.db._DANGEROUS__delete_by_hash(previous_hash)
+                if previous_hash and has_single_snapshot(document):
+                    self.db._DANGEROUS__delete_by_hash(previous_hash)
             else:
                 document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                 hash_ = hash_document(document)
@@ -97,7 +99,8 @@ class DID:
                 if last_snapshot == self.db.working_snapshot_id:
                     doc.data['base']['snapshots'][0] = self.db.working_snapshot_id
                     self.db.remove_from_snapshot(old_hash)
-                    self.db._DANGEROUS__delete_by_hash(old_hash)
+                    if has_single_snapshot(doc):
+                        self.db._DANGEROUS__delete_by_hash(old_hash)
                 else:
                     doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                     self.db.remove_from_snapshot(old_hash)
@@ -122,7 +125,8 @@ class DID:
                     if last_snapshot == self.db.working_snapshot_id:
                         doc.data['base']['snapshots'][0] = self.db.working_snapshot_id
                         self.db.remove_from_snapshot(old_hash)
-                        self.db._DANGEROUS__delete_by_hash(old_hash)
+                        if has_single_snapshot(doc):
+                            self.db._DANGEROUS__delete_by_hash(old_hash)
                     else:
                         doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                         self.db.remove_from_snapshot(old_hash)
@@ -137,7 +141,7 @@ class DID:
 
     def update_dependencies(self, document_hash, dependencies, save=None):
         with self.db.transaction_handler():
-            doc = self.db.find_by_hash(document_hash)
+            doc = self.db.find_by_hash(document_hash, in_all_history=True)
             doc.data['dependencies'] = dependencies
             self.db.upsert(doc, document_hash)
 
@@ -150,7 +154,7 @@ class DID:
     def delete_by_id(self, did_id, save=None):
         with self.db.transaction_handler():
             doc = self.db.find_by_id(did_id)
-            old_hash = doc.data['base']['records'][0]
+            old_hash = self.db.get_document_hash(doc)
             self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
@@ -159,7 +163,7 @@ class DID:
         with self.db.transaction_handler():
             documents = self.db.find(query=query)
             for doc in documents:
-                old_hash = doc.data['base']['records'][0]
+                old_hash = self.db.get_document_hash(doc)
                 self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()

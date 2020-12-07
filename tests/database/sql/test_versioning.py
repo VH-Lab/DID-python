@@ -409,7 +409,7 @@ class TestSqlVersioning:
         assert len(did.find()) == 1
 
         current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
-        assert len(current_documents) == 4
+        assert len(current_documents) == 5
 
     def test_change_current(self, did, mocdocs):
         for doc in mocdocs:
