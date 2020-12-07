@@ -288,8 +288,8 @@ class TestSqlVersioning:
         doc.data['app']['c'] = True
         did.update(doc, save=True)
 
-        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
-        assert len(current_documents) == 2
+        total_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        assert len(total_documents) == 2
 
         current_documents = [
             { 'app': doc.data['app'], 'snapshots': doc.data['base']['snapshots'] }

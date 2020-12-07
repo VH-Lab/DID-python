@@ -44,28 +44,47 @@ class DID:
 
     def update(self, document, save=None):
         with self.db.transaction_handler():
-            document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
-            hash_ = hash_document(document)
-            document.data['base']['records'].insert(0, hash_)
+            last_snapshot = document.data['base']['snapshots'][-1] if document.data['base']['snapshots'] else None
+            previous_hash = document.data['base']['records'][-1]
+            if last_snapshot == self.db.working_snapshot_id:
+                hash_ = hash_document(document)
+                document.data['base']['snapshots'][-1] = self.db.working_snapshot_id
+                document.data['base']['records'][-1] = hash_
 
+                self.db.__DANGEROUS__delete_by_hash(previous_hash)
+            else:
+                document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
+                hash_ = hash_document(document)
+                document.data['base']['records'].insert(0, hash_)
+
+            self.db.remove_from_snapshot(previous_hash)
             self.db.upsert(document, hash_)
             self.db.add_to_snapshot(hash_)
 
-            old_hash = self.db.get_document_hash(document)
-            self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
 
     def upsert(self, document, save=None):
         with self.db.transaction_handler():
-            old_hash = self.db.get_document_hash(document)
-            document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
-            hash_ = hash_document(document)
-            document.data['base']['records'].insert(0, hash_)
+            last_snapshot = document.data['base']['snapshots'][-1] if document.data['base']['snapshots'] else None
+            previous_hash = document.data['base']['records'][-1] if document.data['base']['records'] else None
+            print(previous_hash)
+            if last_snapshot == self.db.working_snapshot_id:
+                hash_ = hash_document(document)
+                document.data['base']['snapshots'][-1] = self.db.working_snapshot_id
+                document.data['base']['records'][-1] = hash_
+                self.db.__DANGEROUS__delete_by_hash(previous_hash)
+            else:
+                document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
+                hash_ = hash_document(document)
+                document.data['base']['records'].insert(0, hash_)
+            if previous_hash:
+                print(document.data['base']['records'])
+                print(document.data['base']['records'][-1])
+                print(previous_hash)
+                self.db.remove_from_snapshot(previous_hash)
             self.db.upsert(document, hash_)
             self.db.add_to_snapshot(hash_)
-            if old_hash:
-                self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
     
@@ -76,7 +95,12 @@ class DID:
             doc.data = merge_dicts(doc.data, document_updates)
             diff_hash = hash_document(doc)
             if old_hash != diff_hash:
-                doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
+                last_snapshot = doc.data['base']['snapshots'] and doc.data['base']['snapshots'][-1]
+                if last_snapshot == self.db.working_snapshot_id:
+                    document.data['base']['snapshots'][-1] = self.db.working_snapshot_id
+                    self.db.__DANGEROUS__delete_by_hash(previous_hash)
+                else:
+                    doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                 hash_ = hash_document(doc)
                 doc.data['base']['records'].insert(0, hash_)
 
@@ -95,7 +119,12 @@ class DID:
                 doc.data = merge_dicts(doc.data, document_updates)
                 diff_hash = hash_document(doc)
                 if old_hash != diff_hash:
-                    doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
+                    last_snapshot = doc.data['base']['snapshots'] and doc.data['base']['snapshots'][-1]
+                    if last_snapshot == self.db.working_snapshot_id:
+                        document.data['base']['snapshots'][-1] = self.db.working_snapshot_id
+                        self.db.__DANGEROUS__delete_by_hash(previous_hash)
+                    else:
+                        doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                     hash_ = hash_document(doc)
                     doc.data['base']['records'].insert(0, hash_)
 

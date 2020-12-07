@@ -249,6 +249,13 @@ class SQL(DID_Database):
         with self.transaction_handler() as connection:
             connection.execute(delete)
 
+    def __DANGEROUS__delete_by_hash(self, hash_) -> None:
+        """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
+        delete = self.documents.delete() \
+            .where(self.documents.c.hash == document_hash)
+        with self.transaction_handler() as connection:
+            connection.execute(delete)
+
     def __DANGEROUS__delete_many(self, query=None) -> None:
         """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         """ Deletes all documents matching query.
@@ -447,6 +454,7 @@ class SQL(DID_Database):
     def select_documents_from_snapshot(self, snapshot_id):
         snapshot_document__document = self.table.snapshot_document.join(self.table.document, 
             self.table.snapshot_document.c.document_hash == self.table.document.c.hash)
+        print(f'selecting documents from snapshot {snapshot_id}')
         return select([self.table.document]) \
             .select_from(snapshot_document__document) \
             .where(self.table.snapshot_document.c.snapshot_id == snapshot_id)
