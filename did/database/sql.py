@@ -396,6 +396,25 @@ class SQL(DID_Database):
             except StopIteration:
                 raise RuntimeError('Failed to get snapshot associated with ref.name == "CURRENT".')
     
+    def set_current_ref(self, snapshot_id=None, commit_hash=None):
+        if snapshot_id and commit_hash:
+            raise RuntimeWarning(f'Warning: You are attempting to select document(s) by both snapshot and commit. The given commit {commit_hash} will take precedence over the given snapshot {snapshot_id}.')
+        # TODO: add case for ref when branches are implemented
+        if commit_hash:
+            pass
+        elif snapshot_id:
+            commit_hash = self.get_commit(snapshot_id).hash
+        update = self.table.ref.update().where(self.table.ref.c.name == 'CURRENT').values(commit_hash=commit_hash)
+        self.connection.execute(update)
+
+    def get_commit(self, snapshot_id):
+        commit_from_snapshot_id = select([self.table.commit.c.hash])\
+            .where(self.table.commit.c.snapshot_id == snapshot_id)
+        try:
+            return next(self.connection.execute(commit_from_snapshot_id))
+        except StopIteration:
+            raise RuntimeError('This snapshot does not appear to be associated with any commits.')
+    
     def select_documents(self, snapshot_id, commit_hash):
         if snapshot_id and commit_hash:
             print(f'Warning: You are attempting to select document(s) by both snapshot and commit. The given snapshot {snapshot_id} will take precedence over the given commit {commit_hash}.')

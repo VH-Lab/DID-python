@@ -159,5 +159,9 @@ class DID:
         """Revert database to point of last save"""
         self.db.revert()
 
+    def set_current_ref(self, snapshot_id=None, commit_hash=None):
+        self.db.set_current_ref(snapshot_id, commit_hash)
+
     def get_history(self):
         return self.db.get_history()
+    
