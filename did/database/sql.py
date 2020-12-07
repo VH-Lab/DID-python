@@ -209,16 +209,16 @@ class SQL(DID_Database):
         )
         self.connection.execute(upsertion)
 
-    def find(self, query=None, snapshot_id=None, commit_hash=None) -> T.List:
-        s = self.select_documents(snapshot_id, commit_hash)
+    def find(self, query=None, snapshot_id=None, commit_hash=None, in_all_history=False) -> T.List:
+        s = self.select_documents(snapshot_id, commit_hash, in_all_history)
         if query:
             filter_ = self.generate_sqla_filter(query) 
             s = s.where(filter_)
         rows = self.connection.execute(s).fetchall()
         return [self._did_doc_from_row(r) for r in rows]
 
-    def find_by_id(self, id_, snapshot_id=None, commit_hash=None):
-        s = self.select_documents(snapshot_id, commit_hash) \
+    def find_by_id(self, id_, snapshot_id=None, commit_hash=None, in_all_history=False):
+        s = self.select_documents(snapshot_id, commit_hash, in_all_history) \
             .where(self.documents.c.document_id == id_)
         rows = self.connection.execute(s)
         try:
@@ -226,8 +226,8 @@ class SQL(DID_Database):
         except StopIteration:
             return None
 
-    def find_by_hash(self, document_hash, snapshot_id=None, commit_hash=None):
-        s = self.select_documents(snapshot_id, commit_hash) \
+    def find_by_hash(self, document_hash, snapshot_id=None, commit_hash=None, in_all_history=False):
+        s = self.select_documents(snapshot_id, commit_hash, in_all_history) \
             .where(self.documents.c.hash == document_hash)
         rows = self.connection.execute(s)
         try:
@@ -422,10 +422,12 @@ class SQL(DID_Database):
         except StopIteration:
             raise RuntimeError('This snapshot does not appear to be associated with any commits.')
     
-    def select_documents(self, snapshot_id, commit_hash):
+    def select_documents(self, snapshot_id, commit_hash, in_all_history):
         if snapshot_id and commit_hash:
             print(f'Warning: You are attempting to select document(s) by both snapshot and commit. The given snapshot {snapshot_id} will take precedence over the given commit {commit_hash}.')
-        if snapshot_id:
+        if in_all_history:
+            return select([self.table.document])
+        elif snapshot_id:
             return self.select_documents_from_snapshot(snapshot_id)
         elif commit_hash:
             return self.select_documents_from_commit(commit_hash)

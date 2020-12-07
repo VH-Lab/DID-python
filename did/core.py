@@ -20,7 +20,6 @@ class DID:
         return self.database
 
     def add(self, document, save=None) -> None:
-        print(document.id)
         with self.db.transaction_handler():
             if self.db.find_by_id(document.id):
                 raise IntegrityError(f'Duplicate Key error for document id={document.id}.')
@@ -34,14 +33,14 @@ class DID:
             print('saving...')
             self.save()
 
-    def find(self, query=None, snapshot=None, commit=None):
-        return self.db.find(query=query, snapshot_id=snapshot, commit_hash=commit)
+    def find(self, query=None, snapshot=None, commit=None, in_all_history=False):
+        return self.db.find(query=query, snapshot_id=snapshot, commit_hash=commit, in_all_history=in_all_history)
 
-    def find_by_id(self, did_id, snapshot=None, commit=None):
-        return self.db.find_by_id(did_id, snapshot_id=snapshot, commit_hash=commit)
+    def find_by_id(self, did_id, snapshot=None, commit=None, in_all_history=False):
+        return self.db.find_by_id(did_id, snapshot_id=snapshot, commit_hash=commit, in_all_history=in_all_history)
 
-    def find_by_hash(self, document_hash, snapshot=None, commit=None):
-        return self.db.find_by_hash(document_hash, snapshot_id=snapshot, commit_hash=commit)
+    def find_by_hash(self, document_hash, snapshot=None, commit=None, in_all_history=False):
+        return self.db.find_by_hash(document_hash, snapshot_id=snapshot, commit_hash=commit, in_all_history=in_all_history)
 
     def update(self, document, save=None):
         with self.db.transaction_handler():
