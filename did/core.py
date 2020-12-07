@@ -68,7 +68,6 @@ class DID:
         with self.db.transaction_handler():
             last_snapshot = document.data['base']['snapshots'][-1] if document.data['base']['snapshots'] else None
             previous_hash = document.data['base']['records'][-1] if document.data['base']['records'] else None
-            print(previous_hash)
             if last_snapshot == self.db.working_snapshot_id:
                 hash_ = hash_document(document)
                 document.data['base']['snapshots'][-1] = self.db.working_snapshot_id
@@ -79,9 +78,6 @@ class DID:
                 hash_ = hash_document(document)
                 document.data['base']['records'].insert(0, hash_)
             if previous_hash:
-                print(document.data['base']['records'])
-                print(document.data['base']['records'][-1])
-                print(previous_hash)
                 self.db.remove_from_snapshot(previous_hash)
             self.db.upsert(document, hash_)
             self.db.add_to_snapshot(hash_)
