@@ -19,9 +19,6 @@ class DID:
     def db(self):
         return self.database
 
-    def find(self, query=None, snapshot=None, commit=None):
-        return self.db.find(query=query, snapshot_id=snapshot, commit_hash=commit)
-
     def add(self, document, save=None) -> None:
         with self.db.transaction_handler():
             if self.db.find_by_id(document.id):
@@ -34,6 +31,15 @@ class DID:
         if save if save is not None else self.auto_save:
             print('saving...')
             self.save()
+
+    def find(self, query=None, snapshot=None, commit=None):
+        return self.db.find(query=query, snapshot_id=snapshot, commit_hash=commit)
+
+    def find_by_id(self, did_id, snapshot=None, commit=None):
+        return self.db.find_by_id(did_id, snapshot_id=snapshot, commit_hash=commit)
+
+    def find_by_hash(self, document_hash, snapshot=None, commit=None):
+        return self.db.find_by_hash(document_hash, snapshot_id=snapshot, commit_hash=commit)
 
     def update(self, document, save=None):
         with self.db.transaction_handler():
@@ -61,12 +67,6 @@ class DID:
                 self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
-
-    def delete(self, document, save=None):
-        self.delete_by_id(document.id, save=save)
-
-    def find_by_id(self, did_id, snapshot=None, commit=None):
-        return self.db.find_by_id(did_id, snapshot_id=snapshot, commit_hash=commit)
     
     def update_by_id(self, did_id, document_updates={}, save=None):
         with self.db.transaction_handler():
@@ -86,14 +86,6 @@ class DID:
         if save if save is not None else self.auto_save:
             self.save()
 
-    def delete_by_id(self, did_id, save=None):
-        with self.db.transaction_handler():
-            doc = self.db.find_by_id(did_id)
-            old_hash = self.db.get_document_hash(doc)
-            self.db.remove_from_snapshot(old_hash)
-        if save if save is not None else self.auto_save:
-            self.save()
-
     def update_many(self, query=None, document_updates={}, save=None):
         with self.db.transaction_handler():
             documents = self.db.find(query=query)
@@ -110,6 +102,17 @@ class DID:
                     self.db.add_to_snapshot(hash_)
 
                     self.db.remove_from_snapshot(old_hash)
+        if save if save is not None else self.auto_save:
+            self.save()
+
+    def delete(self, document, save=None):
+        self.delete_by_id(document.id, save=save)
+
+    def delete_by_id(self, did_id, save=None):
+        with self.db.transaction_handler():
+            doc = self.db.find_by_id(did_id)
+            old_hash = self.db.get_document_hash(doc)
+            self.db.remove_from_snapshot(old_hash)
         if save if save is not None else self.auto_save:
             self.save()
     

@@ -210,6 +210,15 @@ class SQL(DID_Database):
         except StopIteration:
             return None
 
+    def find_by_hash(self, document_hash, snapshot_id=None, commit_hash=None):
+        s = self.select_documents(snapshot_id, commit_hash) \
+            .where(self.documents.c.hash == document_hash)
+        rows = self.connection.execute(s)
+        try:
+            return self._did_doc_from_row(next(rows))
+        except StopIteration:
+            return None
+
     def __DANGEROUS__delete(self, document) -> None:
         """WARNING: This method modifies the database without version support. Usage of this method may break your database history."""
         delete = self.documents.delete() \

@@ -1,6 +1,7 @@
 from did import DID, Query as Q
 from did.database.sql import SQL
 from did.document import DIDDocument
+from did.versioning import hash_document
 import pytest
 
 from sqlalchemy.sql import select
@@ -232,6 +233,15 @@ class TestSqlDatabase:
         did.save()
 
         assert did.find_by_id('0').id == '0'
+
+    def test_find_by_hash(self, did, mocdocs):
+        for doc in mocdocs:
+            did.add(doc)
+        did.save()
+
+        hash_ = hash_document(mocdocs[0])
+
+        assert did.find_by_hash(hash_).id == '0'
 
     def test_update(self, did, mocdocs):
         for doc in mocdocs:
