@@ -22,6 +22,8 @@ pytest = "*"
 neo = "*"
 alchemy-mock = "*"
 sqlalchemy-utils = "*"
+blake3 = "*"
+astropy = "*"
 
 [requires]
 python_version = "3.8"
