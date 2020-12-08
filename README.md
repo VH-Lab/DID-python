@@ -22,7 +22,7 @@ $ pipenv shell
 (ndi-python) $ jupyter notebook
 ```
 
-# Developer Notes
+## Developer Notes
 
 The Python package makes use of [native namespace packages available in Python 3.3 and later](https://packaging.python.org/guides/packaging-namespace-packages/#native-namespace-packages).
 
