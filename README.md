@@ -1,6 +1,8 @@
-This is a Python wrapper around ndi-schema objects and reference implementations which can be used to help implement support for new probes, databases, and apps.
+# Data Interface Database
 
-# Usage
+The did-python library is a versioned database API built to manage [DID documents](https://github.com/VH-Lab/DID-matlab/wiki/Discussion-on-DID-document-core) and associated binary data.
+
+## Usage
 
 Basic usage is recommended via [Jupyter Notebook](https://jupyter.org/). Any Jupyter install should work but [Anaconda](https://www.anaconda.com/distribution/) (Python 3) is an easy way to get started with Jupyter.
 
