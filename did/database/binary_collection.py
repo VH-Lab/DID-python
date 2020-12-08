@@ -22,12 +22,15 @@ class BinaryCollection:
 
     def remove_file(self, did_document, name):
         did_document.data['binary_files'].remove(name)
-        (self.dir_path / f'{did_document.id}-{name}.bin').unlink()
+        self.get_filepath(did_document, name).unlink()
 
     def list_files(self, did_document):
         return did_document.data['binary_files']
     
     def get_filepath(self, did_document, name):
-        hash_ = hash_document(did_document)
-        return self.dir_path / f'{did_document.id}-{name}--{hash_}.bin'
+        records = did_document.data['base']['records']
+        latest_record = records[0] if records else 'NEW'
+        return self.dir_path / f'{did_document.id}-{name}--on_{latest_record}.bin'
+        # '--on_<previous_hash>' ensures that data with the same name cannot exist on the same document in the same snapshot
+
 

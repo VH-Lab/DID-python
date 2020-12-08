@@ -1,9 +1,8 @@
 from __future__ import annotations
 import did.types as T
 from did.database.binary_collection import BinaryCollection
-from did.document import DIDDocument
 from did.versioning import hash_document, hash_snapshot, hash_commit
-from did.exception import NoChangesToSave, NoChangesToSave, IntegrityError
+from did.exception import NoChangesToSave, IntegrityError
 from did.time import current_time
 from did.database.utils import merge_dicts
 from did.utils import has_single_snapshot

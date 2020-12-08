@@ -9,12 +9,10 @@ from sqlalchemy.sql import select
 from sqlalchemy import join, and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy_utils import database_exists, create_database
-from sqlalchemy_views import CreateView
 
 from .did_database import DID_Database, DIDDocument
 from ..query import Query, AndQuery, OrQuery, CompositeQuery
 from ..exception import NoTransactionError, NoWorkingSnapshotError, SnapshotIntegrityError
-from .utils import merge_dicts
 
 from contextlib import contextmanager
 

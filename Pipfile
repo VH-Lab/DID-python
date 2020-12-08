@@ -24,7 +24,6 @@ alchemy-mock = "*"
 sqlalchemy-utils = "*"
 blake3 = "*"
 astropy = "*"
-sqlalchemy-views = "*"
 
 [requires]
 python_version = "3.8"
