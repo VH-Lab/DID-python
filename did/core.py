@@ -42,7 +42,6 @@ class DID:
             self.save()
 
     def find(self, query=None, snapshot=None, commit=None, in_all_history=False):
-        print(self.db)
         return self.db.find(query=query, snapshot_id=snapshot, commit_hash=commit, in_all_history=in_all_history)
 
     def find_by_id(self, did_id, snapshot=None, commit=None, in_all_history=False):

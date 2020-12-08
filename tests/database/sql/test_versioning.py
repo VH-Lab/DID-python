@@ -215,8 +215,6 @@ class TestSqlVersioning:
             (second_snapshot_id, first_doc_hash),
             (second_snapshot_id, second_doc_hash),
         ]
-        print(snapshot_documents)
-        print(expected_snapshot_documents)
         assert snapshot_documents == expected_snapshot_documents
 
         # check commit was added correctly
@@ -278,7 +276,6 @@ class TestSqlVersioning:
         # test get by commit
         history = did.get_history()
         second_commit = next(commit for commit in history if commit[0] == 2)
-        print(second_commit)
         second_doc = did.find_by_id(doc.id, commit=second_commit[1])
         assert second_doc.data['app'] == {'a': True, 'b': True, 'c': True}
 

@@ -14,5 +14,4 @@ def check_time_format(thing):
         datetime.fromisoformat(thing)
         return True
     except ValueError as error:
-        print(error)
         raise InvalidTimeFormat('Expected [ISOT format](https://docs.astropy.org/en/stable/api/astropy.time.TimeISOT.html#astropy.time.TimeISOT).')
