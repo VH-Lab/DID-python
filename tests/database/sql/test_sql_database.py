@@ -99,7 +99,7 @@ mock_document_data = [
 @pytest.fixture
 def did():
     did = DID(
-        database = SQL(
+        driver = SQL(
             'postgres://postgres:password@localhost:5432/did_versioning_tests', 
             hard_reset_on_init = True,
             debug_mode = False,
@@ -108,7 +108,7 @@ def did():
         binary_directory='./tests/database/sql/test_versioning_binary_data',
     )
     yield did
-    did.database.connection.close()
+    did.driver.connection.close()
 
 
 @pytest.fixture

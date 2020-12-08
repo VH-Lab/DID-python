@@ -100,7 +100,7 @@ mock_document_data = [
 @pytest.fixture
 def did():
     did = DID(
-        database = SQL(
+        driver = SQL(
             'postgres://postgres:password@localhost:5432/did_versioning_tests', 
             hard_reset_on_init = True,
             debug_mode = False,
@@ -109,7 +109,7 @@ def did():
         binary_directory='./tests/database/sql/test_versioning_binary_data',
     )
     yield did
-    did.database.connection.close()
+    did.driver.connection.close()
 
 @pytest.fixture
 def mocdocs():
@@ -118,11 +118,11 @@ def mocdocs():
 
 @pytest.fixture
 def doc_count(did):
-    return lambda did: list(did.database.execute('select count(*) from (select * from document) src;'))[0][0]
+    return lambda did: list(did.driver.execute('select count(*) from (select * from document) src;'))[0][0]
 
 class TestSqlVersioning:
     def test_document_collection_creation(self, did):
-        results = list(did.database.execute("""
+        results = list(did.driver.execute("""
             SELECT 
                 table_name, 
                 column_name, 
@@ -141,11 +141,11 @@ class TestSqlVersioning:
             assert row in expected
 
     def test_initial_snapshot(self, did, mocdocs):
-        assert not did.database.current_transaction
-        with did.database.transaction_handler() as connection:
-            new_snapshot_id = did.database.working_snapshot_id
+        assert not did.driver.current_transaction
+        with did.driver.transaction_handler() as connection:
+            new_snapshot_id = did.driver.working_snapshot_id
         did.db.save()
-        results = next(did.database.execute(f"""
+        results = next(did.driver.execute(f"""
             SELECT snapshot_id FROM snapshot
             WHERE snapshot_id = {new_snapshot_id};
         """))
@@ -154,11 +154,11 @@ class TestSqlVersioning:
     def test_write_snapshot(self, did, mocdocs):
         for doc in mocdocs:
             did.add(doc)
-        new_snapshot_id = did.database.working_snapshot_id
+        new_snapshot_id = did.driver.working_snapshot_id
         document_hashes = [hash_document(doc) for doc in mocdocs]
         did.save()
         expected_snapshot_hash = hash_snapshot(document_hashes)
-        results = next(did.database.execute(f"""
+        results = next(did.driver.execute(f"""
             SELECT hash FROM snapshot
             WHERE snapshot_id = {new_snapshot_id};
         """))
@@ -167,16 +167,16 @@ class TestSqlVersioning:
     def test_initial_commit(self, did, mocdocs):
         for doc in mocdocs:
             did.add(doc)
-        snapshot_id = did.database.working_snapshot_id
+        snapshot_id = did.driver.working_snapshot_id
         did.save()
 
-        snapshot_hash = next(did.database.execute(f"""
+        snapshot_hash = next(did.driver.execute(f"""
             SELECT hash FROM snapshot
             WHERE snapshot_id = {snapshot_id};
         """)).hash
 
         # check new commit
-        new_commit = next(did.database.execute(f"""
+        new_commit = next(did.driver.execute(f"""
             SELECT * FROM commit
             WHERE snapshot_id = {snapshot_id};
         """))
@@ -185,29 +185,29 @@ class TestSqlVersioning:
         assert check_time_format(new_commit.timestamp)
 
         # check new ref
-        new_ref = next(did.database.execute(f"""
+        new_ref = next(did.driver.execute(f"""
             SELECT * FROM ref
             WHERE commit_hash = '{new_commit.hash}';
         """))
         assert new_ref.name == 'CURRENT'
 
     def test_commit_from_existing_ref(self, did, mocdocs, doc_count):
-        assert not did.database.current_ref
+        assert not did.driver.current_ref
 
         did.add(mocdocs[0])
         first_doc_hash = hash_document(mocdocs[0])
-        first_snapshot_id = did.database.working_snapshot_id
+        first_snapshot_id = did.driver.working_snapshot_id
         did.save()
-        first_commit = did.database.current_ref.commit_hash
+        first_commit = did.driver.current_ref.commit_hash
 
         did.add(mocdocs[1])
         second_doc_hash = hash_document(mocdocs[1])
-        second_snapshot_id = did.database.working_snapshot_id
+        second_snapshot_id = did.driver.working_snapshot_id
         did.save()
-        second_commit = did.database.current_ref.commit_hash
+        second_commit = did.driver.current_ref.commit_hash
 
         # check documents were staged correctly
-        snapshot_documents = list(did.database.execute(f"""
+        snapshot_documents = list(did.driver.execute(f"""
             SELECT * FROM snapshot_document;
         """))
         expected_snapshot_documents = [
@@ -220,7 +220,7 @@ class TestSqlVersioning:
         assert snapshot_documents == expected_snapshot_documents
 
         # check commit was added correctly
-        latest_commit = next(did.database.execute(f"""
+        latest_commit = next(did.driver.execute(f"""
             SELECT * FROM commit
             WHERE hash = '{second_commit}';
         """))
@@ -228,16 +228,16 @@ class TestSqlVersioning:
         assert latest_commit.snapshot_id == second_snapshot_id 
 
         # check ref was updated
-        assert did.database.current_ref.commit_hash == second_commit
+        assert did.driver.current_ref.commit_hash == second_commit
 
     def test_get_history(self, did, mocdocs):
-        history = did.database.get_history()
+        history = did.driver.get_history()
         for doc in mocdocs:
             did.add(doc, save=True)
-        did.database.upsert_ref('branch-name', did.database.current_ref.commit_hash)
-        history = did.database.get_history()
+        did.driver.upsert_ref('branch-name', did.driver.current_ref.commit_hash)
+        history = did.driver.get_history()
 
-        all_commits = [row.hash for row in (did.database.execute(f"""
+        all_commits = [row.hash for row in (did.driver.execute(f"""
             SELECT * FROM commit;
         """))]
         for commit in history:
@@ -247,20 +247,20 @@ class TestSqlVersioning:
         assert doc_count(did) is 0
         
         did.add(mocdocs[0])
-        snapshot_id = did.database.working_snapshot_id
+        snapshot_id = did.driver.working_snapshot_id
         expected_document_hash = hash_document(mocdocs[0])
         did.save()
         
         # document is added to document table
-        result = next(did.database.execute('SELECT document_id FROM document;'))[0]
+        result = next(did.driver.execute('SELECT document_id FROM document;'))[0]
         assert result is mocdocs[0].id
-        result = next(did.database.execute('SELECT data FROM document;'))[0]
+        result = next(did.driver.execute('SELECT data FROM document;'))[0]
         assert result == mocdocs[0].data
-        result = next(did.database.execute('SELECT hash FROM document;'))[0]
+        result = next(did.driver.execute('SELECT hash FROM document;'))[0]
         assert result == expected_document_hash
 
         # document is added to JOIN table
-        result = next(did.database.execute('SELECT document_hash FROM snapshot_document;'))[0]
+        result = next(did.driver.execute('SELECT document_hash FROM snapshot_document;'))[0]
         assert result == expected_document_hash
 
     def test_find(self, did, mocdocs):
@@ -288,12 +288,12 @@ class TestSqlVersioning:
         doc.data['app']['c'] = True
         did.update(doc, save=True)
 
-        total_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        total_documents = list(did.driver.execute('SELECT document_hash FROM snapshot_document;'))
         assert len(total_documents) == 2
 
         current_documents = [
             { 'app': doc.data['app'], 'snapshots': doc.data['base']['snapshots'] }
-            for doc in did.database.execute(f"""
+            for doc in did.driver.execute(f"""
                 SELECT * FROM document
                 WHERE document_id = '{doc.id}';
             """)
@@ -308,18 +308,18 @@ class TestSqlVersioning:
         doc = mocdocs[0]
         did.upsert(doc, save=True)
 
-        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        current_documents = list(did.driver.execute('SELECT document_hash FROM snapshot_document;'))
         assert len(current_documents) == 1
 
         doc.data['app']['c'] = True
         did.upsert(doc, save=True)
 
-        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        current_documents = list(did.driver.execute('SELECT document_hash FROM snapshot_document;'))
         assert len(current_documents) == 2
 
         current_documents = [
             { 'app': doc.data['app'], 'snapshots': doc.data['base']['snapshots'] }
-            for doc in did.database.execute(f"""
+            for doc in did.driver.execute(f"""
                 SELECT * FROM document
                 WHERE document_id = '{doc.id}';
             """)
@@ -336,12 +336,12 @@ class TestSqlVersioning:
         updates = { 'app': {'a': True, 'b': True, 'c': True} }
         did.update_by_id(doc.id, document_updates=updates, save=True)
 
-        results = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        results = list(did.driver.execute('SELECT document_hash FROM snapshot_document;'))
         assert len(results) == 2
 
         results = [
             { 'app': doc.data['app'], 'snapshots': doc.data['base']['snapshots'] }
-            for doc in did.database.execute(f"""
+            for doc in did.driver.execute(f"""
                 SELECT * FROM document
                 WHERE document_id = '{doc.id}';
             """)
@@ -360,12 +360,12 @@ class TestSqlVersioning:
         by_app_a = Q('app.a') == True
         updates = { 'app': { 'c': False } }
 
-        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        current_documents = list(did.driver.execute('SELECT document_hash FROM snapshot_document;'))
         assert len(current_documents) == 3
 
         did.update_many(by_app_a, updates, save=True)
 
-        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        current_documents = list(did.driver.execute('SELECT document_hash FROM snapshot_document;'))
         assert len(current_documents) == 6
 
         current_documents = did.find()
@@ -392,7 +392,7 @@ class TestSqlVersioning:
         did.delete(doc, save=True)
         assert len(did.find()) == 0
 
-        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        current_documents = list(did.driver.execute('SELECT document_hash FROM snapshot_document;'))
         assert len(current_documents) == 1
 
     def test_delete_many(self, did, mocdocs):
@@ -408,7 +408,7 @@ class TestSqlVersioning:
         did.delete_many(by_app_a, save=True)
         assert len(did.find()) == 1
 
-        current_documents = list(did.database.execute('SELECT document_hash FROM snapshot_document;'))
+        current_documents = list(did.driver.execute('SELECT document_hash FROM snapshot_document;'))
         assert len(current_documents) == 5
 
     def test_change_current(self, did, mocdocs):

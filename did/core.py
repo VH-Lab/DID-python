@@ -8,15 +8,24 @@ from did.database.utils import merge_dicts
 from did.utils import has_single_snapshot
 
 class DID:
-    def __init__(self, database, binary_directory, auto_save=False):
-        self.database = database
+    def __init__(self, driver, binary_directory, auto_save=False):
+        """[summary]
+
+        :param driver: A specific database implementation, eg. did.database.SQL.
+        :type driver: DID_Database
+        :param binary_directory: [description]
+        :type binary_directory: [type]
+        :param auto_save: [description], defaults to False
+        :type auto_save: bool, optional
+        """
+        self.driver = driver
         self.bin = BinaryCollection(binary_directory)
         self.auto_save = auto_save
         self.documents_in_transaction = []
 
     @property
     def db(self):
-        return self.database
+        return self.driver
 
     def add(self, document, save=None) -> None:
         with self.db.transaction_handler():
@@ -33,6 +42,7 @@ class DID:
             self.save()
 
     def find(self, query=None, snapshot=None, commit=None, in_all_history=False):
+        print(self.db)
         return self.db.find(query=query, snapshot_id=snapshot, commit_hash=commit, in_all_history=in_all_history)
 
     def find_by_id(self, did_id, snapshot=None, commit=None, in_all_history=False):
