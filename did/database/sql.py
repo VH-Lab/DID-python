@@ -489,7 +489,8 @@ class SQL(DID_Database):
             .where(self.table.snapshot.c.snapshot_id == self.working_snapshot_id)
         result = next(self.connection.execute(get_working_snapshot))
         if result.hash:
-            raise SnapshotIntegrityError('Hashed snapshots cannot be ')
+            print(result.hash)
+            raise SnapshotIntegrityError('Hashed snapshots are locked and cannot be modified.')
 
 
     def add_to_snapshot(self, document_hash):

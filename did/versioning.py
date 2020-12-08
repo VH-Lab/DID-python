@@ -5,13 +5,13 @@ from blake3 import blake3
 from copy import deepcopy
 
 def hash_document(document):
-    doc = deepcopy(document)
+    data = deepcopy(document.data)
 
     # The following fields are ignored for versioning purposes
-    doc.data['base']['records'] = None 
-    doc.data['dependencies'] = None
+    data['base']['records'] = None 
+    data['dependencies'] = None
 
-    serialized_data = bytes(json.dumps(doc.data), 'utf8')
+    serialized_data = bytes(json.dumps(data), 'utf8')
     return blake3(serialized_data).hexdigest()
 
 def hash_snapshot(document_hashes: T.List[str]):
