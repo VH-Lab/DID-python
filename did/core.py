@@ -19,7 +19,7 @@ class DID:
         :type auto_save: bool, optional
         """
         self.driver = driver
-        self.bin = BinaryCollection(binary_directory)
+        self.bin = BinaryCollection(binary_directory, self)
         self.auto_save = auto_save
         self.documents_in_transaction = []
 
@@ -75,26 +75,10 @@ class DID:
             self.save()
 
     def upsert(self, document, save=None):
-        with self.db.transaction_handler():
-            last_snapshot = document.data['base']['snapshots'][0] if document.data['base']['snapshots'] else None
-            previous_hash = document.data['base']['records'][0] if document.data['base']['records'] else None
-            if last_snapshot == self.db.working_snapshot_id:
-                hash_ = hash_document(document)
-                document.data['base']['snapshots'][0] = self.db.working_snapshot_id
-                document.data['base']['records'][0] = hash_
-                self.db.remove_from_snapshot(previous_hash)
-                if previous_hash and has_single_snapshot(document):
-                    self.db._DANGEROUS__delete_by_hash(previous_hash)
-            else:
-                document.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
-                hash_ = hash_document(document)
-                document.data['base']['records'].insert(0, hash_)
-            if previous_hash:
-                self.db.remove_from_snapshot(previous_hash)
-            self.db.upsert(document, hash_)
-            self.db.add_to_snapshot(hash_)
-        if save if save is not None else self.auto_save:
-            self.save()
+        try:
+            self.add(document, save=save)
+        except IntegrityError:
+            self.update(document, save=save)
     
     def update_by_id(self, did_id, document_updates={}, save=None):
         with self.db.transaction_handler():
@@ -104,16 +88,17 @@ class DID:
             diff_hash = hash_document(doc)
             if old_hash != diff_hash:
                 last_snapshot = doc.data['base']['snapshots'] and doc.data['base']['snapshots'][0]
+                hash_ = hash_document(doc)
                 if last_snapshot == self.db.working_snapshot_id:
                     doc.data['base']['snapshots'][0] = self.db.working_snapshot_id
+                    doc.data['base']['records'][0] = hash_
                     self.db.remove_from_snapshot(old_hash)
                     if has_single_snapshot(doc):
                         self.db._DANGEROUS__delete_by_hash(old_hash)
                 else:
                     doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                     self.db.remove_from_snapshot(old_hash)
-                hash_ = hash_document(doc)
-                doc.data['base']['records'].insert(0, hash_)
+                    doc.data['base']['records'].insert(0, hash_)
 
                 self.db.upsert(doc, hash_)
                 self.db.add_to_snapshot(hash_)
@@ -130,16 +115,17 @@ class DID:
                 diff_hash = hash_document(doc)
                 if old_hash != diff_hash:
                     last_snapshot = doc.data['base']['snapshots'] and doc.data['base']['snapshots'][0]
+                    hash_ = hash_document(doc)
                     if last_snapshot == self.db.working_snapshot_id:
                         doc.data['base']['snapshots'][0] = self.db.working_snapshot_id
+                        doc.data['base']['records'][0] = hash_
                         self.db.remove_from_snapshot(old_hash)
                         if has_single_snapshot(doc):
                             self.db._DANGEROUS__delete_by_hash(old_hash)
                     else:
                         doc.data['base']['snapshots'].insert(0, self.db.working_snapshot_id)
                         self.db.remove_from_snapshot(old_hash)
-                    hash_ = hash_document(doc)
-                    doc.data['base']['records'].insert(0, hash_)
+                        doc.data['base']['records'].insert(0, hash_)
 
                     self.db.upsert(doc, hash_)
                     self.db.add_to_snapshot(hash_)
