@@ -35,12 +35,11 @@ class BinaryCollection:
         did_document.data['binary_files'].remove(self.get_filename_for_name(did_document, name))
 
     def list_files(self, did_document, snapshot=None):
-        snapshots = did_document.data['base']['snapshots']
-        snapshot = snapshot or snapshots[0]
+        filenames = did_document.data['binary_files']
         return [
             self.__extract_name_from_filename(filename)
-            for filename in did_document.data['binary_files']
-            if self.check_filename_in_snapshot(filename, snapshot)]
+            for filename in filenames
+        ]
     
     def get_filename_for_name(self, did_document, name):
         filenames = [
