@@ -31,8 +31,11 @@ class BinaryCollection:
         else:
             raise FileNotFoundError(f'The binary file \'{name}\' was not found in the document.')
 
-    def remove_file(self, did_document, name):
+    def remove_file(self, did_document, name, save=None):
+        """This does not clear the file from memory. Awaiting garbage collector."""
+
         did_document.data['binary_files'].remove(self.get_filename_for_name(did_document, name))
+        self.did.update(did_document, save=save)
 
     def list_files(self, did_document, snapshot=None):
         filenames = did_document.data['binary_files']
