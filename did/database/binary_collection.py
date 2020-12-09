@@ -12,7 +12,7 @@ class BinaryCollection:
         self.dir_path.mkdir(parents=True, exist_ok=True)
 
     @contextmanager
-    def open_write_stream(self, did_document, name):
+    def open_write_stream(self, did_document, name, save=None):
         filename = self.get_filename(did_document, name)
         if filename not in did_document.data['binary_files']:
             did_document.data['binary_files'].append(filename)
@@ -20,7 +20,7 @@ class BinaryCollection:
             self.update_document_filenames(did_document, name)
         with open(self.dir_path / filename, 'wb') as w_stream:
             yield w_stream
-        self.did.update(did_document, save=True)
+        self.did.update(did_document, save=save)
 
     @contextmanager
     def open_read_stream(self, did_document, name):
