@@ -85,6 +85,7 @@ Please make sure that each applicable task below is addressed. Once the task has
 - [ ] **“301 redirects” have been used for any URLs that were removed**
    - [ ] Not applicable
 - [ ] **Pages are descriptive and SEO friendly**
+- [ ] **Add robot.txt and sitemap.xml**
 
 # User Interface Checklist
 - [ ] **Formatting and design are consistent throughout the site**
