@@ -1,3 +1,3 @@
-from .did_database import DID_Database
+from .did_driver import DID_Driver
 from .sql import SQL
 from .file_system import FileSystem

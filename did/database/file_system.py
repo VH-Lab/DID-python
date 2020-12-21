@@ -1,5 +1,5 @@
 from __future__ import annotations
-from .did_database import DID_Database
+from .did_driver import DID_Driver
 from pathlib import Path
 from ..document import DIDDocument
 from ..query import CompositeQuery, AndQuery, OrQuery
@@ -9,12 +9,12 @@ import re
 import numpy as np
 
 
-class FileSystem(DID_Database):
+class FileSystem(DID_Driver):
     """File system database API.
 
-    .. currentmodule:: ndi.database.did_database
+    .. currentmodule:: ndi.database.did_driver
 
-    Inherits from the :class:`DID_Database` abstract class.
+    Inherits from the :class:`DID_Driver` abstract class.
     """
 
     def __init__(self, exp_dir, db_name='.ndi'):

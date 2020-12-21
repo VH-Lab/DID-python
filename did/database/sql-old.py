@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import Table, Column, String, LargeBinary
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import and_, or_
-from .did_database import DID_Database
+from .did_driver import DID_Driver
 from functools import wraps
 from ..document import DIDDocument
 from ..utils import class_to_collection_name, flatten
@@ -34,12 +34,12 @@ class Datatype(Enum):
 #  SQL Database  #
 # ============== #
 
-class SQL(DID_Database):
+class SQL(DID_Driver):
     """Interface for SQL Databases.
 
-    .. currentmodule:: ndi.database.did_database
+    .. currentmodule:: ndi.database.did_driver
 
-    Inherits from the :class:`DID_Database` abstract class.
+    Inherits from the :class:`DID_Driver` abstract class.
 
     This class aims to manage high-level database operations using the sqlalchemy (SQLA) library and serve as an interface between the DID and SQLA systems. It maintains the SQLA engine and Session generator, directs :term:`CRUD` actions to their target :class:`Collection`\ s in the database, and is responsible for setting up, configuring, and destroying collections.
 
@@ -188,7 +188,7 @@ class SQL(DID_Database):
     def update_by_id(self, id_: T.NdiId, payload: T.SqlCollectionDocument = {}, force: bool = False) -> None:
         """Updates the :term:`DID object` with the given id from the specified :term:`collection` with the fields/values in the :term:`payload`. Fields that aren't included in the payload are not touched.
 
-        .. currentmodule:: ndi.did_database
+        .. currentmodule:: ndi.did_driver
 
         :param id_: The identifier of the :term:`document` to update.
         :type id_: str
@@ -202,10 +202,10 @@ class SQL(DID_Database):
     def delete_by_id(self, id_: T.NdiId, force:bool = False) -> None:
         """Deletes the :term:`DID object` with the given id from the specified :term:`collection`.
 
-        .. currentmodule:: ndi.did_database
+        .. currentmodule:: ndi.did_driver
 
         :param ndi_class: The :term:`DID class` that defines the :term:`collection` to query.
-        :type ndi_class: :class:`DID_Database`
+        :type ndi_class: :class:`DID_Driver`
         :param id_: The identifier of the :term:`document` to delete.
         :type id_: str
         """

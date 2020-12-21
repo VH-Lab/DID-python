@@ -12,7 +12,7 @@ class DID:
         """[summary]
 
         :param driver: A specific database implementation, eg. did.database.SQL.
-        :type driver: DID_Database
+        :type driver: DID_Driver
         :param binary_directory: [description]
         :type binary_directory: [type]
         :param auto_save: [description], defaults to False

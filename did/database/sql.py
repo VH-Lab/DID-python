@@ -10,7 +10,7 @@ from sqlalchemy import join, and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy_utils import database_exists, create_database
 
-from .did_database import DID_Database, DIDDocument
+from .did_driver import DID_Driver, DIDDocument
 from ..query import Query, AndQuery, OrQuery, CompositeQuery
 from ..exception import NoTransactionError, NoWorkingSnapshotError, SnapshotIntegrityError
 
@@ -40,7 +40,7 @@ class SQLTables:
         self.snapshot = snapshot
         self.snapshot_document = snapshot_document
         self.document = document
-class SQL(DID_Database):
+class SQL(DID_Driver):
     """"""
 
     def __init__(
@@ -217,7 +217,7 @@ class SQL(DID_Database):
         return [self._did_doc_from_row(r) for r in rows]
 
     def find_by_id(self, id_, snapshot_id=None, commit_hash=None, in_all_history=False):
-        s = self.select_documents(snapshot_id, commit_hash, in_all_history) \
+        s = self.select_documents(snapshot_id, commit_hash) \
             .where(self.documents.c.document_id == id_)
         rows = self.connection.execute(s)
         try:
@@ -421,7 +421,7 @@ class SQL(DID_Database):
         except StopIteration:
             raise RuntimeError('This snapshot does not appear to be associated with any commits.')
     
-    def select_documents(self, snapshot_id, commit_hash, in_all_history):
+    def select_documents(self, snapshot_id, commit_hash, in_all_history=False):
         if snapshot_id and commit_hash:
             print(f'Warning: You are attempting to select document(s) by both snapshot and commit. The given snapshot {snapshot_id} will take precedence over the given commit {commit_hash}.')
         if in_all_history:
