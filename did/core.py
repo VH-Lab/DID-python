@@ -6,8 +6,9 @@ from did.exception import NoChangesToSave, IntegrityError
 from did.time import current_time
 from did.database.utils import merge_dicts
 from did.utils import has_single_snapshot
+from .did_abc import DID_ABC
 
-class DID:
+class DID(DID_ABC):
     def __init__(self, driver, binary_directory, auto_save=False):
         """[summary]
 
@@ -21,7 +22,6 @@ class DID:
         self.driver = driver
         self.bin = BinaryCollection(binary_directory, self)
         self.auto_save = auto_save
-        self.documents_in_transaction = []
 
     @property
     def db(self):
