@@ -24,6 +24,7 @@ alchemy-mock = "*"
 sqlalchemy-utils = "*"
 blake3 = "*"
 astropy = "*"
+python-dotenv = "*"
 
 [requires]
 python_version = "3.8"
