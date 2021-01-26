@@ -18,12 +18,9 @@ if 'CWD' not in __config__:
 
 # check if document_path and schema_path has been override
 if 'DIDDOCUMENTPATH' not in __config__:
-	dotenv.set_key(ENV, 'DIDDOCUMENTPATH', os.path.join(CWD, 'document'))
+	dotenv.set_key(ENV, 'DIDDOCUMENTPATH', os.path.join(CWD, 'json', 'document'))
 if 'DIDSCHEMAPATH' not in __config__:
-	dotenv.set_key(ENV, 'DIDSCHEMAPATH', os.path.join(CWD, 'schema'))
-
-DIDDOCUMENTPATH = dotenv.get_key(ENV, 'DIDDOCUMENTPATH')
-DIDSCHEMAPATH = dotenv.get_key(ENV, 'DIDSCHEMAPATH')
+	dotenv.set_key(ENV, 'DIDSCHEMAPATH', os.path.join(CWD, 'json', 'schema'))
 
 
 def set_documentpath(path):
@@ -41,9 +38,7 @@ def set_documentpath(path):
 	:param path: the file path, which can be both relative to the current working directory
 	as well as an absolute path
 	"""
-	global DIDDOCUMENTPATH
 	dotenv.set_key(ENV, 'DIDDOCUMENTPATH', os.path.abspath(path))
-	DIDDOCUMENTPATH = dotenv.get_key(ENV, 'DIDDOCUMENTPATH')
 
 
 def set_schemapath(path):
@@ -60,9 +55,7 @@ def set_schemapath(path):
 	:param path: the file path, which can be both relative to the current working directory as well
 	as an absolute path
 	"""
-	global DIDSCHEMAPATH
 	dotenv.set_key(ENV, 'DIDSCHEMAPATH', os.path.abspath(path))
-	DIDSCHEMAPATH = dotenv.get_key(ENV, 'DIDSCHEMAPATH')
 
 
 def set_variable(key, value):
@@ -71,10 +64,10 @@ def set_variable(key, value):
 
 	Example:
 	>>> import did
-	>>> did.get_config()
+	>>> did.globals
 	{'CWD' : '', 'DOCUMENT_PATH' : '', SCHEMA_PATH' : ''}
 	>>> did.set_variable('USER', 'HELLO')
-	>>> did.get_config()
+	>>> did.globals
 	{'CWD' : '', 'DOCUMENT_PATH' : '', 'SCHEMA_PATH' : '', 'USER' : 'HELLO'}
 
 	:param key: 	the global variable name
@@ -92,7 +85,7 @@ def get_variable(key):
 
 	Example:
 	>>> import did
-	>>> did.get_config()
+	>>> did.globals
 	{'CWD' : '', 'DOCUMENT_PATH' : '', SCHEMA_PATH' : '', 'USER', 'HELLO'}
 	>>> did.get_variable('USER')
 	'HELLO'
@@ -105,10 +98,18 @@ def get_variable(key):
 	return dotenv.get_key(ENV, key)
 
 
-def get_config():
+def globals():
 	"""
 	get all variables and its corresponding values that can be found in init.env
 
 	:return: key-value pairs of global variables and their value as python dictionary
 	"""
 	return dotenv.dotenv_values(ENV)
+
+
+def did_documentpath():
+	return get_variable('DIDDOCUMENTPATH')
+
+
+def did_schemapath():
+	return get_variable('DIDSCHEMAPATH')
