@@ -21,6 +21,8 @@ if 'DIDDOCUMENTPATH' not in __config__:
 	dotenv.set_key(ENV, 'DIDDOCUMENTPATH', os.path.join(CWD, 'json', 'document'))
 if 'DIDSCHEMAPATH' not in __config__:
 	dotenv.set_key(ENV, 'DIDSCHEMAPATH', os.path.join(CWD, 'json', 'schema'))
+if 'FILESEP' not in __config__:
+	dotenv.set_key(ENV, 'FILESEP', '/')
 
 
 def set_documentpath(path):
@@ -113,3 +115,27 @@ def did_documentpath():
 
 def did_schemapath():
 	return get_variable('DIDSCHEMAPATH')
+
+
+def parse_didpath(path):
+	"""
+	Parse a path appears in the DEFINITION field of DID Document
+
+	Example:
+	>>> parse_didpath("$DIDDOCUMENTPATH\/base.json")
+	>>> "path2diddocument/base.json"
+
+	:param path:
+	:return:
+	"""
+
+	def replace(string):
+		if string.startswith('$') and string[1:] in globals():
+			return get_variable(string[1:])
+		return string
+
+	newpath = map(replace, path.split(get_variable('FILESEP')))
+	return os.path.join(*newpath)
+
+
+
