@@ -8,13 +8,14 @@ from datetime import datetime as dt
 
 
 class DIDDocument:
+	# constructors for DIDDocument
 	def __init__(self, data=None):
-		self.superclasses_docs = {}
 		try:
-			self.id = data.get('base').get('id')
+			data.get('base').get('id')
 			self.data = data
 		except AttributeError:
 			raise Exception('DIDDocuments must be instantiated with a did_document in dict format.')
+		self.superclasses_docs = {}
 
 	def serialize(self):
 		return json.dumps(self.data)
@@ -22,8 +23,9 @@ class DIDDocument:
 	@classmethod
 	def make_blankdocument(cls, document_type):
 		"""
+		create a blank did_document
 
-		:param document_type:
+		:param document_type: the document type or the name of the class this new document represents
 		:return:
 		"""
 
@@ -116,10 +118,20 @@ class DIDDocument:
 			properties = __readjsonfromblankfile__(f.read())
 			return cls(data=properties)
 
+	# Getters and setters
 	@property
 	def binary_files(self):
 		""" Get binary filenames """
 		return self.data.get('binary_files')
+
+	@property
+	def id(self):
+		"""
+		A globally unique identifier for the document
+
+		:return: did_id string
+		"""
+		return self.data.get('base').get('id')
 
 	@property
 	def session_id(self):
@@ -226,55 +238,150 @@ class DIDDocument:
 		return self.data.get('class').get('property_list_name')
 
 	@property
-	def property_list(self, class_name=None):
+	def property_list(self, class_name=None, getRef=False):
+		"""
+		By default it return a dictionary that contains key-value pairs of fields for this class as well
+		as all of its superclasses. User can specify the particular superclass this class inherent from
+		by passing in a string for the class_name parameter
+
+		:param getRef: an optional parameter that specifies if the user wants to receive a reference
+		of key-value pair pointing to the document's data or a copy of it. It is set to false by default.
+		A user might find it useful to receive a reference to the key-value pairs if they want their changes
+		to the dictionary reflects in data in the document instance
+
+		:param class_name: an optional parameter where user can access the property of a particular superclass
+		:return: a dictionary containing all the fields of the class
+		"""
+
 		if class_name is None:
-			properties = self.data[self.property_list_name]
+			properties = {}
 			for superclass in self.superclasses_docs:
-				superclass_property = self.superclasses_docs[superclass].data[self.superclasses_docs[superclass].property_list_name]
+				superclass_property = self.superclasses_docs[superclass].data[
+					self.superclasses_docs[superclass].property_list_name]
 				for key in superclass_property:
 					properties[key] = superclass_property[key]
-			return copy.deepcopy(properties)
+
+			# this ensures that the subclass will override superclass field's value in the case
+			# the subclass and the superclass has the same field
+			for pro in self.data[self.property_list_name]:
+				properties[pro] = self.data[self.property_list_name][pro]
+
+			# return a copy so that user cannot mutate the data
+			if getRef:
+				return properties
+			else:
+				return copy.deepcopy(properties)
 		else:
 			if class_name not in self.superclasses_docs or class_name != self.property_list_name:
 				raise ValueError('class_name is not the class nor the superclasses of the document')
 			else:
 				if class_name in self.superclasses_docs:
-					return copy.deepcopy(self.superclasses_docs[class_name][self.superclasses_docs[class_name].property_list_name])
+					if getRef:
+						return self.superclasses_docs[class_name][self.superclasses_docs[class_name].property_list_name]
+					else:
+						return copy.deepcopy(
+							self.superclasses_docs[class_name][self.superclasses_docs[class_name].property_list_name])
 				else:
-					return copy.deepcopy(self.data[self.property_list_name])
+					if getRef:
+						return self.data[self.property_list_name]
+					else:
+						# return a copy so that user cannot mutate the data
+						return copy.deepcopy(self.data[self.property_list_name])
 
 	@property
 	def class_version(self):
+		"""
+		Return the version of the schema
+
+		:return: an integer value
+		"""
 		return self.data.get('class').get('class_version')
 
 	@property
 	def superclasses(self):
+		"""
+		Return the list of superclasses that the method inherents from
+
+		:return: a list of string
+		"""
 		return self.data.get('class').get('superclasses')
 
 	def add_property(self, field, value=''):
+		"""
+		Add a new property to the current class
+
+		:param field: the field of the class
+		:param value: its associated value (by default it is equals to "")
+		"""
 		self.data[self.property_list_name][field] = value
 
 	def add_new_superclass(self, datatype):
-		self.superclasses[datatype] = self.make_blankdocument(datatype)
-		self.data = self.superclasses[datatype].data[self.superclasses[datatype].property_list_name]
+		"""
+		Add a new empty superclass that the class this document represents will inherent from
 
-	def save(self):
+		:param datatype: the datatype for the superclass
+		"""
+		self.superclasses[datatype] = self.make_blankdocument(datatype)
+		self.data[datatype] = self.superclasses[datatype].data[datatype]
+
+	def add_superclass_fromjson(self, datatype, starting_path=did_documentpath()):
+		"""
+		Add an superclass from an existing JSON document schema
+
+		:param starting_path: optional parameter specifying the path that the program
+		will start searching for the JSON document schema
+
+		:param datatype: the class name of the file
+		"""
+		self.superclasses[datatype] = DIDDocument.from_json(datatype, starting_path)
+		self.data[datatype] = self.superclasses[datatype].data[datatype]
+
+	def add_superclass(self, doc):
+		"""
+		Add a superclass from did_document
+		:param doc: a document instance
+		"""
+		self.superclasses[doc.property_list_name] = doc
+		self.data[doc.property_list_name] = self.superclasses[doc.property_list_name].data[doc.property_list_name]
+
+	def add_new_dependency(self, datatype):
+		pass
+
+	def add_dependency_fromjson(self, datatype, starting_path=did_documentpath()):
+		pass
+
+	def add_dependency(self, doc):
+		pass
+
+	def generate_json(self):
 		"""
 		Generate a json file in the directory as specified in the NDIDOCUMENTPATH, which
 		serves as a template for instantiate a document of such data type
 		"""
+
 		def __maketemplate__(data):
-			if isinstance(data, type('')):
-				return ''
-			if isinstance(data, type([])):
-				return []
-			if isinstance(data, type(0)):
-				return -1
 			if isinstance(data, type({})):
 				replaced = {}
 				for key in data:
 					replaced[key] = __maketemplate__(data[key])
 				return replaced
+			# the most accurate way to check whether an object x is iterable is to call iter(x) and handle a TypeError
+			# exception if it isn’t
+			try:
+				iter(data)
+				ls = []
+				for item in data:
+					ls.append(__maketemplate__(item))
+				return ls
+			except TypeError:
+				if isinstance(data, type('')):
+					return ''
+				if isinstance(data, type(True)):
+					return True
+				if isinstance(data, type(0)):
+					return -1
+				else:
+					raise AttributeError("{} cannot be turned into a json string".format(data))
 
 		for superclass in self.superclasses_docs:
 			if not os.path.isfile(parse_didpath(self.superclasses_docs[superclass].class_definition)):
@@ -296,3 +403,6 @@ class DIDDocument:
 			json.dump(data, f)
 		finally:
 			f.close()
+
+	def validate(self):
+		pass
