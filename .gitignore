@@ -1,6 +1,7 @@
 # Editor configs
 .vscode/
 .mypy_cache
+.idea
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
