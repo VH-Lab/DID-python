@@ -60,6 +60,7 @@ example/test_sql_crud
 # Common virtualenv paths
 .venv/
 .env/
+*.env
 
 # Example notebook checkpoint
 example/.ipynb_checkpoints/
