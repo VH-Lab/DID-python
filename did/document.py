@@ -95,7 +95,7 @@ class DIDDocument:
                 else:
                     for directory in _dirname:
                         try:
-                            return __search__(os.path.join(_dirpath, directory))
+                            return __search__(os.path.join(_dirpath, directory), fname)
                         except FileNotFoundError:
                             continue
                     raise FileNotFoundError('{} cannot found from {}'.format(fname, path))
@@ -353,7 +353,7 @@ class DIDDocument:
     def add_dependency(self, doc):
         pass
 
-    def generate_json(self):
+    def export(self):
         """
         Generate a json file in the directory as specified in the NDIDOCUMENTPATH, which
         serves as a template for instantiate a document of such data type
@@ -387,8 +387,7 @@ class DIDDocument:
             if not os.path.isfile(parse_didpath(self.superclasses_docs[superclass].class_definition)):
                 self.superclasses_docs[superclass].save(self.superclasses_docs[superclass].class_definition)
             else:
-                print("{} already exists".format(self.superclasses_docs[superclass].class_definition))
-                print()
+                print("{} already exists\n\n".format(self.superclasses_docs[superclass].class_definition))
         full_directory = parse_didpath(self.class_definition)
         directory = os.path.join(*(os.path.split(full_directory)[:-1]))
         if not os.path.isdir(directory):
@@ -398,8 +397,7 @@ class DIDDocument:
                 self.property_list_name: __maketemplate__(self.data[self.property_list_name])}
         try:
             print("Generating json file for the class at {}".format(self.class_definition))
-            print(data)
-            print()
+            print("{}\n\n".format(data))
             json.dump(data, f)
         finally:
             f.close()
