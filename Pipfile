@@ -25,6 +25,8 @@ sqlalchemy-utils = "*"
 blake3 = "*"
 astropy = "*"
 python-dotenv = "*"
+pylint = "*"
+pymongo = "*"
 
 [requires]
 python_version = "3.8"
