@@ -35,8 +35,8 @@ if TYPE_CHECKING:
 
     from did import Query, DIDDocument
 
-    from sqlalchemy import Column, Query as SqlaQuery
-    from sqlalchemy.orm import relationship, Session
+    from sqlalchemy import Column
+    from sqlalchemy.orm import relationship, Session, Query as SqlaQuery
     from sqlalchemy.ext.declarative import DeclarativeMeta
     from sqlalchemy.engine import Engine
     from sqlalchemy.util._collections import _LW as SqlaDocument
