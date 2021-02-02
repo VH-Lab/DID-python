@@ -1,6 +1,7 @@
+# pylint: disable=import-error
 from did import DID, Query as Q
 from did.database.sql import SQL
-from did.document import DIDDocument
+from did.document import DIDDocument 
 from did.versioning import hash_document
 import pytest
 
