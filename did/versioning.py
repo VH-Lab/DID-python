@@ -1,7 +1,7 @@
 from __future__ import annotations
 import did.types as T
 import json
-from blake3 import blake3
+from blake3 import blake3  # pylint: disable=no-name-in-module
 from copy import deepcopy
 
 def hash_document(document):
