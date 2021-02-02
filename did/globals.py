@@ -1,5 +1,6 @@
 import os
 import dotenv
+from urllib.parse import quote_plus
 
 # look for init.env in the directory where the script is running
 CWD = os.getcwd()
@@ -115,6 +116,26 @@ def did_documentpath():
 
 def did_schemapath():
 	return get_variable('DIDSCHEMAPATH')
+
+
+def set_mongo_connection(host="localhost", port=27017, username=None, password=None):
+	if username is not None and password is not None:
+		connection_string = "mongodb://{}:{}@{}:{}".format(quote_plus(username), quote_plus(password), host, str(port))
+	else:
+		connection_string = "mongodb://{}:{}".format(host, str(port))
+	set_variable("MONGO", connection_string)
+
+
+def get_mongo_connection(option=None):
+	if 'MONGO' not in dotenv.dotenv_values(ENV):
+		raise AttributeError('You have not set up a default mongo connection string')
+	if option == 'raw':
+		return dotenv.get_key(ENV, 'MONGO')
+	settings = dotenv.get_key(ENV, 'MONGO')[len('mongodb://'):]
+	userpass, hostport = settings.split('@')
+	username, password = userpass.split(':')
+	host, port = hostport.split(':')
+	return "HOST: {}, POST: {}, USERNAME: {}, PASSWORD: {}".format(username, password, host, port)
 
 
 def parse_didpath(path):
