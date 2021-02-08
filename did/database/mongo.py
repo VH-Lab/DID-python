@@ -1,3 +1,5 @@
+import os
+import json
 from ..globals import get_mongo_connection
 from ..versioning import hash_commit, hash_document, hash_snapshot
 from ..exception import NoTransactionError, NoWorkingSnapshotError, SnapshotIntegrityError
@@ -8,8 +10,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
-if TYPE_CHECKING:
-    import did.type as T 
+from bson.objectid import ObjectId
+
 
 class MONGODBOptions:
     def __init__(
@@ -22,77 +24,82 @@ class MONGODBOptions:
         self.debug_mode = debug_mode
         self.verbose_feedback = verbose_feedback
 
+class __WorkingSnapshot:
+    def __init__(self, snapshot_id, documents, snapshot_hash):
+        self.id2hash = {doc['id'] : doc['hash'] for doc in documents}
+        self.hash2id = {self.id2hash[key] : key for key in self.id2hash}
+        self.to_be_added = dict()
+        self.snapshot_id = snapshot_id
+        self.snapshot_hash = snapshot_hash
+    
+    def add(self, document, hash):
+        # update document that already exists with a new hash
+        self.id2hash[document.id] = hash
+        self.hash2id[hash] = document.id
+        self.to_be_added[hash] = document
+    
+    def delete(self, hash):
+        if hash in self.hash2id:
+            id = self.hash2id[hash]
+            self.id2hash.pop(id, None)
+            self.hash2id.pop(hash, None)
+
+    def to_snapshot(self, snapshot_hash):
+        document_hashes = [{'id' : id, 'hash' : self.id2hash[id]} for id in self.id2hash]
+        return {'type' : 'SNAPSHOT', 'document_hashes' : document_hashes, 'snapshot_hash' : snapshot_hash}
+
+
 class Mongo(DID_Driver):
     def __init__(
         self, 
-        connection_string: str = get_mongo_connection('raw'),
-        hard_reset_on_init: bool = False,
-        verbose_feedback: bool = True,
-        debug_mode: bool = False
-    ) -> None:
-        """ Sets up a database connection and instantiates tables as necessary.
-
-        DID_Driver children will likely have additional parameters required for specific database setup.
-
-        :param hard_reset_on_init: If True, clears and reinstantiates the database and it's tables, defaults to False.
-        :type hard_reset_on_init: bool, optional
-        :param verbose_feedback: If True, driver actions like save and revert will print logs to stdout, defaults to True.
-        :type verbose_feedback: bool, optional
-        """
-        self.options = MONGODBOptions(hard_reset_on_init, debug_mode, verbose_feedback)
-        self.conn = MongoClient(connection_string)
-        try:
-            self.conn.admin.command('ismaster')
-        except ConnectionFailure:
-            raise RuntimeError("Server not available")
-        self.db = self.conn['did']
-        self.collection = self.db['did_documents']
-        self.versioning = self.db['.version']
-        self.current_ref, self.staging_area = self.__create_snapshot()
-        self.session = self.conn.start_session()
-     
+        connection_string = get_mongo_connection('raw'),
+        hard_reset_on_init = False,
+        verbose_feedback = True,
+        debug_mode = False):
+            self.options = MONGODBOptions(hard_reset_on_init, debug_mode, verbose_feedback)
+            self.conn = MongoClient(connection_string)
+            try:
+                self.conn.admin.command('ismaster')
+            except ConnectionFailure:
+                raise RuntimeError("Server not available")
+            self.db = self.conn['did']
+            self.collection = self.db['did_documents']
+            self.versioning = self.db['.version']
+            self.__current_working_snapshot = None 
+            self.__current_session = self.conn.start_session()
+        
     def __create_snapshot(self):
         head = self.versioning.find_one({'type' : 'HEAD'})
-        if head is None:
-            self.__setup_version_control()
-            self.__create_snapshot()
-        staging_area = self.versioning.find_one({'type' : 'STAGING_AREA'})
-        return head, staging_area
+        if head :
+            last_commit = self.versioning.find_one({'type' : 'COMMIT', 'commit_hash' : head['commit_hash']})
+            last_snapshot = self.versioning.find_one({'type' : 'SNAPSHOT', 'snapshot_hash' : last_commit['snapshot_hash']})
+            return __WorkingSnapshot(last_snapshot['_id'], last_snapshot['document_hashes'], last_snapshot['snapshot_hash'])
+        else:
+            return self.__setup_version_control()
 
     def __setup_version_control(self):
-        head = {'type' : 'HEAD', 'commit_id' : None, 'branch_name': 'master'}
-        staging_area = {'type' : 'STAGING_AREA', 'document_ids' : [], 'snapshot_id' : hash_snapshot([])}
-        history = {'type' : 'HISTORY', 'commits' : []}
-        self.versioning.insert_many([head, staging_area, history])
+        head = {'type' : 'HEAD', 'commit_hash' : None}
+        self.versioning.insert_one(head)
+        snapshot = {'type' : 'SNAPSHOT', 'document_hashes' : [], 'snapshot_hash' : hash_snapshot([])}
+        result = self.versioning.insert_one(snapshot)
+        return __WorkingSnapshot(result.inserted_id, snapshot['document_hashes'], snapshot['snapshot_hash'])
 
     @property
     def working_snapshot_id(self):
-        """ Gets the current working snapshot_id if one exists. If not, initializes a new snapshot and returns its id."""
-        return self.staging_area['snapshot_id']
-
-    @working_snapshot_id.setter
-    def working_snapshot_id(self, value):
-        """ Sets the current working snapshot_id to private attribute.
-
-        :type value: int
-        """
-        if value is None:
-            self.current_ref = None  
-            self.staging_area = None
-            self.session = None
-
+        if self.__current_working_snapshot:
+            return self.__current_working_snapshot.snapshot_id
+        else:
+            self.__current_working_snapshot = self.__create_snapshot()
+            return self.__current_working_snapshot.snapshot_id
+        
     def save(self):
-        """ If a transaction (working snapshot) is open, the contents of the transaction are committed to the database
-            and the current_transaction and working_snapshot_id are cleared.
-            Otherwise, a NoTransactionError is raised. 
-
-        :raises NoTransactionError: [description]
-        """
-        if self.session:
-            self.session.commit_transaction()
-            if not self.session.has_ended:
-                self.session.end_session()
-            self.working_snapshot_id = None
+        if self.__current_working_snapshot:
+            snapshot = self.__current_working_snapshot.to_snapshot()
+            document_to_add = self.__current_working_snapshot.to_be_added
+            document_to_add = [{'document_properties' : document_to_add[hash], 'document_hash' : hash} for hash in document_to_add]
+            self.versioning.insert_one(snapshot)
+            self.collection.insert_many(document_to_add)
+            self.__current_working_snapshot = None
             if self.options.verbose_feedback:
                 print('Changes saved.')
         else:
@@ -102,159 +109,55 @@ class Mongo(DID_Driver):
                 raise NoTransactionError('No current transactions to save.')
     
     def revert(self):
-        """If a transaction (working snapshot) is open, it and the working_snapshot_id are cleared without being committed to the database.
-          Otherwise, a NoTransactionError is raised. 
-
-        :raises NoTransactionError: [description]
-        """
-        if self.session:
-            self.session.abort_transaction() 
-            if not self.session.has_ended:
-                self.session.end_session()
-            self.working_snapshot_id = None
+        if self.__current_working_snapshot:
+            self.__current_working_snapshot = None
         else:
             if self.options.verbose_feedback:
                 print('No current transactions to revert.')
             else:
                 raise NoTransactionError('No current transactions to revert.')
         
-    @contextmanager
-    def transaction_handler(self) -> T.Generator:
-        """ Context manager for transactions (working snapshots).
-            Must ensure that current_transaction and working_snapshot_id are available.
-            If they do not already exist, they should be instantiated.
-
-        :rtype: T.Generator
-        :yield: (optional)
-        :rtype: Iterator[T.Generator]
-        """
-        if self.session:
-            yield self.session
+    def transaction_handler(self):
+        if self.__current_working_snapshot:
+            return self.conn.start_transaction()
         else:
-            self.current_ref, self.staging_area = self.__create_snapshot()
-            self.session = self.conn.start_session
-
-    def add(self, document, hash_) -> None:
-        """ Add a document and its hash to the current transaction.
-
-        :type document: DID_Document
-        :param hash_: See did/verisioning.py::hash_document.
-        :type hash_: str
-        """
-        data = self.collection.find_one({'id' : document.id})
-        if data is None:
-            self.upsert(document, hash_)
+            with self.conn.start_session():
+                self.__current_working_snapshot = self.__create_snapshot()
+            return self.transaction_handler()
         
     def upsert(self, document, hash_):
-        """Add a document and its hash to the current transaction.
-          If the document already exists, it and its hash should be updated.
-
-        :type document: DID_Document
-        :param hash_: See did/verisioning.py::hash_document.
-        :type hash_: str
-        """
-        with self.session.start_transaction():
-            data_to_insert = document.data
-            data_to_insert['document_hash'] = hash_
-            data = self.collection.find_one({'id' : document.id, 'document_hash' : hash_})
-            if data is None:
-                self.collection.update_one({'id' : document.id, 'document_hash' : hash_}, 
-                {'$set' : {'document_hash' : hash_}})
-            else:
-                self.collection.insert_one(data_to_insert)
-            self.current_ref[1]['document_ids'].append(hash_)
-            self.versioning.insert_one(self.current_ref[1])
+        self.current_snapshot.add(document, hash_)
 
     def find(self, query=None, snapshot_id=None, commit_hash=None, in_all_history=False) -> T.List:
-        """ Find all documents matching given parameters. 
-            If snapshot_id, commit_hash, and in_all_history are left as default,
-            then finds the matching documents as they exists in the current transaction.
-            Given all three, in_all_history > snapshot_id > commit_hash.
-
-        :param query: Filters for documents that match the given query. If None, no filter is applied.
-          See did/query.py::Query. defaults to None
-        :type query: Query, optional
-        :param snapshot_id: Filters for documents that were part of the snapshot with the given ID. defaults to None
-        :type snapshot_id: int, optional
-        :param commit_hash: Filters for documents that are part of the commit with the given hash. defaults to None
-        :type commit_hash: string, optional
-        :param in_all_history: If True, applies no version filter
-          (multiple versions of the same document or deleted documents may be returned). defaults to False
-        :type in_all_history: bool, optional
-        :return: A list of document matching the query parameters.
-        :rtype: T.List
-        """
         pass
 
     def find_by_id(self, id_, snapshot_id=None, commit_hash=None):
-        """ Find the document with the given id. 
-            If snapshot_id and commit_hash are left as default, then finds the document as it exists in the current transaction.
-            Given both, snapshot_id > commit_hash.
-
-        :param query: Filters for documents that match the given query. If None, no filter is applied.
-          See did/query.py::Query. defaults to None
-        :type query: Query, optional
-        :param snapshot_id: Filters for documents that were part of the snapshot with the given ID. defaults to None
-        :type snapshot_id: int, optional
-        :param commit_hash: Filters for documents that are part of the commit with the given hash. defaults to None
-        :type commit_hash: string, optional
-        :return: The document matching the query parameters or None.
-        :rtype: T.List | None
-        """
         pass
 
     def find_by_hash(self, document_hash, snapshot_id=None, commit_hash=None):
-        """ Find the document with the given hash. 
-            If snapshot_id and commit_hash are left as default, then finds the document if it exists in the current transaction.
-            Given both, snapshot_id > commit_hash.
-
-        :param query: Filters for documents that match the given query. If None, no filter is applied.
-          See did/query.py::Query. defaults to None
-        :type query: Query, optional
-        :param snapshot_id: Filters for documents that were part of the snapshot with the given ID. defaults to None
-        :type snapshot_id: int, optional
-        :param commit_hash: Filters for documents that are part of the commit with the given hash. defaults to None
-        :type commit_hash: string, optional
-        :return: The document matching the query parameters or None.
-        :rtype: T.List | None
-        """
         pass
+
 
     def _DANGEROUS__delete_by_hash(self, hash_) -> None:
-        """ Deletes the document with the given hash (hashes are unique).
-            For use when removing documents from current transaction.
-
-        WARNING: This method modifies the database without version support. Usage of this method may break your database history.
-
-        :param hash_: See did/verisioning.py::hash_document.
-        :type hash_: string
+        """ 
+        Not needed for MongoDB drive because the actual collection is not modified
         """
-        pass
+        return None
 
     def get_history(self, commit_hash=None):
-        """ Returns history from given commit, with each commit including 
-            the snapshot_id, commit_hash, timestamp, ref_names:List[str], and depth.
-            Ordered from recent first.
-            commit_hash defaults to current commit.
-
-        :param commit_hash: See did/verisioning.py::hash_commit.
-        :type commit_hash: string
-        """
-        pass
+        if commit_hash:
+            return self.versioning.find({'type' : 'COMMIT'})
+        else:
+            return self.versioning.find({'type' : 'COMMIT', 'commit_hash' : commit_hash})
 
     @property
     def current_ref(self):
-        """ Returns the commit hash of the CURRENT ref."""
-        return self.current_ref['commit_id']
+        result = self.versioning.find_one({'type' : 'HEAD'})
+        return result['commit_hash']
 
     @property
     def current_snapshot(self):
-        """ Returns the snapshot_id and hash associated with CURRENT ref.
-
-        Note: This is not necessarily equivalent to working snapshot. The CURRENT ref points to a commit,
-              which is equivalent to a saved snapshot. The working snapshot is by definition not yet saved.
-        """
-        return self.staging_area['snapshot_id']
+        return self.__current_working_snapshot.snapshot_hash
     
     def set_current_ref(self, snapshot_id=None, commit_hash=None):
         """ Sets the CURRENT ref to the given snapshot or commit.
@@ -280,48 +183,32 @@ class Mongo(DID_Driver):
         pass
 
     def add_to_snapshot(self, document_hash):
-        """ Adds document hash to working snapshot.
-
-        Note: should be used in context of self.transaction_handler.
-
-        :type document_hash: str
-        :raises NoWorkingSnapshotError: Thrown when current_transaction or working_snapshot_id do not exist.
+        """ 
+        Not needed for MongoDB drive
         """
-        pass
+        return None
     
     def remove_from_snapshot(self, document_hash):
-        """ Removes document hash from working snapshot.
-
-        Note: should be used in context of self.transaction_handler.
-
-        :type document_hash: str
-        :raises NoWorkingSnapshotError: Thrown when current_transaction or working_snapshot_id do not exist.
-        """
-        pass
+        if not self.working_snapshot_id:
+            raise NoWorkingSnapshotError('There is no snapshot open for modification.')
+        self.__current_working_snapshot.delete(document_hash)
 
     def get_document_hash(self, document):
-        """ Gets the documents hash in the working snapshot.
-
-        :type document: DID_Document
-        :rtype: str | None
-        """
-        pass
+        if not self.working_snapshot_id:
+            raise NoWorkingSnapshotError('There is no snapshot open.')
+        if document.id in self.__current_working_snapshot.id2hash:
+            return self.__current_working_snapshot.id2hash[document.id]
+        return None
 
     def get_working_document_hashes(self):
-        """ Gets the hashes of all documents in the working snapshot.
-
-        :rtype: [str]
-        """
-        pass
+        if not self.working_snapshot_id:
+            raise NoWorkingSnapshotError('There is no snapshot open.')
+        return list(self.__current_working_snapshot.hash2id)
 
     def sign_working_snapshot(self, snapshot_hash):
-        """ Sets hash to snapshot. Once this is done, the snapshot cannot be mutated.
-
-        :param snapshot_hash: See did.versioning::hash_snapshot.
-        :type snapshot_hash: [type]
-        :raises SnapshotIntegrityError: Thrown when working snapshot already has a hash.
-        """
-        pass
+        if not self.working_snapshot_id:
+            raise NoWorkingSnapshotError('There is no snapshot open.')
+        self.__current_working_snapshot = self.__current_working_snapshot.to_snapshot(snapshot_hash)
     
     def add_commit(self, commit_hash, snapshot_id, timestamp, parent=None):
         """Adds a commit to the database.
@@ -336,6 +223,7 @@ class Mongo(DID_Driver):
         :type parent: str, optional
         """
         pass
+        
     
     def upsert_ref(self, name, commit_hash):
         """ Creates a ref if it doesn't already exist.
