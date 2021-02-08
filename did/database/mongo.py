@@ -31,13 +31,16 @@ class __WorkingSnapshot:
         self.to_be_added = dict()
         self.snapshot_id = snapshot_id
         self.snapshot_hash = snapshot_hash
-    
-    def add(self, document, hash):
-        # update document that already exists with a new hash
-        self.id2hash[document.id] = hash
-        self.hash2id[hash] = document.id
+
+    def add_doc(self, document, hash):
         self.to_be_added[hash] = document
     
+    def add_hash(self, document, hash):
+        # update document that already exists with a new hash, document_id and hash
+        # has one-on-one relationship
+        self.id2hash[document.id] = hash
+        self.hash2id[hash] = document.id
+        
     def delete(self, hash):
         if hash in self.hash2id:
             id = self.hash2id[hash]
@@ -126,24 +129,51 @@ class Mongo(DID_Driver):
             return self.transaction_handler()
         
     def upsert(self, document, hash_):
-        self.current_snapshot.add(document, hash_)
-
+        if self.__current_working_snapshot:
+            doc = self.find_by_hash(hash_)
+            if doc is None:
+                self.__current_working_snapshot.add_doc(document, hash_)
+            self.__current_working_snapshot.add_hash(document, hash_)
+        else:
+            if self.options.verbose_feedback:
+                print('No current transactions to revert.')
+            else:
+                raise NoTransactionError('No current transactions to revert.')
+     
     def find(self, query=None, snapshot_id=None, commit_hash=None, in_all_history=False) -> T.List:
         pass
 
     def find_by_id(self, id_, snapshot_id=None, commit_hash=None):
-        pass
-
+        def find_doc_from_snapshot(snapshot, id_):
+            if id_ not in snapshot['document_hashes']:
+                    return None
+            else:
+                hash = snapshot['document_hashes'][id_]
+                return self.collection.find_one({'base.record' : hash})
+        if snapshot_id and commit_hash or snapshot_id:
+            if snapshot_id == self.current_snapshot:
+                return self.find_by_id(id_)
+            else:
+                snapshot = self.versioning.find_one({'type' : 'SNAPSHOT', '_id' : ObjectId(snapshot_id)})
+                return find_doc_from_snapshot(snapshot, id_)
+        elif commit_hash:
+            commit = self.versioning.find_one({'type' : 'COMMIT', 'commit_hash' : commit_hash})
+            snapshot = self.versioning.find_one({'type' : 'SNAPSHOT', 'snapshot_hash' : commit['snapshot_hash']})
+            return find_doc_from_snapshot(snapshot, id_)
+        else:
+            if id_ in self.__current_working_snapshot.id2hash:
+                hash = self.__current_working_snapshot.id2hash[id_]
+                if hash in self.__current_working_snapshot.to_be_added:
+                    return self.__current_working_snapshot.to_be_added[hash]
+                else:
+                    return self.collection.find_one({'base.record' : hash})
+        
     def find_by_hash(self, document_hash, snapshot_id=None, commit_hash=None):
         pass
 
-
     def _DANGEROUS__delete_by_hash(self, hash_) -> None:
-        """ 
-        Not needed for MongoDB drive because the actual collection is not modified
-        """
-        return None
-
+        self.collection.delete_one({'base.record': hash_})
+    
     def get_history(self, commit_hash=None):
         if commit_hash:
             return self.versioning.find({'type' : 'COMMIT'})
@@ -181,12 +211,6 @@ class Mongo(DID_Driver):
         :rtype: str
         """
         pass
-
-    def add_to_snapshot(self, document_hash):
-        """ 
-        Not needed for MongoDB drive
-        """
-        return None
     
     def remove_from_snapshot(self, document_hash):
         if not self.working_snapshot_id:
