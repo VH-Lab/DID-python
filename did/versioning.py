@@ -25,7 +25,7 @@ def hash_commit(snapshot_hash, snapshot_id, timestamp, parent_commit_hash = None
     hasher = blake3()
 
     hasher.update(bytes(snapshot_hash, 'utf8'))
-    hasher.update(bytes(snapshot_id))
+    hasher.update(bytes(snapshot_id, 'utf8'))
     hasher.update(bytes(timestamp, 'utf8'))
 
     if parent_commit_hash:
