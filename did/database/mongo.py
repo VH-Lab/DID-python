@@ -100,6 +100,10 @@ class Document(MongoSchema):
         self.document_hash = self.data['base']['records'][0] if document else None
         self.snapshot = self.data['base']['snapshots'] if document else None
         self.document_id = document.id if document else None
+        self.clause = None
+
+    def from_did_query(self):
+        return Document()
 
     def _to_filter(self):
         filter = {}
@@ -112,6 +116,12 @@ class Document(MongoSchema):
         if self.snapshot:
             filter['snapshot'] = self.snapshot
         return filter
+
+    def add_or_clause(self, document):
+        self.clause = ('or', document)
+
+    def add_and_clause(self, document):
+        self.clause = ('and', document)
 
     def _from_dict(self, dict):
         if 'data' in dict:
@@ -275,9 +285,11 @@ class _TransactionHandler:
         def __init__(self, index):
             self.index = index
 
-    def __init__(self):
+    def __init__(self, parent=None):
         self.actions = []
         self.already_executed = []
+        self.parent=parent
+        self.commit=True
 
     def __enter__(self):
         return self
@@ -289,54 +301,73 @@ class _TransactionHandler:
                   reverse_callback_success,
                   args_for_reverse_callback_success,
                   reverse_callback_fail=None,
-                  args_for_reverse_callback_fail=None):
-        self.actions.append({'instance': instance,
+                  args_for_reverse_callback_fail=None, 
+                  immediately_executed=True):
+        action = {'instance': instance,
                              'callback': (callback, args_for_callback),
                              'reverse_callback_success': (reverse_callback_success, args_for_reverse_callback_success),
                              'reverse_callback_fail': (reverse_callback_fail, args_for_reverse_callback_fail),
                              'success': False,
-                             'return_value': None})
+                             'return_value': None}
+        if immediately_executed:
+            self._execute_single_action(action)
+        else:
+            self.actions.append(action)
 
     def __exit__(self, exc_type, exc_value, traceback):
         if exc_type is None and exc_value is None and traceback is None:
             try:
                 for action in self.actions:
-                    self.already_executed.append(action)
-                    instance = action['instance'] if 'instance' in action else None
-                    callback, args = action['callback']
-                    returned_value = self.__execute(args, instance, callback, )
-                    action['success'] = True
-                    action['return_value'] = returned_value
+                    self._execute_single_action(action)
+                if self.parent:
+                    self.parent.already_executed.extend(self.already_executed)
+                if self.commit == False:
+                    self.revert()
             except Exception as e:
-                for action in reversed(self.already_executed):
-                    try:
-                        instance = action['instance'] if 'instance' in action else None
-                        reverse_callback, args = action['reverse_callback_success'] if action['success'] else \
-                            action['reverse_callback_fail']
-                        if reverse_callback:
-                            self.__execute(args, instance, reverse_callback)
-                    except Exception as e:
-                        raise RuntimeError(
-                            "Fail to unroll changes for action {}, please unroll manually. Error message: {}".format(
-                                action, str(e)))
+                self.revert()
                 raise RuntimeError(
                     "Encountering error while executing one of the callbacks, actions unrolled, error :{}".format(
                         str(e)))
         else:
+            self.revert()
             raise RuntimeError(
                 "Exception occured: type: {}, value: {}, traceback: {}".format(exc_type, exc_value, traceback))
 
+    def _execute_single_action(self, action):
+        self.already_executed.append(action)
+        instance = action['instance'] if 'instance' in action else None
+        callback, args = action['callback']
+        returned_value = self.__execute(args, instance, callback)
+        action['success'] = True
+        action['return_value'] = returned_value
+    
+    def discard(self):
+        self.commit = False
+    
+    def revert(self):
+        for action in reversed(self.already_executed):
+            try:
+                instance = action['instance'] if 'instance' in action else None
+                reverse_callback, args = action['reverse_callback_success'] if action['success'] else \
+                    action['reverse_callback_fail']
+                if reverse_callback:
+                    self.__execute(args, instance, reverse_callback)
+            except Exception as e:
+                raise RuntimeError(
+                    "Fail to unroll changes for action {}, please unroll manually. Error message: {}".format(
+                        action, str(e)))
+    
     def query_return_value(self, index):
         return _TransactionHandler._ReturnedValue(index)
 
     def __execute(self, args, instance, callback):
         for i in range(len(args)):
             if isinstance(args[i], _TransactionHandler._ReturnedValue):
-                args[i] = self.actions[args[i].index]['return_value']
+                args[i] = self.already_executed[args[i].index]['return_value']
         if isinstance(callback, _TransactionHandler._ReturnedValue):
-            callback = self.actions[callback.index]['return_value']
+            callback = self.already_executed[callback.index]['return_value']
         if isinstance(instance, _TransactionHandler._ReturnedValue):
-            instance = self.actions[instance.index]['return_value']
+            instance = self.already_executed[instance.index]['return_value']
         if instance is not None and args is not None:
             returned_value = callback(instance, *list(args))
         elif instance is not None:
