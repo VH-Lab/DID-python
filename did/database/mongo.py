@@ -57,7 +57,7 @@ class MongoSchema(ABC):
             return self._from_dict(result)
         return None
 
-    def add_id(self):
+    def add_id(self, id):
         if id:
             self.id = id if isinstance(id, ObjectId) else ObjectId(id)
         else:
@@ -83,12 +83,15 @@ class MongoSchema(ABC):
         if self.find_one(collection):
             collection.delete_one(self._to_filter())
 
-    def update(self, collection: Collection, update):
-        update_filter = update._to_filter()
+    def update(self, collection: Collection, update, delete_if_not_found=False):
+        update_filter = update._to_filter() if update else None
         if '_id' in update_filter:
             update_filter.pop('_id')
         if self.find_one(collection):
-            collection.update_one(self._to_filter(), {'$set': update_filter})
+            if update_filter:
+                collection.update_one(self._to_filter(), {'$set': update_filter})
+            elif delete_if_not_found:
+                self.delete(collection)
         else:
             collection.insert_one(update)
 
@@ -204,10 +207,10 @@ class Snapshot(MongoSchema):
 
 
 class Commit(MongoSchema):
-    def __init__(self, id=None, snapshot_id=None, commit_hash=None, parent_commit_hash=None, message=None):
+    def __init__(self, id=None, snapshot_id=None, commit_hash=None, parent_commit_hash=None, timestamp=None, message=None):
         super().__init__(id)
         self.type = 'COMMIT'
-        self.timestamp = dt.now().isoformat()
+        self.timestamp = dt.now().isoformat() if not timestamp else timestamp
         self.snapshot_id = snapshot_id
         self.commit_hash = commit_hash
         self.parent_commit_hash = parent_commit_hash
@@ -252,44 +255,17 @@ class Commit(MongoSchema):
         return self
 
 
-class _WorkingSnapshot:
-    def __init__(self, snapshot_id, documents, snapshot_hash):
-        self.id2hash = {doc['id']: doc['hash'] for doc in documents}
-        self.hash2id = {self.id2hash[key]: key for key in self.id2hash}
-        self.to_be_added = dict()
-        self.snapshot_id = snapshot_id
-        self.snapshot_hash = snapshot_hash
-
-    def add_doc(self, document, hash):
-        self.to_be_added[hash] = document
-
-    def add_hash(self, document, hash):
-        # update document that already exists with a new hash, document_id and hash
-        # has one-on-one relationship
-        self.id2hash[document.id] = hash
-        self.hash2id[hash] = document.id
-
-    def delete(self, hash):
-        if hash in self.hash2id:
-            id = self.hash2id[hash]
-            self.id2hash.pop(id, None)
-            self.hash2id.pop(hash, None)
-
-    def to_snapshot(self, snapshot_hash):
-        document_hashes = [{'id': id, 'hash': self.id2hash[id]} for id in self.id2hash]
-        return {'type': 'SNAPSHOT', 'document_hashes': document_hashes, 'snapshot_hash': snapshot_hash}
-
-
 class _TransactionHandler:
     class _ReturnedValue:
         def __init__(self, index):
             self.index = index
 
     def __init__(self, parent=None):
-        self.actions = []
+        self.pending = []
         self.already_executed = []
-        self.parent=parent
-        self.commit=True
+        self.parent = parent
+        self.commit = True
+        self.has_closed = False
 
     def __enter__(self):
         return self
@@ -301,37 +277,43 @@ class _TransactionHandler:
                   reverse_callback_success,
                   args_for_reverse_callback_success,
                   reverse_callback_fail=None,
-                  args_for_reverse_callback_fail=None, 
+                  args_for_reverse_callback_fail=None,
                   immediately_executed=True):
         action = {'instance': instance,
-                             'callback': (callback, args_for_callback),
-                             'reverse_callback_success': (reverse_callback_success, args_for_reverse_callback_success),
-                             'reverse_callback_fail': (reverse_callback_fail, args_for_reverse_callback_fail),
-                             'success': False,
-                             'return_value': None}
+                  'callback': (callback, args_for_callback),
+                  'reverse_callback_success': (reverse_callback_success, args_for_reverse_callback_success),
+                  'reverse_callback_fail': (reverse_callback_fail, args_for_reverse_callback_fail),
+                  'success': False,
+                  'return_value': None}
         if immediately_executed:
             self._execute_single_action(action)
         else:
-            self.actions.append(action)
+            self.pending.append(action)
 
     def __exit__(self, exc_type, exc_value, traceback):
         if exc_type is None and exc_value is None and traceback is None:
+            self._cleanup()
+        else:
+            self.revert()
+            raise RuntimeError(
+                "Exception occured: type: {}, value: {}, traceback: {}".format(exc_type, exc_value, traceback))
+
+    def _cleanup(self):
+        if not self.has_closed:
+            self.has_closed = True
             try:
-                for action in self.actions:
-                    self._execute_single_action(action)
-                if self.parent:
-                    self.parent.already_executed.extend(self.already_executed)
-                if self.commit == False:
+                if self.commit:
+                    for action in self.pending:
+                        self._execute_single_action(action)
+                    if self.parent:
+                        self.parent.already_executed.extend(self.already_executed)
+                else:
                     self.revert()
             except Exception as e:
                 self.revert()
                 raise RuntimeError(
                     "Encountering error while executing one of the callbacks, actions unrolled, error :{}".format(
                         str(e)))
-        else:
-            self.revert()
-            raise RuntimeError(
-                "Exception occured: type: {}, value: {}, traceback: {}".format(exc_type, exc_value, traceback))
 
     def _execute_single_action(self, action):
         self.already_executed.append(action)
@@ -340,10 +322,7 @@ class _TransactionHandler:
         returned_value = self.__execute(args, instance, callback)
         action['success'] = True
         action['return_value'] = returned_value
-    
-    def discard(self):
-        self.commit = False
-    
+
     def revert(self):
         for action in reversed(self.already_executed):
             try:
@@ -356,7 +335,7 @@ class _TransactionHandler:
                 raise RuntimeError(
                     "Fail to unroll changes for action {}, please unroll manually. Error message: {}".format(
                         action, str(e)))
-    
+
     def query_return_value(self, index):
         return _TransactionHandler._ReturnedValue(index)
 
@@ -404,17 +383,20 @@ class Mongo(DID_Driver):
         self.versioning = self.db['version']
         self.__current_working_snapshot = None
         self.__current_session = None
+        self.__current_transaction = None
 
     def __create_snapshot(self):
+        if not self.__current_session:
+            self.__current_session = _TransactionHandler()
         try:
-            snapshot = Snapshot.get_head(self.versioning)
-            return _WorkingSnapshot(snapshot.id, snapshot.documents, snapshot.snapshot_hash)
+            return Snapshot.get_head(self.versioning)
         except:
-            return self.__setup_version_control()
+            self.__setup_version_control()
+            return self.__create_snapshot()
 
     def __setup_version_control(self):
         with _TransactionHandler() as session:
-            snapshot, id = Snapshot().add_snapshot_hash(), []
+            snapshot = Snapshot().add_snapshot_hash()
             session.action_on(snapshot, Snapshot.insert, [self.versioning], Snapshot.delete, [self.versioning])
             session.action_on(None, lambda snapshot_id: Commit(snapshot_id=snapshot_id,
                                                                message="Initialize database").add_commit_hash(),
@@ -428,28 +410,25 @@ class Mongo(DID_Driver):
             session.action_on(self.versioning, Collection.insert_one, [session.query_return_value(3)],
                               Collection.delete_one, [{'type': 'HEAD'}])
             session.action_on(snapshot, Snapshot.update, [self.versioning, session.query_return_value(4)], None, None)
-            session.action_on(id, list.append, [session.query_return_value(0)], None, None)
-        return _WorkingSnapshot(id[0], snapshot.documents, snapshot.snapshot_hash)
 
     @property
     def working_snapshot_id(self):
         if self.__current_working_snapshot:
-            return self.__current_working_snapshot.snapshot_id
+            return self.__current_working_snapshot.id
         else:
             self.__current_working_snapshot = self.__create_snapshot()
-            return self.__current_working_snapshot.snapshot_id
+            return self.__current_working_snapshot.id
+
+    @working_snapshot_id.setter
+    def working_snapshot_id(self, value):
+        self.__current_working_snapshot.add_id(value)
 
     def save(self):
+        # Should not be called inside the with statement
         if self.__current_working_snapshot:
-            snapshot = self.__current_working_snapshot.to_snapshot()
-            document_to_add = self.__current_working_snapshot.to_be_added
-            document_to_add = [{'document_properties': document_to_add[hash], 'document_hash': hash} for hash in
-                               document_to_add]
-            self.versioning.insert_one(snapshot)
-            self.collection.insert_many(document_to_add)
+            self.__current_working_snapshot = True
+            self.__current_working_snapshot._cleanup()
             self.__current_working_snapshot = None
-            if self.options.verbose_feedback:
-                print('Changes saved.')
         else:
             if self.options.verbose_feedback:
                 print('No current transactions to save.')
@@ -457,7 +436,10 @@ class Mongo(DID_Driver):
                 raise NoTransactionError('No current transactions to save.')
 
     def revert(self):
+        # Should not be called inside the with statement
         if self.__current_working_snapshot:
+            self.__current_working_snapshot = False
+            self.__current_working_snapshot._cleanup()
             self.__current_working_snapshot = None
         else:
             if self.options.verbose_feedback:
@@ -467,19 +449,53 @@ class Mongo(DID_Driver):
 
     def transaction_handler(self):
         if self.__current_working_snapshot:
-            self.__current_session = _TransactionHandler()
-            return self.__current_session
+            self.__current_transaction = _TransactionHandler(parent=self.__current_session)
+            return self.__current_transaction
         else:
-            with self.conn.start_session():
-                self.__current_working_snapshot = self.__create_snapshot()
+            self.__current_working_snapshot = self.__create_snapshot()
             return self.transaction_handler()
 
+    def add(self, document, hash_) -> None:
+        if self.__current_working_snapshot and self.__current_session:
+            if not 'base' in document:
+                document.data['base'] = {}
+            if not 'record' in document['base']:
+                document.data['base']['record'] = []
+            document.data['base']['records'][0] = hash_
+            doc = Document(document=document, snapshot=self.working_snapshot_id)
+            if self.__current_transaction:
+                self.__current_transaction.action_on(doc, 
+                    Document.insert, [self.collection], Document.delete, 
+                    [self.collection])
+            else:
+                self.__current_session.action_on(doc, 
+                    Document.insert, [self.collection], Document.delete, 
+                    [self.collection])
+        else:
+            if self.options.verbose_feedback:
+                print('No current transactions to revert.')
+            else:
+                raise NoTransactionError('No current transactions to revert.')
+
     def upsert(self, document, hash_):
-        if self.__current_working_snapshot:
-            doc = self.find_by_hash(hash_)
-            if doc is None:
-                self.__current_working_snapshot.add_doc(document, hash_)
-            self.__current_working_snapshot.add_hash(document, hash_)
+        if self.__current_working_snapshot and self.__current_session:
+            original_document = Document(document=document, snapshot=self.working_snapshot_id)
+            document_to_lookfor = Document(snapshot=self.working_snapshot_id)
+            document_to_lookfor.document_id = document.id
+            if not 'base' in document:
+                document.data['base'] = {}
+            if not 'record' in document['base']:
+                document.data['base']['records'] = []
+            document.data['base']['records'][0] = hash_
+            update_to = Document(document=document, snapshot=self.working_snapshot_id)
+            if self.__current_transaction:
+                self.__current_transaction.action_on(document_to_lookfor, 
+                    Document.update, [self.collection, update_to], Document.update, 
+                    [self.collection, original_document])
+            else:
+                self.__current_session.action_on(document_to_lookfor, 
+                    Document.update, [self.collection, update_to], Document.update, 
+                    [self.collection, original_document, True])
         else:
             if self.options.verbose_feedback:
                 print('No current transactions to revert.')
@@ -487,67 +503,50 @@ class Mongo(DID_Driver):
                 raise NoTransactionError('No current transactions to revert.')
 
     def find(self, query=None, snapshot_id=None, commit_hash=None, in_all_history=False):
-        # TODO implement find in those three scenarios
-        if snapshot_id and commit_hash or snapshot_id:
-            return None
+        if in_all_history:
+            doc = Document.from_did_query(query)
+            return doc.find(self.collection)
+        elif snapshot_id and commit_hash or snapshot_id:
+            doc = Document.from_did_query(query).add_snapshot(snapshot_id)
+            return doc.find(self.collection)
         elif commit_hash:
-            return None
+            snapshot = Snapshot(commit_hash=commit_hash).find_one(self.versioning)
+            if not snapshot:
+                raise AttributeError("commit_hash is not associated with any snapshot")
+            doc = Document.from_did_query(query).add_snapshot(snapshot.id)
+            return doc.find(self.collection)
         else:
-            return None
+            self.find(query=query, snapshot_id=self.working_snapshot_id)
 
     def find_by_id(self, id_, snapshot_id=None, commit_hash=None):
-        def find_doc_from_snapshot(snapshot, id_):
-            if id_ not in snapshot['id2hashes']:
-                return None
-            else:
-                hash = snapshot['id2hashes'][id_]
-                return self.collection.find_one({'base.record': hash})
-
         if snapshot_id and commit_hash or snapshot_id:
-            if snapshot_id == self.current_snapshot:
-                return self.find_by_id(id_)
-            else:
-                snapshot = self.versioning.find_one({'type': 'SNAPSHOT', '_id': ObjectId(snapshot_id)})
-                return find_doc_from_snapshot(snapshot, id_)
+            doc = Document().add_snapshot(snapshot_id)
+            doc.document_id = id_
+            return doc.find(self.collection)
         elif commit_hash:
-            commit = self.versioning.find_one({'type': 'COMMIT', 'commit_hash': commit_hash})
-            snapshot = self.versioning.find_one({'type': 'SNAPSHOT', 'snapshot_hash': commit['snapshot_hash']})
-            return find_doc_from_snapshot(snapshot, id_)
+            snapshot = Snapshot(commit_hash=commit_hash).find_one(self.versioning)
+            if not snapshot:
+                raise AttributeError("commit_hash is not associated with any snapshot")
+            doc = Document().add_snapshot(snapshot_id)
+            doc.document_id = id_
+            return doc.find(self.collection)
         else:
-            if id_ in self.__current_working_snapshot.id2hash:
-                hash = self.__current_working_snapshot.id2hash[id_]
-                if hash in self.__current_working_snapshot.to_be_added:
-                    return self.__current_working_snapshot.to_be_added[hash]
-                else:
-                    return self.collection.find_one({'base.record': hash})
-            else:
-                return None
+            self.find(id_, snapshot_id=self.working_snapshot_id)
 
     def find_by_hash(self, document_hash, snapshot_id=None, commit_hash=None):
-        def find_doc_from_hash(snapshot, hash):
-            if hash not in snapshot['document_hashes']:
-                return None
-            else:
-                return self.collection.find_one({'base.record': hash})
-
         if snapshot_id and commit_hash or snapshot_id:
-            if snapshot_id == self.current_snapshot:
-                return self.find_by_hash(document_hash)
-            else:
-                snapshot = self.versioning.find_one({'type': 'SNAPSHOT', '_id': ObjectId(snapshot_id)})
-                return find_doc_from_hash(snapshot, commit_hash)
+            doc = Document().add_snapshot(snapshot_id)
+            doc.document_hash = document_hash
+            return doc.find(self.collection)
         elif commit_hash:
-            commit = self.versioning.find_one({'type': 'COMMIT', 'commit_hash': commit_hash})
-            snapshot = self.versioning.find_one({'type': 'SNAPSHOT', 'snapshot_hash': commit['snapshot_hash']})
-            return find_doc_from_hash(snapshot, commit_hash)
+            snapshot = Snapshot(commit_hash=commit_hash).find_one(self.versioning)
+            if not snapshot:
+                raise AttributeError("commit_hash is not associated with any snapshot")
+            doc = Document().add_snapshot(snapshot_id)
+            doc.document_hash = document_hash
+            return doc.find(self.collection)
         else:
-            if document_hash in self.__current_working_snapshot.hash2id:
-                if document_hash in self.__current_working_snapshot.to_be_added:
-                    return self.__current_working_snapshot[document_hash]
-                else:
-                    return self.collection.find_one({'base.record': hash})
-            else:
-                return None
+            self.find(document_hash, snapshot_id=self.working_snapshot_id)
 
     def _DANGEROUS__delete_by_hash(self, hash_) -> None:
         self.collection.delete_one({'base.record': hash_})
@@ -560,40 +559,26 @@ class Mongo(DID_Driver):
 
     @property
     def current_ref(self):
-        result = self.versioning.find_one({'type': 'HEAD'})
-        return result['commit_hash']
+        return Commit.get_head(self.versioning).commit_hash
 
     @property
     def current_snapshot(self):
-        return self.__current_working_snapshot.snapshot_hash
+        return self.__current_working_snapshot.add_snapshot_hash().snapshot_hash
 
     def set_current_ref(self, snapshot_id=None, commit_hash=None):
-        if snapshot_id and commit_hash or commit_hash:
-            commit = self.versioning.find_one({'type': 'COMMIT', 'commit_hash': commit_hash})
-            snapshot_hash = commit['snapshot_hash']
-            snapshot = self.versioning.find_one({'type': 'SNAPSHOT', 'snapshot_hash': snapshot_hash})
-            if self.__current_working_snapshot:
-                self.__current_working_snapshot = None
-            self.__current_working_snapshot = _WorkingSnapshot(str(snapshot['_id']), snapshot['document_hashes'],
-                                                               snapshot_hash)
-        elif snapshot_id:
-            snapshot = self.versioning.find_one({'type': 'SNAPSHOT', '_id': ObjectId(snapshot_id)})
-            if self.__current_working_snapshot:
-                self.__current_working_snapshot = None
-            self.__current_working_snapshot = _WorkingSnapshot(str(snapshot['_id']), snapshot['document_hashes'],
-                                                               snapshot_hash)
+        pass
 
     def get_commit(self, snapshot_id):
-        snapshot = self.versioning.find_one({'type': 'SNAPSHOT', '_id': ObjectId(snapshot_id)})
-        if not snapshot:
-            raise RuntimeError("The snapshot does not exist")
-        if len(snapshot['commit_hashes']) == 0:
-            raise RuntimeError("The snapshot does not have any associated commits")
+        commit = Commit()
+        commit.snapshot_id = snapshot_id
+        return commit.find(self.versioning)
 
     def remove_from_snapshot(self, document_hash):
-        if not self.working_snapshot_id:
+        if not self.__current_working_snapshot:
             raise NoWorkingSnapshotError('There is no snapshot open for modification.')
-        self.__current_working_snapshot.delete(document_hash)
+        doc = Document(snapshot=self.working_snapshot_id)
+        doc.document_hash = document_hash
+        doc.delete(self.collection)
 
     def get_document_hash(self, document):
         if not self.working_snapshot_id:
@@ -612,20 +597,11 @@ class Mongo(DID_Driver):
             raise NoWorkingSnapshotError('There is no snapshot open.')
         self.__current_working_snapshot = self.__current_working_snapshot.to_snapshot(snapshot_hash)
 
-    def add_commit(self, commit_hash, snapshot_id, timestamp, parent=None):
-        """Adds a commit to the database.
-
-        :param commit_hash: See did.versioning::hash_commit.
-        :type commit_hash: str
-        :param snapshot_id:
-        :type snapshot_id: int
-        :param timestamp: ISOT. See did.time.
-        :type timestamp: str
-        :param parent: Parent commit's hash, defaults to None.
-        :type parent: str, optional
-        """
-        pass
-
+    def add_commit(self, commit_hash, snapshot_id, timestamp, parent=None, message=None):
+        commit = Commit(commit_hash=commit_hash, snapshot_id=snapshot_id, 
+                        timestamp=timestamp, parent_commit_hash=parent, message=message)
+        commit.insert(self.versioning)
+    
     def upsert_ref(self, name, commit_hash):
         """ Creates a ref if it doesn't already exist.
 
