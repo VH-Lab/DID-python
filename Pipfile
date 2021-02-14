@@ -9,6 +9,8 @@ pytest = "*"
 sphinx = "*"
 sphinx-rtd-theme = "*"
 mypy = "*"
+pylint = "*"
+did = {editable = true, path = "."}
 
 [packages]
 numpy = "*"
@@ -25,7 +27,6 @@ sqlalchemy-utils = "*"
 blake3 = "*"
 astropy = "*"
 python-dotenv = "*"
-pylint = "*"
 pymongo = "*"
 
 [requires]
