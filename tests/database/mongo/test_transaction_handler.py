@@ -1,6 +1,7 @@
 from did.database.mongo import _TransactionHandler
 import pytest
 
+
 @pytest.fixture
 def throwException():
     def func():
