@@ -111,17 +111,40 @@ class MongoSchema(ABC):
                 session.insert_one(update)
 
 class Document(MongoSchema):
-    def __init__(self, document: DIDDocument = None, id=None, snapshot=None):
+    def __init__(self, document: DIDDocument = None, id=None, snapshot=None, document_hash=None):
         super().__init__(id)
         self.data = document.data if document else None
-        self.document_hash = self.data['base']['records'][0] if document else None
-        self.snapshot = self.data['base']['snapshots'] if document else None
+        if document_hash:
+            self.document_id = document_hash
+        else:
+            if 'base' in self.data and 'record' in self.data['base'] and len(self.data['base']['record']) > 0:
+                self.document_hash = self.data['base']['records'][0]
+            else:
+                self.document_hash = None
+        if snapshot:
+            self.snapshot = snapshot
+        else:
+            if 'base' in self.data and 'snapshots' in self.data['base']:
+                self.snapshot = self.data['base']['snapshots']
+            else:
+                self.snapshot = None
         self.document_id = document.id if document else None
         self.clause = None
 
     @classmethod
     def from_did_query(cls, query):
-        return cls()
+        field, operator, value = query.query()
+        docfield, docvalue = None, None
+        if isinstance(field, Query):
+            docfield = cls.from_did_query(field)
+        elif isinstance(value, Query):
+            docvalue = cls.from_did_query(value)
+        else:
+            return cls()
+        if operator == 'and':
+            return cls(document=docfield).add_and_clause(cls(document=docvalue))
+        if operator == 'or':
+            return cls(document=docfield).add_or_clause(cls(document=docvalue))
 
     def _to_filter(self):
         filter = {}
@@ -132,7 +155,7 @@ class Document(MongoSchema):
         if self.document_id:
             filter['document_id'] = self.document_id
         if self.snapshot:
-            filter['snapshot'] = self.snapshot
+            filter['snapshot'] = {"$all" : self.snapshot}
         return filter
 
     def add_or_clause(self, document):
@@ -306,10 +329,9 @@ class _TransactionHandler:
             if immediately_executed:
                 try:
                     self._execute_single_action(action)
-                except:
+                except Exception as ex:
                     if not self.nothrow:
-                        raise RuntimeError(
-                            "Exception occured: type: {}, value: {}, traceback: {}".format(exc_type, exc_value, traceback))
+                        raise ex
                     else:
                         self.revert()
                         self.has_closed=True
@@ -395,7 +417,10 @@ class Mongo(DID_Driver):
             connection_string=None,
             hard_reset_on_init=False,
             verbose_feedback=True,
-            debug_mode=False):
+            debug_mode=False, 
+            database = 'did',
+            versioning_collection = 'version', 
+            document_collection = 'did_document'):
 
         def __make_connection(connection_string):
             try:
@@ -409,9 +434,9 @@ class Mongo(DID_Driver):
             connection_string = get_mongo_connection('raw')
         self.options = MONGODBOptions(hard_reset_on_init, debug_mode, verbose_feedback)
         self.conn = __make_connection(connection_string)
-        self.db = self.conn['did']
-        self.collection = self.db['did_documents']
-        self.versioning = self.db['version']
+        self.db = self.conn[database]
+        self.collection = self.db[document_collection]
+        self.versioning = self.db[versioning_collection]
         self.__current_working_snapshot = None
         self.__current_session = None
         self.__current_transaction = None
