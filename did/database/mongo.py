@@ -5,7 +5,7 @@ from ..versioning import hash_commit, hash_document, hash_snapshot
 from ..exception import NoTransactionError, NoWorkingSnapshotError, SnapshotIntegrityError
 from .did_driver import DID_Driver
 from ..document import DIDDocument
-from ..query import Query
+from ..query import Query, CompositeQuery, AndQuery, OrQuery
 from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError
 from bson.objectid import ObjectId
@@ -24,49 +24,59 @@ class MONGODBOptions:
         self.verbose_feedback = verbose_feedback
 
 
-# Define schema used for ORM (Object Relational Mapping)
+# Define schema used for Object Relational Mapping
 class MongoSchema(ABC):
     def __init__(self, id):
-        if id:
-            self.id = id if isinstance(id, ObjectId) else ObjectId(id)
-        else:
-            self.id = None
+        self.id = id
 
-    @abstractmethod
     def _to_filter(self):
-        pass
-
-    @abstractmethod
-    def _from_dict(self, dict):
-        pass
-
-    @abstractmethod
-    def _for_insertion(self):
-        pass
-
-    def _to_filter_with_id(self):
-        filter = self._to_filter()
-        if self.id:
-            if not isinstance(id, type(ObjectId())):
-                filter['_id'] = ObjectId(self.id)
+        filter = {}
+        for field in dir(self):
+            if not field.startswith('__') and not callable(getattr(self, field)):
+                if isinstance(getattr(self, field), list):
+                    if getattr(self, field):
+                        filter[field] =  {'$all' : getattr(self, field)}
+                else:
+                    if getattr(self, field) is not None:
+                        filter[field] =  getattr(self, field)
         return filter
 
+    @classmethod
+    def _from_dict(cls, dict):
+        if '_id' in dict:
+            instance = cls(id)
+        else:
+            instance = cls(None)
+        for field in dict:
+            setattr(instance, field, dict[field])
+        return instance
+
+    def _for_insertion(self):
+        kv = self._to_filter()
+        if '_id' in kv:
+            kv.pop('_id')
+        return kv
+
     def find_one(self, collection: Collection):
-        filter = self._to_filter_with_id()
+        filter = self._to_filter()
         result = collection.find_one(filter)
         if result:
             return self._from_dict(result)
         return None
 
-    def add_id(self, id):
+    @property
+    def id(self):
+        return self.id
+    
+    @id.setter
+    def id(self, id):
         if id:
             self.id = id if isinstance(id, ObjectId) else ObjectId(id)
         else:
             self.id = None
-        return self
 
     def find(self, collection: Collection):
-        filter = self._to_filter_with_id()
+        filter = self._to_filter()
         results = collection.find(filter)
         output = []
         for result in results:
@@ -108,140 +118,127 @@ class MongoSchema(ABC):
             if session:
                 session.action_on(collection, Collection.insert_one, [update], Collection.delete, [update])
             else:
-                session.insert_one(update)
+                collection.insert_one(update)
+
+class Head(MongoSchema):
+    def __init__(self):
+        super().__init__(None)
+        self.type = "HEAD"
+    
+    def add_commit_id(self, commit_id):
+        self.commit_id = commit_id
+        return self
+
 
 class Document(MongoSchema):
-    def __init__(self, document: DIDDocument = None, id=None, snapshot=None, document_hash=None):
+    def __init__(self, id=None, document_id=None, data=None, snapshots=None, document_hash=None):
         super().__init__(id)
-        self.data = document.data if document else None
-        if document_hash:
-            self.document_id = document_hash
-        else:
-            if 'base' in self.data and 'record' in self.data['base'] and len(self.data['base']['record']) > 0:
-                self.document_hash = self.data['base']['records'][0]
-            else:
-                self.document_hash = None
-        if snapshot:
-            self.snapshot = snapshot
-        else:
-            if 'base' in self.data and 'snapshots' in self.data['base']:
-                self.snapshot = self.data['base']['snapshots']
-            else:
-                self.snapshot = None
-        self.document_id = document.id if document else None
-        self.clause = None
-
-    @classmethod
-    def from_did_query(cls, query):
-        field, operator, value = query.query()
-        docfield, docvalue = None, None
-        if isinstance(field, Query):
-            docfield = cls.from_did_query(field)
-        elif isinstance(value, Query):
-            docvalue = cls.from_did_query(value)
-        else:
-            return cls()
-        if operator == 'and':
-            return cls(document=docfield).add_and_clause(cls(document=docvalue))
-        if operator == 'or':
-            return cls(document=docfield).add_or_clause(cls(document=docvalue))
+        self.document_id = document_id
+        self.data = data
+        self.snapshots = [] if snapshots is None else snapshots
+        self.document_hash = document_hash
 
     def _to_filter(self):
-        filter = {}
-        for field in self.data:
-            filter['data.{}'.format(field)] = self.data[field]
-        if self.document_hash:
-            filter['document_hash'] = self.document_hash
-        if self.document_id:
-            filter['document_id'] = self.document_id
-        if self.snapshot:
-            filter['snapshot'] = {"$all" : self.snapshot}
-        return filter
+        filter = super()._to_filter()
+        if 'clause' in filter:
+            filter.pop('clause')
+        if 'did_query' in filter:
+            filter.pop('did_query')
+            query_filter = self.did2mongodb(self.did_query)
+            if len(filter) > 0:
+                filter = {'$and' : [filter, query_filter]}
+            else:
+                filter = query_filter
 
-    def add_or_clause(self, document):
-        self.clause = ('or', document)
-
-    def add_and_clause(self, document):
-        self.clause = ('and', document)
-
-    def _from_dict(self, dict):
-        if 'data' in dict:
-            return DIDDocument(data=dict['data'])
-        return None
-
+    def did2mongodb(self, did_query):
+        field, operator, value = did_query.query()
+        if operator == "and":
+            return {'$and' : []}
+        elif operator == "or":
+            return {'$or' : []}
+        else:
+            if operator == '==':
+                return {'data.{}'.format(field) : value}
+            elif operator == '!=':
+                return {'data.{}'.format(field) : {'$ne' : value}}
+            elif operator == 'contains':
+                pass
+            elif operator == 'match':
+                pass
+            elif operator == '>':
+                pass
+            elif operator == '>=':
+                pass
+            elif operator == '<':
+                pass
+            elif operator == '<=':
+                pass
+            elif operator == 'exists':
+                pass
+            elif operator == 'in':
+                pass
+            else:
+                raise ValueError("Query operator {} is not supported".format(operator))
+            
     def _for_insertion(self):
-        return {'data': self.data, 'document_hash': self.document_hash,
-                'snapshot': self.snapshot, 'document_id': self.document_id}
+        document = super()._for_insertion()
+        if 'clause' in document:
+            document.pop('clause')
+
+    @classmethod
+    def from_did_query(cls, did_query):
+        document = Document()
+        document.did_query = did_query
+        return document
 
     def update_document_hash(self):
         self.document_hash = hash_document(self.data)
         return self
 
-    def add_snapshot(self, snapshot):
-        self.snapshot.append(snapshot)
+    def add_snapshot(self, snapshot_id):
+        self.snapshots.append(snapshot_id)
         return self
 
 
 class Snapshot(MongoSchema):
-    def __init__(self, id=None, documents=None, snapshot_hash=None, commit_hash=None):
+    def __init__(self, id=None, snapshot_hash=None, commit_id = []):
         super().__init__(id)
         self.type = 'SNAPSHOT'
-        self.documents = [] if documents is None else documents
         self.snapshot_hash = snapshot_hash
-        self.commit_hash = [] if commit_hash is None else commit_hash
-
-    def _to_filter(self):
-        filter = {'type': 'SNAPSHOT'}
-        if self.documents:
-            filter['documents'] = self.documents
-        if self.snapshot_hash:
-            filter['snapshot_hash'] = self.snapshot_hash
-        if self.commit_hash:
-            filter['commit_hash'] = self.commit_hash
-        return filter
-
-    def _from_dict(self, result):
-        if result:
-            snapshot = Snapshot()
-            snapshot.id, snapshot.documents = result['_id'], result['documents']
-            snapshot.document_hash, snapshot.commit_hash = result['documents'], result['commit_hash']
-            return snapshot
-
-    def _for_insertion(self):
-        return {'type': 'SNAPSHOT', 'documents': self.documents
-            , 'snapshot_hash': self.snapshot_hash, 'commit_hash': self.commit_hash}
-
+        self.commit_id = commit_id
+    
+    @classmethod
+    def make_working_snapshot(cls, version, collection):
+        snapshot_id = Snapshot.get_head(version).id
+        collection.update_many({'$all' : [snapshot_id]}, {'$addToSet' : {'snapshot_id' : snapshot_id}})
+        
     @classmethod
     def get_head(cls, collection: Collection):
-        head = collection.find_one({'type': 'HEAD'})
-        if head:
-            last_commit = collection.find_one({'type': 'COMMIT', 'commit_hash': head['commit_hash']})
-            if last_commit:
-                last_snapshot = collection.find_one({'type': 'SNAPSHOT', '_id': last_commit['snapshot_id']})
-                if last_snapshot:
-                    snapshot = cls()
-                    snapshot.id, snapshot.documents = last_snapshot['_id'], last_snapshot['documents']
-                    snapshot.documents, snapshot.commit_hash = last_snapshot['documents'], last_snapshot['commit_hash']
-                    return snapshot
-                else:
-                    raise AttributeError("HEAD points to an invalid snapshot")
+        last_commit = Commit.get_head(collection)
+        if last_commit:
+            last_snapshot = collection.find_one({'type': 'SNAPSHOT', '_id': last_commit.snapshot_id})
+            if last_snapshot:
+                return cls._from_dict(last_snapshot)
             else:
-                raise AttributeError("HEAD points to an invalid commit")
+                raise AttributeError("HEAD points to an invalid snapshot")
         else:
-            raise AttributeError("HEAD cannot be found in the database")
+            raise AttributeError("HEAD points to an invalid commit")
 
-    def add_commit_hash(self, commit_hash):
-        self.commit_hash.append(commit_hash)
+    def add_commit_id(self, commit_id):
+        self.commit_id.append(commit_id)
         return self
 
-    def add_document(self, id, hash):
-        self.documents.append({'id': id, 'hash': hash})
+    def update_snapshot_hash(self, collection=None):
+        if collection:
+            docs = Document(snapshots=[self.id]).find(collection)
+            documents_hashes = [doc.document_hash for doc in docs]
+            self.snapshot_hash = hash_snapshot(documents_hashes)
+        else:
+            self.snapshot_hash = hash_snapshot([])
         return self
 
-    def add_snapshot_hash(self):
-        documents_hashes = [document['hash'] for document in self.documents]
-        self.snapshot_hash = hash_snapshot(documents_hashes)
-        return self
+    def get_documents(self, collection):
+        return Document(snapshots=[self.id]).find(collection)
 
 
 class Commit(MongoSchema):
@@ -255,44 +252,24 @@ class Commit(MongoSchema):
         self.parent_commit_hash = parent_commit_hash
         self.message = message
 
-    def _to_filter(self):
-        filter = {'type': 'COMMIT', 'timestamp': self.timestamp}
-        if self.snapshot_id:
-            filter['snapshot_id'] = self.snapshot_id
-        if self.commit_hash:
-            filter['commit_hash'] = self.commit_hash
-        if self.parent_commit_hash:
-            filter['parent_commit_hash'] = self.parent_commit_hash
-        if self.message:
-            filter['message'] = self.message
-        return filter
-
-    def _from_dict(self, result):
-        return Commit(result['_id'], result['snapshot_id'], result['commit_hash'],
-                      result['parent_commit_hash'], result['message'])
-
-    def _for_insertion(self):
-        return {'type': 'COMMIT', 'timestamp': self.timestamp, 'snapshot_id': self.snapshot_id,
-                'commit_hash': self.commit_hash, 'parent_commit_hash': self.parent_commit_hash,
-                'message': self.message}
-
     @classmethod
     def get_head(cls, collection: Collection):
         head = collection.find_one({'type': 'HEAD'})
         if head:
             last_commit = collection.find_one({'type': 'COMMIT', 'commit_hash': head['commit_hash']})
             if last_commit:
-                return cls(last_commit['_id'], last_commit['snapshot_id'], last_commit['commit_hash']
-                           , last_commit['parent_commit_hash'], last_commit['message'])
+                return cls._from_dict(last_commit)
             else:
                 raise AttributeError("HEAD points to an invalid commit")
         else:
             raise AttributeError("HEAD cannot be found in the collection")
 
-    def add_commit_hash(self):
-        self.commit_hash = hash_commit(hash_snapshot([]), str(self.id), self.timestamp)
+    def add_commit_hash(self, commit_hash=None):
+        if not commit_hash:
+            self.commit_hash = hash_commit(hash_snapshot([]), str(self.id), self.timestamp)
+        else:
+            self.commit_hash = commit_hash
         return self
-
 
 class _TransactionHandler:
     class _ReturnedValue:
@@ -443,29 +420,43 @@ class Mongo(DID_Driver):
 
     def __create_snapshot(self):
         if not self.__current_session:
+            # a session is associated with a new snapshot
             self.__current_session = _TransactionHandler()
-        try:
-            return Snapshot.get_head(self.versioning)
-        except:
+        if Head().find_one:
+            #create a new working snapshot
+            self.__current_working_snapshot = Snapshot()
+            snapshot_id = self.__current_working_snapshot.insert()
+
+            #add all documentsin the previous snapshot to the current working snapshot
+            self.__current_session.action_on(self.collection, Collection.update_many, 
+                                    [{'$all' : {'snapshots' : [snapshot_id]}}, {'$addToSet' : {'snapshot_id' : snapshot_id}}], 
+                                    Collection.update_many, 
+                                    [{'$all' : {'snapshots' : [snapshot_id]}}, {'$pull' : {'snapshot_id' : snapshot_id}}], 
+                                    Collection.update_many,
+                                    [{'$all' : {'snapshots' : [snapshot_id]}}, {'$pull' : {'snapshot_id' : snapshot_id}}])
+            
+            self.__current_working_snapshot.id = snapshot_id
+        else:
+            # when head cannot be found, set up version control from scratch
             self.__setup_version_control()
             return self.__create_snapshot()
 
     def __setup_version_control(self):
         with _TransactionHandler() as session:
-            snapshot = Snapshot().add_snapshot_hash()
-            session.action_on(snapshot, Snapshot.insert, [self.versioning], Snapshot.delete, [self.versioning])
-            session.action_on(None, lambda snapshot_id: Commit(snapshot_id=snapshot_id,
-                                                               message="Initialize database").add_commit_hash(),
-                              [session.query_return_value(0)], None, None)
-            session.action_on(session.query_return_value(1), Commit.insert, [self.versioning], Commit.delete,
-                              [self.versioning])
-            session.action_on(None, lambda commit: {'type': 'HEAD', 'commit_hash': commit.commit_hash},
-                              [session.query_return_value(1)], None, None)
-            session.action_on(None, lambda commit: Snapshot().add_commit_hash(commit.commit_hash),
-                              [session.query_return_value(1)], None, None)
-            session.action_on(self.versioning, Collection.insert_one, [session.query_return_value(3)],
-                              Collection.delete_one, [{'type': 'HEAD'}])
-            session.action_on(snapshot, Snapshot.update, [self.versioning, session.query_return_value(4)], None, None)
+            # create a new snapshot with no commit_id
+            snapshot = Snapshot().update_snapshot_hash()
+            snapshot_id = snapshot.insert(self.versioning, session)
+
+            #create a new commit that points to the snapshot we have just created
+            commit = Commit(snapshot_id=snapshot_id, message = "Database initialized")
+            commit_id = commit.insert(self.versioning, session)
+
+            #create a head that points to the commit we have just created
+            head = Head().add_commit_id(commit_id)
+            head.insert(self.versioning, session)
+
+            #update the snapshot so that it points to the commit we have just created
+            snapshot.update(self.collection, Snapshot().add_commit_id(commit_id), session)
 
     @property
     def working_snapshot_id(self):
@@ -477,31 +468,30 @@ class Mongo(DID_Driver):
 
     @working_snapshot_id.setter
     def working_snapshot_id(self, value):
-        self.__current_working_snapshot.add_id(value)
+        self.__current_working_snapshot.id = value
 
     def save(self):
-        # Should not be called inside the with statement
         if self.__current_working_snapshot:
-            self.__current_working_snapshot = True
-            self.__current_working_snapshot._cleanup()
-            self.__current_working_snapshot = None
+            self._close_working_snapshot(True)
         else:
             if self.options.verbose_feedback:
                 print('No current transactions to save.')
             else:
                 raise NoTransactionError('No current transactions to save.')
+    
+    def _close_working_snapshot(self, to_save):
+        self.__current_session.commit = to_save
+        self.__current_session._cleanup()
+        self.__current_working_snapshot = self.__current_session = self.__current_transaction = None
 
     def revert(self):
-        # Should not be called inside the with statement
         if self.__current_working_snapshot:
-            self.__current_working_snapshot = False
-            self.__current_working_snapshot._cleanup()
-            self.__current_working_snapshot = None
+            self._close_working_snapshot(False)
         else:
             if self.options.verbose_feedback:
-                print('No current transactions to revert.')
+                print('No current transactions to save.')
             else:
-                raise NoTransactionError('No current transactions to revert.')
+                raise NoTransactionError('No current transactions to save.')
 
     def transaction_handler(self):
         if self.__current_working_snapshot:
@@ -511,47 +501,35 @@ class Mongo(DID_Driver):
             self.__current_working_snapshot = self.__create_snapshot()
             return self.transaction_handler()
 
-    def add(self, document, hash_) -> None:
-        if self.__current_working_snapshot and self.__current_session:
-            if not 'base' in document:
-                document.data['base'] = {}
-            if not 'record' in document['base']:
-                document.data['base']['record'] = []
-            document.data['base']['records'][0] = hash_
-            doc = Document(document=document, snapshot=self.working_snapshot_id)
+    def add(self, document, hash_):
+        doc = Document(document_id=document.id, data=document.data)\
+            .add_snapshot(self.current_snapshot)\
+            .update_document_hash()    
+        if self.__current_working_snapshot:
             if self.__current_transaction:
-                self.__current_transaction.action_on(doc,
-                                                     Document.insert, [self.collection], Document.delete,
-                                                     [self.collection])
+                doc.insert(self.collection, self.__current_transaction)
             else:
-                self.__current_session.action_on(doc,
-                                                 Document.insert, [self.collection], Document.delete,
-                                                 [self.collection])
+                doc.insert(self.collection, self.__current_session)
         else:
             if self.options.verbose_feedback:
-                print('No current transactions to revert.')
+                print('No working snapshot has been open')
             else:
-                raise NoTransactionError('No current transactions to revert.')
+                raise NoTransactionError('No working snapshot has been open')
 
     def upsert(self, document, hash_):
-        if self.__current_working_snapshot and self.__current_session:
-            original_document = Document(document=document, snapshot=self.working_snapshot_id)
-            document_to_lookfor = Document(snapshot=self.working_snapshot_id)
-            document_to_lookfor.document_id = document.id
-            if not 'base' in document:
-                document.data['base'] = {}
-            if not 'record' in document['base']:
-                document.data['base']['records'] = []
-            document.data['base']['records'][0] = hash_
-            update_to = Document(document=document, snapshot=self.working_snapshot_id)
+        #look for document in the database that has the same id as DIDDocument passed in
+        original_doc = Document(document_id=document.id)\
+            .add_snapshot(self.current_snapshot)
+
+        #update document.data and the document_hash
+        update_to = Document(document_id=document.id, data=document.data)\
+            .update_document_hash()    
+             
+        if self.__current_working_snapshot:
             if self.__current_transaction:
-                self.__current_transaction.action_on(document_to_lookfor,
-                                                     Document.update, [self.collection, update_to], Document.update,
-                                                     [self.collection, original_document])
+                original_doc.update(self.collection, update_to, self.__current_transaction)
             else:
-                self.__current_session.action_on(document_to_lookfor,
-                                                 Document.update, [self.collection, update_to], Document.update,
-                                                 [self.collection, original_document, True])
+                original_doc.update(self.collection, update_to, self.__current_session)
         else:
             if self.options.verbose_feedback:
                 print('No current transactions to revert.')
@@ -562,91 +540,113 @@ class Mongo(DID_Driver):
         if in_all_history:
             doc = Document.from_did_query(query)
             return doc.find(self.collection)
+        
         elif snapshot_id and commit_hash or snapshot_id:
-            doc = Document.from_did_query(query).add_snapshot(snapshot_id)
-            return doc.find(self.collection)
+            # prioritize snapshot_id over commit_hash
+            return Document.from_did_query(query)\
+                        .add_snapshot(snapshot_id)\
+                        .find(self.collection)
         elif commit_hash:
-            snapshot = Snapshot(commit_hash=commit_hash).find_one(self.versioning)
+            # first find the commit by the commit_hash
+            commit = Commit(commit_hash=commit_hash)
+            # find the snapshot through the commit_id
+            snapshot = Snapshot(commit_id=commit.id)\
+                    .find_one(self.versioning)
             if not snapshot:
                 raise AttributeError("commit_hash is not associated with any snapshot")
-            doc = Document.from_did_query(query).add_snapshot(snapshot.id)
-            return doc.find(self.collection)
+            return Document.from_did_query(query) \
+                        .add_snapshot(snapshot.id) \
+                        .find(self.collection)
+        # finding all the documents in the current working snapshot
         else:
             self.find(query=query, snapshot_id=self.working_snapshot_id)
 
     def find_by_id(self, id_, snapshot_id=None, commit_hash=None):
-        if snapshot_id and commit_hash or snapshot_id:
-            doc = Document().add_snapshot(snapshot_id)
-            doc.document_id = id_
-            return doc.find(self.collection)
-        elif commit_hash:
-            snapshot = Snapshot(commit_hash=commit_hash).find_one(self.versioning)
-            if not snapshot:
-                raise AttributeError("commit_hash is not associated with any snapshot")
-            doc = Document().add_snapshot(snapshot_id)
-            doc.document_id = id_
-            return doc.find(self.collection)
-        else:
-            self.find(id_, snapshot_id=self.working_snapshot_id)
+        self.find(query = Query('id') == id_, 
+                            snapshot_id=snapshot_id, 
+                            commit_hash=commit_hash,
+                            in_all_history=False)
 
     def find_by_hash(self, document_hash, snapshot_id=None, commit_hash=None):
-        if snapshot_id and commit_hash or snapshot_id:
-            doc = Document().add_snapshot(snapshot_id)
-            doc.document_hash = document_hash
-            return doc.find(self.collection)
-        elif commit_hash:
-            snapshot = Snapshot(commit_hash=commit_hash).find_one(self.versioning)
-            if not snapshot:
-                raise AttributeError("commit_hash is not associated with any snapshot")
-            doc = Document().add_snapshot(snapshot_id)
-            doc.document_hash = document_hash
-            return doc.find(self.collection)
-        else:
-            self.find(document_hash, snapshot_id=self.working_snapshot_id)
+        self.find(query = Query('document_hash') == document_hash, 
+                            snapshot_id=snapshot_id, 
+                            commit_hash=commit_hash, 
+                            in_all_history=False)
 
     def _DANGEROUS__delete_by_hash(self, hash_) -> None:
-        self.collection.delete_one({'base.record': hash_})
+        if self.__current_transaction:
+            Document(document_hash=hash_).delete(self.collection, self.__current_transaction)
+        elif self.__current_session:
+            Document(document_hash=hash_).delete(self.collection, self.__current_session)
+        else:
+            Document(document_hash=hash_).delete(self.collection)
 
     def get_history(self, commit_hash=None):
-        if commit_hash:
-            return self.versioning.find({'type': 'COMMIT'})
-        else:
-            return self.versioning.find({'type': 'COMMIT', 'commit_hash': commit_hash})
+        commit_id = Head().find_one(self.versioning).commit_id
+        all_commits = Commit().find(self.versioning)
+        index_by_id = {commit[id] : commit for commit in all_commits}
+        history, curr = [], index_by_id[commit_id]
+        while curr.parent:
+            history.append(curr)
+            curr = index_by_id[curr['parent']]
+        history.append(curr)
+        return history
 
     @property
     def current_ref(self):
-        return Commit.get_head(self.versioning).commit_hash
+        return Head().find_one(self.versioning).commit_id
 
     @property
     def current_snapshot(self):
-        return self.__current_working_snapshot.add_snapshot_hash().snapshot_hash
+        snapshot = Snapshot.get_head(self.versioning)
+        return (snapshot.id, snapshot.snapshot_hash)
 
     def set_current_ref(self, snapshot_id=None, commit_hash=None):
-        pass
+        with self.transaction_handler() as session:
+            if commit_hash and commit_hash or snapshot_id:
+                # prioritize commit_hash over snapshot_id, so find the snapshot this commit_hash points to
+                snapshot_id = Commit(commit_hash=commit_hash).find_one(self.versioning).snapshot_id
+                # make a new commit with the corresponding snapshot_id
+                commit_id = Commit(snapshot_id=snapshot_id,
+                                    message="Switch to snapshot_id: {}".format(snapshot_id))\
+                                .insert(self.versioning, session)
+                #make the head points to this new commit
+                Head().update(self.versioning, Head().add_commit_id(commit_id), session)
+            elif snapshot_id:
+                commit_id = Commit(snapshot_id=snapshot_id,
+                                    message="Switch to snapshot_id: {}".format(snapshot_id))\
+                        .insert(self.versioning, session)
+                Head().update(self.versioning, Head().add_commit_id(commit_id), session)
 
     def get_commit(self, snapshot_id):
-        commit = Commit()
-        commit.snapshot_id = snapshot_id
-        return commit.find(self.versioning)
+        return Commit(snapshot_id=snapshot_id).find(self.versioning)
 
     def remove_from_snapshot(self, document_hash):
         if not self.__current_working_snapshot:
             raise NoWorkingSnapshotError('There is no snapshot open for modification.')
-        doc = Document(snapshot=self.working_snapshot_id)
-        doc.document_hash = document_hash
-        doc.delete(self.collection)
+        self.__current_session.action_on(self.collection, Collection.update_one, 
+                                [{'$all' : {'snapshots' : [self.working_snapshot_id]}, 'document_hash' : document_hash}
+                                        , {'$pull' : {'snapshot_id' : self.working_snapshot_id}}], 
+                                Collection.update_one, 
+                                [{'$all' : {'snapshots' : [self.working_snapshot_id]}, 'document_hash' : document_hash}
+                                        , {'$addToSet' : {'snapshot_id' : self.working_snapshot_id}}])
 
     def get_document_hash(self, document):
         if not self.working_snapshot_id:
             raise NoWorkingSnapshotError('There is no snapshot open.')
-        if document.id in self.__current_working_snapshot.id2hash:
-            return self.__current_working_snapshot.id2hash[document.id]
-        return None
+        doc = Document(document_id=document.id, snapshots=[self.current_snapshot]).find_one(self.collection)
+        if doc:
+            return doc.document_hash
+        else:
+            if self.options.verbose_feedback:
+                print("the current working snapshot does not contains any document with an id of {}".format(document.id))
+            return None
 
     def get_working_document_hashes(self):
         if not self.working_snapshot_id:
             raise NoWorkingSnapshotError('There is no snapshot open.')
-        return list(self.__current_working_snapshot.hash2id)
+        docs = Document(snapshots=[self.current_snapshot])
+        return [docs.document_hash for doc in docs]
 
     def sign_working_snapshot(self, snapshot_hash):
         if not self.working_snapshot_id:
@@ -656,14 +656,19 @@ class Mongo(DID_Driver):
     def add_commit(self, commit_hash, snapshot_id, timestamp, parent=None, message=None):
         commit = Commit(commit_hash=commit_hash, snapshot_id=snapshot_id,
                         timestamp=timestamp, parent_commit_hash=parent, message=message)
-        commit.insert(self.versioning)
+        if self.__current_transaction:
+            commit.insert(self.versioning, self.__current_transaction)
+        elif self.__current_session:
+            commit.insert(self.versioning, self.__current_session)
+        else:
+            commit.insert(self.versioning)
 
     def upsert_ref(self, name, commit_hash):
-        """ Creates a ref if it doesn't already exist.
-
-        :param name: ref name/tag.
-        :type name: str
-        :param commit_hash: Hash of associated commit.
-        :type commit_hash: str
-        """
-        pass
+        if not Head().find_one(self.versioning):
+            commit_id = Commit().add_commit_hash(commit_hash)
+            if self.__current_transaction:
+                Head().add_commit_id(commit_id).insert(self.versioning, self.__current_transaction)
+            elif self.__current_session:
+                Head().add_commit_id(commit_id).insert(self.versioning, self.__current_session)
+            else:
+                Head().add_commit_id(commit_id).insert(self.versioning)
