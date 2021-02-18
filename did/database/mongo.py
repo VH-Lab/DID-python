@@ -29,35 +29,21 @@ class MongoSchema(ABC):
     def __init__(self, id):
         self._id = id
 
-    def iterate_through_fileds(self, ignore=None):
+    def iterate_through_fileds(self, ignore=None, cond = None):
         filter = {}
         for field in dir(self):
             if ignore and field in ignore:
                 continue
             if not field.startswith('_') and not callable(getattr(self, field)):
-                if getattr(self, field) is not None:
+                if cond:
+                    if cond(getattr(self, field)):
+                        filter[field] =  getattr(self, field)
+                else:
                     filter[field] =  getattr(self, field)
         return filter
-
-    def _to_filter(self, deal_with_list = "contains"):
-        filter = {}
-        if 'id' in dir(self) and getattr(self, 'id'):
-            return {'_id' : getattr(self,'id')}
-        for field in dir(self):
-            if not field.startswith('_') and not callable(getattr(self, field)):
-                if isinstance(getattr(self, field), list):
-                    if deal_with_list == "contains":
-                        if getattr(self, field):
-                            filter[field] =  {'$all' : getattr(self, field)}
-                    elif deal_with_list == "exact_match" :
-                        filter[field] = {field : getattr(self, field)}
-                else:
-                    if getattr(self, field) is not None:
-                        filter[field] =  getattr(self, field)
-        return filter
-
+    
     @classmethod
-    def _from_dict(cls, dict):
+    def fill_object_with_fields(cls, dict):
         if '_id' in dict:
             instance = cls(id)
         else:
@@ -65,17 +51,21 @@ class MongoSchema(ABC):
         for field in dict:
             setattr(instance, field, dict[field])
         return instance
+    
+    @abstractmethod
+    def _to_filter(self):
+        pass
 
+    @abstractmethod
     def _for_insertion(self):
-        filter = {}
-        for field in dir(self):
-            if field != 'id' and not field.startswith('_') and not callable(getattr(self, field)):
-                if getattr(self, field):
-                    filter[field] =  getattr(self, field)
-        return filter
+        pass
 
-    def find_one(self, collection: Collection, deal_with_list = "contains"):
-        filter = self._to_filter(deal_with_list=deal_with_list)
+    @abstractclassmethod
+    def _from_dict(self, val):
+        pass
+
+    def find_one(self, collection: Collection):
+        filter = self._to_filter()
         result = collection.find_one(filter)
         if result:
             return self._from_dict(result)
@@ -92,17 +82,17 @@ class MongoSchema(ABC):
         else:
             self._id = None
 
-    def find(self, collection: Collection, deal_with_list="contains"):
-        filter = self._to_filter(deal_with_list=deal_with_list)
+    def find(self, collection: Collection):
+        filter = self._to_filter()
         results = collection.find(filter)
         output = []
         for result in results:
             output.append(self._from_dict(result))
         return output
 
-    def insert(self, collection: Collection, session=None, deal_with_list='contains'):
+    def insert(self, collection: Collection, session=None):
         filter = self._for_insertion()
-        if not self.find_one(collection, deal_with_list=deal_with_list):
+        if not self.find_one(collection):
             if session:
                 session.action_on(collection, Collection.insert_one, [filter], Collection.delete_one, [filter])
                 result = session.already_executed[-1]['return_value']
@@ -111,20 +101,17 @@ class MongoSchema(ABC):
             return result.inserted_id
         return None
 
-    def delete(self, collection: Collection, session=None, deal_with_list="continas"):
-        if self.find_one(collection, deal_with_list=deal_with_list):
+    def delete(self, collection: Collection, session=None):
+        if self.find_one(collection):
             if session:
                 session.action_on(collection, Collection.delete_one, [self._to_filter()],
                                   Collection.insert_one, [self._to_filter()])
             else:
-                collection.delete_one(self._to_filter(deal_with_list=deal_with_list))
+                collection.delete_one(self._to_filter())
 
-    def update(self, collection: Collection, update, session=None, deal_with_list = "contains"):
-        update_filter = update._for_insertion() if update else None
-        print(update_filter)
-        if update_filter and '_id' in update_filter:
-            update_filter.pop('_id')
-        before = self.find_one(collection, deal_with_list=deal_with_list)
+    def update(self, collection: Collection, update, session=None):
+        update_filter = update.iterate_through_fileds(cond=lambda x: x is not None) if update else None
+        before = self.find_one(collection)
         if before:
             if update_filter:
                 if not session:
@@ -134,35 +121,66 @@ class MongoSchema(ABC):
                     collection.update_one(self._to_filter(), {'$set': update_filter})
 
 class Head(MongoSchema):
-    def __init__(self, id=None):
+    def __init__(self, id=None, commit_hash=None):
         super().__init__(id)
         self.type = "HEAD"
+        self.commit_id = None
+        self.commit_hash = commit_hash
     
     def add_commit_id(self, commit_id):
         self.commit_id = commit_id
         return self
+    
+    def add_commit_hash(self, commit_hash):
+        self.commit_hash = commit_hash
+        return self
+    
+    def _to_filter(self):
+        return {'type' : 'HEAD'}
+    
+    def _for_insertion(self):
+        return {'type' : 'HEAD', 'commit_id' : self.commit_id, 'commit_hash' : self.commit_hash}
+
+    @classmethod
+    def _from_dict(cls, val):
+        return cls.fill_object_with_fields(val)
 
 
 class Document(MongoSchema):
+    #TODO: handle cases where after modification cheeck if the snapshot counter is 0, if 
+    #it does delete it
+
     def __init__(self, id=None, document_id=None, data=None, snapshots=None, document_hash=None):
         super().__init__(id)
         self.document_id = document_id
         self.data = data
-        self.snapshots = [] if snapshots is None else snapshots
+        self.snapshots = snapshots
         self.document_hash = document_hash
+        self._did_query = None
 
-    def _to_filter(self, deal_with_list="contains"):
-        filter = super()._to_filter(deal_with_list=deal_with_list)
-        if 'clause' in filter:
-            filter.pop('clause')
-        if 'did_query' in filter:
-            filter.pop('did_query')
-            query_filter = self.did2mongodb(self.did_query)
-            if len(filter) > 0:
-                filter = {'$and' : [filter, query_filter]}
-            else:
-                filter = query_filter
-        return filter
+    def _to_filter(self):
+        if self.id:
+            return {'_id' : self.id}
+        elif self.document_hash:
+            return {'document_hash' : self.document_hash}
+        elif self._did_query:
+            return self.did2mongodb(self.did_query)
+        else:
+            filter = super().iterate_through_fileds(cond=lambda x: x is not None)
+            if 'snapshots' in filter and self.snapshots != []:
+                filter['snapshots'] = {'$all' : filter['snapshots']}
+            return filter
+    
+    def _for_insertion(self):
+        insertion = super().iterate_through_fileds(ignore={'id'})
+        if 'snapshots' in insertion and insertion['snapshots'] is None:
+            insertion['snapshots'] = []
+        return insertion
+    
+    @classmethod
+    def _from_dict(cls, val):
+        return cls.fill_object_with_fields(val)
+
 
     def did2mongodb(self, did_query):
         field, operator, value = did_query.query()
@@ -193,12 +211,6 @@ class Document(MongoSchema):
                 pass
             else:
                 raise ValueError("Query operator {} is not supported".format(operator))
-            
-    def _for_insertion(self):
-        document = super()._for_insertion()
-        if 'clause' in document:
-            document.pop('clause')
-        return document
 
     @classmethod
     def from_did_query(cls, did_query):
@@ -211,6 +223,8 @@ class Document(MongoSchema):
         return self
 
     def add_snapshot(self, snapshot_id):
+        if self.snapshots is None:
+            self.snapshots = []
         self.snapshots.append(snapshot_id)
         return self
 
@@ -223,7 +237,28 @@ class Snapshot(MongoSchema):
         if isinstance(commit_id, list):
             self.commit_id = commit_id
         else:
-            self.commit_id = []
+            self.commit_id = None
+    
+    def _to_filter(self):
+        if self.id:
+            return {'_id' : self.id}
+        elif self.snapshot_hash:
+            return {'snapshot_hash' : self.snapshot_hash}
+        else:
+            filter = super().iterate_through_fileds(cond=lambda x: x is not None)
+            if 'commit_id' in filter and self.commit_id != []:
+                filter['commit_id'] = {'$all' : filter['commit_id']}
+            return filter
+    
+    def _for_insertion(self):
+        insertion = super().iterate_through_fileds(ignore={'id'})
+        if 'commit_id' in insertion and insertion['commit_id'] is None:
+            insertion['commit_id'] = []
+        return insertion
+    
+    @classmethod
+    def _from_dict(cls, val):
+        return cls.fill_object_with_fields(val)
     
     @classmethod
     def make_working_snapshot(cls, version, collection):
@@ -243,6 +278,8 @@ class Snapshot(MongoSchema):
             raise AttributeError("HEAD points to an invalid commit")
 
     def add_commit_id(self, commit_id):
+        if self.commit_id is None:
+            self.commit_id = []
         self.commit_id.append(commit_id)
         return self
 
@@ -264,11 +301,28 @@ class Commit(MongoSchema):
                  message=None):
         super().__init__(id)
         self.type = 'COMMIT'
-        self.timestamp = dt.now().isoformat() if not timestamp else timestamp
+        self.timestamp = timestamp
         self.snapshot_id = snapshot_id
         self.commit_hash = commit_hash
         self.parent_commit_hash = parent_commit_hash
         self.message = message
+    
+    def _to_filter(self):
+        if self.id:
+            return {'_id' : self.id}
+        elif self.commit_hash:
+            return {'commit_hash' : self.commit_hash}
+        else:
+            return super().iterate_through_fileds(cond=lambda x: x is not None)
+        
+    def _for_insertion(self):
+        insertion = super().iterate_through_fileds(ignore={'id'})
+        insertion['timestamp'] = dt.now().isoformat()
+        return insertion
+
+    @classmethod
+    def _from_dict(cls, val):
+        return cls.fill_object_with_fields(val)
 
     @classmethod
     def get_head(cls, collection: Collection):
@@ -284,7 +338,7 @@ class Commit(MongoSchema):
 
     def add_commit_hash(self, commit_hash=None):
         if not commit_hash:
-            self.commit_hash = hash_commit(hash_snapshot([]), str(self.id), self.timestamp)
+            self.commit_hash = hash_commit(hash_snapshot([]), str(self.snapshot_id), str(self.timestamp))
         else:
             self.commit_hash = commit_hash
         return self
@@ -473,7 +527,7 @@ class Mongo(DID_Driver):
         self._current_working_snapshot = Snapshot()
         self._current_working_snapshot.type = 'WORKING_SNAPSHOT'
         last_snapshot_id = Snapshot.get_head(self.versioning).id
-        snapshot_id = self._current_working_snapshot.insert(self.versioning, deal_with_list='exact_match', session=self.__current_session)
+        snapshot_id = self._current_working_snapshot.insert(self.versioning, session=self.__current_session)
 
         #add all documentsin the previous snapshot to the current working snapshot
         self.__current_session.action_on(self.collection, Collection.update_many, 
@@ -491,11 +545,11 @@ class Mongo(DID_Driver):
             snapshot_id = snapshot.insert(self.versioning, session)
 
             #create a new commit that points to the snapshot we have just created
-            commit = Commit(snapshot_id=snapshot_id, message = "Database initialized")
+            commit = Commit(snapshot_id=snapshot_id, message = "Database initialized").add_commit_hash()
             commit_id = commit.insert(self.versioning, session)
 
             #create a head that points to the commit we have just created
-            head = Head().add_commit_id(commit_id)
+            head = Head().add_commit_id(commit_id).add_commit_hash(commit.commit_hash)
             head.insert(self.versioning, session)
 
             to_update = Snapshot().add_commit_id(commit_id)
@@ -552,7 +606,7 @@ class Mongo(DID_Driver):
     def add(self, document, hash_):
         doc = Document(document_id=document.id, data=document.data)\
             .add_snapshot(self.working_snapshot_id)\
-            .update_document_hash()    
+            .update_document_hash()  
         if self._current_working_snapshot:
             if self.__current_transaction:
                 doc.insert(self.collection, self.__current_transaction)
@@ -645,7 +699,7 @@ class Mongo(DID_Driver):
 
     @property
     def current_ref(self):
-        return Head().find_one(self.versioning).commit_id
+        return Head().find_one(self.versioning)
 
     @property
     def current_snapshot(self):
@@ -696,8 +750,8 @@ class Mongo(DID_Driver):
     def get_working_document_hashes(self):
         if not self._current_working_snapshot:
             raise NoWorkingSnapshotError('There is no snapshot open.')
-        docs = Document(snapshots=[self.working_snapshot_id])
-        return [docs.document_hash for doc in docs]
+        docs = Document(snapshots=[self.working_snapshot_id]).find(self.collection)
+        return [doc.document_hash for doc in docs]
 
     def sign_working_snapshot(self, snapshot_hash):
         if not self._current_working_snapshot:
