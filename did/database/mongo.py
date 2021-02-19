@@ -49,7 +49,8 @@ class MongoSchema(ABC):
         else:
             instance = cls(None)
         for field in dict:
-            setattr(instance, field, dict[field])
+            if field != id:
+                setattr(instance, field, dict[field])
         return instance
     
     @abstractmethod
@@ -94,8 +95,9 @@ class MongoSchema(ABC):
         filter = self._for_insertion()
         if not self.find_one(collection):
             if session:
-                session.action_on(collection, Collection.insert_one, [filter], Collection.delete_one, [filter])
-                result = session.already_executed[-1]['return_value']
+                session.action_on(collection, Collection.insert_one, [filter], 
+                            Collection.delete_one, [filter])
+                result = session.query_return_value(-1)
             else:
                 result = collection.insert_one(filter)
             return result.inserted_id
@@ -110,22 +112,27 @@ class MongoSchema(ABC):
                 collection.delete_one(self._to_filter())
 
     def update(self, collection: Collection, update, session=None):
-        update_filter = update.iterate_through_fileds(cond=lambda x: x is not None) if update else None
+        update_filter = update.iterate_through_fileds(ignore = {'id'}, 
+                                cond=lambda x: x is not None) if update else None
         before = self.find_one(collection)
+        before_filter = before.iterate_through_fileds(ignore = {'id'}, 
+                                cond=lambda x: x is not None)
         if before:
             if update_filter:
-                if not session:
-                    session.action_on(collection, Collection.update_one, [self._to_filter(), {'$set': update_filter}],
-                                        Collection.update_one, [update_filter, {'$set' : before}])
+                if session:
+                    session.action_on(collection, Collection.update_one, 
+                                        [self._to_filter(), {'$set': update_filter}],
+                                        Collection.update_one, [update_filter, {'$set' : before_filter}])
                 else:
                     collection.update_one(self._to_filter(), {'$set': update_filter})
 
 class Head(MongoSchema):
-    def __init__(self, id=None, commit_hash=None):
+    def __init__(self, id=None, commit_hash=None, name="CURRENT"):
         super().__init__(id)
         self.type = "HEAD"
         self.commit_id = None
         self.commit_hash = commit_hash
+        self.name = name
     
     def add_commit_id(self, commit_id):
         self.commit_id = commit_id
@@ -136,10 +143,12 @@ class Head(MongoSchema):
         return self
     
     def _to_filter(self):
-        return {'type' : 'HEAD'}
+        if self.id:
+            return {'_id' : self.id}
+        return self.iterate_through_fileds(cond = lambda x: x is not None)
     
     def _for_insertion(self):
-        return {'type' : 'HEAD', 'commit_id' : self.commit_id, 'commit_hash' : self.commit_hash}
+        return self.iterate_through_fileds(ignore={'id'})
 
     @classmethod
     def _from_dict(cls, val):
@@ -147,9 +156,6 @@ class Head(MongoSchema):
 
 
 class Document(MongoSchema):
-    #TODO: handle cases where after modification cheeck if the snapshot counter is 0, if 
-    #it does delete it
-
     def __init__(self, id=None, document_id=None, data=None, snapshots=None, document_hash=None):
         super().__init__(id)
         self.document_id = document_id
@@ -344,31 +350,19 @@ class Commit(MongoSchema):
         return self
 
 class _TransactionHandler:
-    class _ReturnedValue:
-        def __init__(self, index):
-            self.index = index
-
-    def __init__(self, parent=None, db_connection=None, nothrow=False):
-        self.pending = []
+    def __init__(self, parent=None, db_connection=None):
         self.already_executed = []
         self.parent = parent
         self.commit = True
         self.has_closed = False
-        self.nothrow=nothrow
         self.db_connection = db_connection
 
     def __enter__(self):
         return self
 
-    def action_on(self,
-                  instance,
-                  callback,
-                  args_for_callback,
-                  reverse_callback_success,
-                  args_for_reverse_callback_success,
-                  reverse_callback_fail=None,
-                  args_for_reverse_callback_fail=None,
-                  immediately_executed=True):
+    def action_on(self, instance, callback, args_for_callback, reverse_callback_success,
+                    args_for_reverse_callback_success, reverse_callback_fail=None,
+                    args_for_reverse_callback_fail=None):
         action = {'instance': instance,
                   'callback': (callback, args_for_callback),
                   'reverse_callback_success': (reverse_callback_success, args_for_reverse_callback_success),
@@ -376,17 +370,10 @@ class _TransactionHandler:
                   'success': False,
                   'return_value': None}
         if not self.has_closed:
-            if immediately_executed:
-                try:
-                    self._execute_single_action(action)
-                except Exception as ex:
-                    if not self.nothrow:
-                        raise ex
-                    else:
-                        self.revert()
-                        self.has_closed=True
-            else:
-                self.pending.append(action)
+            try:
+                self._execute_single_action(action)
+            except Exception as ex:
+                raise ex
 
     def __exit__(self, exc_type, exc_value, traceback):
         if self.db_connection:
@@ -395,27 +382,14 @@ class _TransactionHandler:
             self._cleanup()
         else:
             self.revert()
-            if not self.nothrow:
-                raise RuntimeError(
-                    "Exception occured: type: {}, value: {}, traceback: {}".format(exc_type, exc_value, traceback))
-
+    
     def _cleanup(self):
         if not self.has_closed:
             self.has_closed = True
-            try:
-                if self.commit:
-                    for action in self.pending:
-                        self._execute_single_action(action)
-                    if self.parent:
-                        self.parent.already_executed.extend(self.already_executed)
-                else:
-                    self.revert()
-            except Exception as e:
+            if not self.commit:
                 self.revert()
-                if not self.nothrow:
-                    raise RuntimeError(
-                        "Encountering error while executing one of the callbacks, actions unrolled, error :{}".format(
-                            str(e)))
+            elif self.parent:
+                self.parent.already_executed.extend(self.already_executed)
 
     def _execute_single_action(self, action):
         self.already_executed.append(action)
@@ -438,21 +412,11 @@ class _TransactionHandler:
                     "Fail to unroll changes for action {}, please unroll manually. Error message: {}".format(
                         action, str(e)))
 
-    def query_return_value(self, index, immediate=False):
-        if immediate:
-            return self.already_executed[index]['return_value']
-        return _TransactionHandler._ReturnedValue(index)
+    def query_return_value(self, index):
+        return self.already_executed[index]['return_value']
 
     def __execute(self, args, instance, callback):
         if callback:
-            if args:
-                for i in range(len(args)):
-                    if isinstance(args[i], _TransactionHandler._ReturnedValue):
-                        args[i] = self.already_executed[args[i].index]['return_value']
-            if isinstance(callback, _TransactionHandler._ReturnedValue):
-                callback = self.already_executed[callback.index]['return_value']
-            if isinstance(instance, _TransactionHandler._ReturnedValue):
-                instance = self.already_executed[instance.index]['return_value']
             if instance is not None and args is not None:
                 returned_value = callback(instance, *list(args))
             elif instance is not None:
@@ -531,11 +495,11 @@ class Mongo(DID_Driver):
 
         #add all documentsin the previous snapshot to the current working snapshot
         self.__current_session.action_on(self.collection, Collection.update_many, 
-                                [{'snapshots' : {'$all' : [last_snapshot_id]}}, {'$addToSet' : {'snapshot_id' : snapshot_id}}], 
+                                [{'snapshots' : {'$all' : [last_snapshot_id]}}, {'$addToSet' : {'snapshots' : snapshot_id}}], 
                                 Collection.update_many, 
-                                [{'snapshots' : {'$all' : [last_snapshot_id]}}, {'$pull' : {'snapshot_id' : snapshot_id}}], 
+                                [{'snapshots' : {'$all' : [last_snapshot_id]}}, {'$pull' : {'snapshots' : snapshot_id}}], 
                                 Collection.update_many,
-                                [{'snapshots' : {'$all' : [last_snapshot_id]}}, {'$pull' : {'snapshot_id' : snapshot_id}}])
+                                [{'snapshots' : {'$all' : [last_snapshot_id]}}, {'$pull' : {'snapshots' : snapshot_id}}])
         self._current_working_snapshot.id = snapshot_id
 
     def __setup_version_control(self):
@@ -557,6 +521,13 @@ class Mongo(DID_Driver):
             #update the snapshot so that it points to the commit we have just created
             snapshot.update(self.versioning, to_update, session)
 
+    def __check_working_snapshot_is_mutable(self):
+        # commit_id and snapshot_hash already added => working snapshot no longer mutable
+        is_not_mutable = self._current_working_snapshot.commit_id and \
+                            self._current_working_snapshot.snapshot_hash
+        if is_not_mutable:
+            raise SnapshotIntegrityError('Hashed snapshots are locked and cannot be modified.')
+    
     @property
     def working_snapshot_id(self):
         if self._current_working_snapshot:
@@ -570,7 +541,12 @@ class Mongo(DID_Driver):
         self._current_working_snapshot.id = value
 
     def save(self):
+        # TODO deal with cases where the current working snapshot's snapshot hash matches with a hash that already exists
         if self._current_working_snapshot:
+            #update snapshot
+            snapshot = Snapshot()
+            snapshot.type = "SNAPSHOT"
+            Snapshot(id=ObjectId(self.working_snapshot_id)).update(self.versioning, snapshot, self.__current_session)
             self._close_working_snapshot(True)
         else:
             if self.options.verbose_feedback:
@@ -642,6 +618,8 @@ class Mongo(DID_Driver):
                 raise NoTransactionError('No current transactions to revert.')
 
     def find(self, query=None, snapshot_id=None, commit_hash=None, in_all_history=False):
+        if snapshot_id and not isinstance(snapshot_id, ObjectId):
+            snapshot_id = ObjectId(snapshot_id)
         if in_all_history:
             doc = Document.from_did_query(query)
             return doc.find(self.collection)
@@ -667,6 +645,8 @@ class Mongo(DID_Driver):
             self.find(query=query, snapshot_id=self.working_snapshot_id)
 
     def find_by_id(self, id_, snapshot_id=None, commit_hash=None):
+        if snapshot_id and not isinstance(snapshot_id, ObjectId):
+            snapshot_id = ObjectId(snapshot_id)
         self.find(query = Query('id') == id_, 
                             snapshot_id=snapshot_id, 
                             commit_hash=commit_hash,
@@ -704,9 +684,11 @@ class Mongo(DID_Driver):
     @property
     def current_snapshot(self):
         snapshot = Snapshot.get_head(self.versioning)
-        return (snapshot.id, snapshot.snapshot_hash)
+        return snapshot.snapshot_hash
 
     def set_current_ref(self, snapshot_id=None, commit_hash=None):
+        if snapshot_id and not isinstance(snapshot_id, ObjectId):
+            snapshot_id = ObjectId(snapshot_id)
         with self.transaction_handler() as session:
             if commit_hash and commit_hash or snapshot_id:
                 # prioritize commit_hash over snapshot_id, so find the snapshot this commit_hash points to
@@ -716,25 +698,32 @@ class Mongo(DID_Driver):
                                     message="Switch to snapshot_id: {}".format(snapshot_id))\
                                 .insert(self.versioning, session)
                 #make the head points to this new commit
-                Head().update(self.versioning, Head().add_commit_id(commit_id), session)
+                Head().update(self.versioning, Head().add_commit_id(commit_id)\
+                    .add_commit_hash(commit_hash), session)
             elif snapshot_id:
                 commit_id = Commit(snapshot_id=snapshot_id,
                                     message="Switch to snapshot_id: {}".format(snapshot_id))\
                         .insert(self.versioning, session)
-                Head().update(self.versioning, Head().add_commit_id(commit_id), session)
+                Head().update(self.versioning, Head().add_commit_id(commit_id).add_commit_hash(commit_hash), session)
 
     def get_commit(self, snapshot_id):
+        if not isinstance(snapshot_id, ObjectId):
+            snapshot_id = ObjectId(snapshot_id)
         return Commit(snapshot_id=snapshot_id).find(self.versioning)
 
     def remove_from_snapshot(self, document_hash):
         if not self._current_working_snapshot:
             raise NoWorkingSnapshotError('There is no snapshot open for modification.')
-        self.__current_session.action_on(self.collection, Collection.update_one, 
-                                [{'$all' : {'snapshots' : [self.working_snapshot_id]}, 'document_hash' : document_hash}
-                                        , {'$pull' : {'snapshot_id' : self.working_snapshot_id}}], 
-                                Collection.update_one, 
-                                [{'$all' : {'snapshots' : [self.working_snapshot_id]}, 'document_hash' : document_hash}
-                                        , {'$addToSet' : {'snapshot_id' : self.working_snapshot_id}}])
+        doc = Document(document_hash=document_hash).find_one(self.collection)
+        if doc:
+            self.__current_session.action_on(self.collection, Collection.update_one, 
+                                    [{'snapshots' : {'$all' : [self.working_snapshot_id]}, 'document_hash' : document_hash}
+                                            , {'$pull' : {'snapshots' : self.working_snapshot_id}}], 
+                                    Collection.update_one, 
+                                    [{'snapshots' : {'$all' : [self.working_snapshot_id]}, 'document_hash' : document_hash}
+                                            , {'$addToSet' : {'snapshots' : self.working_snapshot_id}}])
+            self.__current_session.action_on(self.collection, Collection.delete_one, [{'snapshots' : []}], 
+                                            Collection.insert_one, doc._for_insertion())
 
     def get_document_hash(self, document):
         if not self._current_working_snapshot:
@@ -754,27 +743,45 @@ class Mongo(DID_Driver):
         return [doc.document_hash for doc in docs]
 
     def sign_working_snapshot(self, snapshot_hash):
+        self.__check_working_snapshot_is_mutable()
         if not self._current_working_snapshot:
             raise NoWorkingSnapshotError('There is no snapshot open.')
         self._current_working_snapshot.snapshot_hash = snapshot_hash
 
     def add_commit(self, commit_hash, snapshot_id, timestamp, parent=None, message=None):
+        if isinstance(snapshot_id, str):
+            snapshot_id = ObjectId(snapshot_id)
         commit = Commit(commit_hash=commit_hash, snapshot_id=snapshot_id,
                         timestamp=timestamp, parent_commit_hash=parent, message=message)
         if self.__current_transaction:
-            commit.insert(self.versioning, self.__current_transaction)
+            commit_id = commit.insert(self.versioning, self.__current_transaction)
+            self._current_working_snapshot.add_commit_id(commit_id)
+            Snapshot(id=ObjectId(self.working_snapshot_id)).update(self.versioning, self._current_working_snapshot, self.__current_transaction)
         elif self.__current_session:
-            commit.insert(self.versioning, self.__current_session)
+            commit_id = commit.insert(self.versioning, self.__current_session)
+            self._current_working_snapshot.add_commit_id(commit_id)
+            Snapshot(id=ObjectId(self.working_snapshot_id)).update(self.versioning, self._current_working_snapshot, self.__current_session)
         else:
-            commit.insert(self.versioning)
+            commit_id = commit.insert(self.versioning)
+            self._current_working_snapshot.add_commit_id(commit_id)
+            Snapshot(id=ObjectId(self.working_snapshot_id)).update(self.versioning, self._current_working_snapshot)
 
     def upsert_ref(self, name, commit_hash):
-        if not Head().find_one(self.versioning):
-            commit_id = Commit().add_commit_hash(commit_hash)
+        ref = Head(name=name).find_one(self.versioning)
+        if not ref:
+            commit_id = Commit().add_commit_hash(commit_hash).find_one(self.versioning).id
             if self.__current_transaction:
-                Head().add_commit_id(commit_id).insert(self.versioning, self.__current_transaction)
+                Head().add_commit_id(commit_id).add_commit_hash(commit_hash).insert(self.versioning, self.__current_transaction)
             elif self.__current_session:
-                Head().add_commit_id(commit_id).insert(self.versioning, self.__current_session)
+                Head().add_commit_id(commit_id).add_commit_hash(commit_hash).insert(self.versioning, self.__current_session)
             else:
-                Head().add_commit_id(commit_id).insert(self.versioning)
-            
+                Head().add_commit_id(commit_id).add_commit_hash(commit_hash).insert(self.versioning)
+        else:
+            #simply update the commit_id
+            commit_id = Commit().add_commit_hash(commit_hash).find_one(self.versioning).id
+            if self.__current_transaction:
+                ref.update(self.versioning, ref.add_commit_id(commit_id).add_commit_hash(commit_hash), self.__current_transaction)
+            elif self.__current_session:  
+                ref.update(self.versioning, ref.add_commit_id(commit_id).add_commit_hash(commit_hash), self.__current_session)
+            else:
+                ref.update(self.versioning, ref.add_commit_id(commit_id).add_commit_hash(commit_hash))
