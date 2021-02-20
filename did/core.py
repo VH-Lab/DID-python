@@ -162,7 +162,7 @@ class DID(DID_ABC):
         if save if save is not None else self.auto_save:
             self.save()
 
-    def save(self):
+    def save(self, message=None):
         # create snapshot
         document_hashes = self.db.get_working_document_hashes()
         snapshot_hash = hash_snapshot(document_hashes)
@@ -171,12 +171,13 @@ class DID(DID_ABC):
         self.db.sign_working_snapshot(snapshot_hash)
 
         # add commit
-        snapshot_id = self.db.working_snapshot_id
+        snapshot_id = str(self.db.working_snapshot_id)
         timestamp = current_time()
         current_ref = self.db.current_ref
         previous_commit_hash = current_ref.commit_hash if current_ref else None
         commit_hash = hash_commit(snapshot_hash, snapshot_id, timestamp, previous_commit_hash)
-        self.db.add_commit(commit_hash, snapshot_id, timestamp, parent=previous_commit_hash)
+        if message:
+            self.db.add_commit(commit_hash, snapshot_id, timestamp, parent=previous_commit_hash, message=message)
         self.db.upsert_ref('CURRENT', commit_hash)
 
         # close transaction
@@ -191,4 +192,3 @@ class DID(DID_ABC):
 
     def get_history(self):
         return self.db.get_history()
-    
