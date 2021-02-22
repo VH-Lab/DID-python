@@ -9,6 +9,7 @@ def hash_document(document):
 
     # The following fields are ignored for versioning purposes
     data['base']['records'] = None 
+    data['base']['snapshots'] = None
     data['dependencies'] = None
 
     serialized_data = bytes(json.dumps(data), 'utf8')
