@@ -1,6 +1,6 @@
 from datetime import datetime as dt
 from abc import abstractmethod, ABC, abstractclassmethod
-from ..globals import get_mongo_connection
+from ..tools.settings import get_database_connection_string
 from ..versioning import hash_commit, hash_document, hash_snapshot
 from ..exception import NoTransactionError, NoWorkingSnapshotError, SnapshotIntegrityError
 from .did_driver import DID_Driver
@@ -10,7 +10,7 @@ from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError
 from bson.objectid import ObjectId
 from pymongo.collection import Collection
-from did.time import current_time
+from ..time import current_time
 
 
 class MONGODBOptions:
@@ -758,7 +758,7 @@ class Mongo(DID_Driver):
                     "Fail the connect to the database @{}".format(connection_string))
 
         if connection_string is None:
-            connection_string = get_mongo_connection('raw')
+            connection_string = get_database_connection_string('mongodb')
         self.options = MONGODBOptions(
             hard_reset_on_init, debug_mode, verbose_feedback)
         self.conn = __make_connection(connection_string)
