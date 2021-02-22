@@ -10,6 +10,7 @@ from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError
 from bson.objectid import ObjectId
 from pymongo.collection import Collection
+from did.time import current_time
 
 
 class MONGODBOptions:
@@ -617,12 +618,11 @@ class _TransactionHandler:
     be directly instantiated by user of the DID software.
     """
 
-    def __init__(self, parent=None, db_connection=None):
+    def __init__(self, parent=None):
         self.already_executed = []
         self.parent = parent
         self.commit = True
         self.has_closed = False
-        self.db_connection = db_connection
 
     def __enter__(self):
         return self
@@ -669,8 +669,6 @@ class _TransactionHandler:
                 raise ex
 
     def __exit__(self, exc_type, exc_value, traceback):
-        if self.db_connection:
-            self.db_connection.__current_transaction = None
         if exc_type is None and exc_value is None and traceback is None:
             self._cleanup()
         else:
@@ -764,6 +762,8 @@ class Mongo(DID_Driver):
         self.options = MONGODBOptions(
             hard_reset_on_init, debug_mode, verbose_feedback)
         self.conn = __make_connection(connection_string)
+        if self.options.hard_reset_on_init:
+            self.conn.drop_database(database)
         self.db = self.conn[database]
         self.collection = self.db[document_collection]
         self.versioning = self.db[versioning_collection]
@@ -934,7 +934,7 @@ class Mongo(DID_Driver):
         """
         if self._current_working_snapshot:
             self.__current_transaction = _TransactionHandler(
-                parent=self.__current_session, db_connection=self)
+                parent=self.__current_session)
             return self.__current_transaction
         else:
             self.__create_snapshot()
@@ -1038,7 +1038,7 @@ class Mongo(DID_Driver):
         if in_all_history:
             docs = Document.from_did_query(query).find(self.collection)
             return [DIDDocument(doc.data) for doc in docs]
-        elif snapshot_id and commit_hash or snapshot_id:
+        elif (snapshot_id and commit_hash) or snapshot_id:
             # prioritize snapshot_id over commit_hash
             docs = Document.from_did_query(query) \
                 .add_snapshot(snapshot_id) \
@@ -1046,9 +1046,11 @@ class Mongo(DID_Driver):
             return [DIDDocument(doc.data) for doc in docs]
         elif commit_hash:
             # first find the commit by the commit_hash
-            commit = Commit(commit_hash=commit_hash)
+            commit = Commit(commit_hash=commit_hash).find_one(self.versioning)
+            if not commit:
+                raise AttributeError("commit_hash is not associated with any snapshot")
             # find the snapshot through the commit_id
-            snapshot = Snapshot(commit_id=commit.id) \
+            snapshot = Snapshot(commit_id=[commit.id]) \
                 .find_one(self.versioning)
             if not snapshot:
                 raise AttributeError("commit_hash is not associated with any snapshot")
@@ -1060,7 +1062,7 @@ class Mongo(DID_Driver):
         else:
             return self.find(query=query, snapshot_id=self.working_snapshot_id)
 
-    def find_by_id(self, id_, snapshot_id=None, commit_hash=None):
+    def find_by_id(self, id_, snapshot_id=None, commit_hash=None, in_all_history=False):
         """ 
         Find the document with the given id. 
             If snapshot_id and commit_hash are left as default, then finds the document as it exists in the current transaction.
@@ -1078,15 +1080,21 @@ class Mongo(DID_Driver):
         """
         if snapshot_id and not isinstance(snapshot_id, ObjectId):
             snapshot_id = ObjectId(snapshot_id)
-        if snapshot_id and commit_hash or snapshot_id:
+        if in_all_history:
+            docs = Document(document_id=id_)
+            return [DIDDocument(data=doc.data) for doc in docs]
+        if (snapshot_id and commit_hash) or snapshot_id:
             docs = Document(document_id=id_).add_snapshot(snapshot_id).find(self.collection)
             return [DIDDocument(data=doc.data) for doc in docs]
         elif commit_hash:
-            return self.find_by_id(id_=id_, snapshot_id=Commit(commit_hash=commit_hash).snapshot_id)
+            commit = Commit(commit_hash=commit_hash).find_one(self.versioning)
+            if not commit:
+                raise AttributeError("commit_hash is not associated with any snapshot")
+            return self.find_by_id(id_=id_, snapshot_id=commit.snapshot_id)
         else:
             return self.find_by_id(id_=id_, snapshot_id=self.working_snapshot_id)
 
-    def find_by_hash(self, document_hash, snapshot_id=None, commit_hash=None):
+    def find_by_hash(self, document_hash, snapshot_id=None, commit_hash=None, in_all_history=False):
         """ 
         Find the document with the given hash. 
             If snapshot_id and commit_hash are left as default, then finds the document if it exists in the current transaction.
@@ -1105,13 +1113,21 @@ class Mongo(DID_Driver):
         if snapshot_id and not isinstance(snapshot_id, ObjectId):
             snapshot_id = ObjectId(snapshot_id)
         doc = Document(document_hash=document_hash).find_one(self.collection)
-        if snapshot_id and commit_hash or snapshot_id:
-            return DIDDocument(data=doc.data) if snapshot_id in doc.snapshots else None 
-        elif commit_hash:
-            snapshot_id = Commit(commit_hash=commit_hash).snapshot_id
-            return DIDDocument(data=doc.data) if snapshot_id in doc.snapshots else None
+        if doc:
+            if in_all_history:
+                return DIDDocument(data=doc.data)
+            if (snapshot_id and commit_hash) or snapshot_id:
+                return DIDDocument(data=doc.data) if snapshot_id in doc.snapshots else None 
+            elif commit_hash:
+                commit = Commit(commit_hash=commit_hash).find_one(self.versioning)
+                if not commit:
+                    raise AttributeError("commit_hash is not associated with any snapshot")
+                snapshot_id = commit.snapshot_id
+                return DIDDocument(data=doc.data) if snapshot_id in doc.snapshots else None
+            else:
+                return self.find_by_hash(document_hash=document_hash, snapshot_id=self.working_snapshot_id)
         else:
-            return self.find_by_hash(document_hash=document_hash, snapshot_id=self.working_snapshot_id)
+            return None
 
     def _DANGEROUS__delete_by_hash(self, hash_) -> None:
         """ Deletes the document with the given hash (hashes are unique).
@@ -1140,14 +1156,14 @@ class Mongo(DID_Driver):
         :type commit_hash: string
         """
 
-        commit_id = Head().find_one(self.versioning).commit_id
+        commit_hash = Head().find_one(self.versioning).commit_hash
         all_commits = Commit().find(self.versioning)
-        index_by_id = {commit[id]: commit for commit in all_commits}
-        history, curr = [], index_by_id[commit_id]
-        while curr.parent:
-            history.append(curr)
-            curr = index_by_id[curr['parent']]
-        history.append(curr)
+        index_by_hash = {commit.commit_hash: commit for commit in all_commits}
+        history, curr = [], index_by_hash[commit_hash]
+        while curr.parent_commit_hash:
+            history.append(curr.iterate_through_fileds())
+            curr = index_by_hash[curr.parent_commit_hash]
+        history.append(curr.iterate_through_fileds())
         return history
 
     @property
@@ -1175,24 +1191,40 @@ class Mongo(DID_Driver):
         :type commit_hash: str, optional
         :raises RuntimeWarning: [description]
         """
+        if self._current_working_snapshot:
+            raise SnapshotIntegrityError("Before proceeding, either save or revert your current working snapshot")
         if snapshot_id and not isinstance(snapshot_id, ObjectId):
             snapshot_id = ObjectId(snapshot_id)
-        with self.transaction_handler() as session:
-            if commit_hash and commit_hash or snapshot_id:
-                # prioritize commit_hash over snapshot_id, so find the snapshot this commit_hash points to
-                snapshot_id = Commit(commit_hash=commit_hash).find_one(self.versioning).snapshot_id
-                # make a new commit with the corresponding snapshot_id
-                commit_id = Commit(snapshot_id=snapshot_id,
-                                   message="Switch to snapshot_id: {}".format(snapshot_id)) \
-                    .insert(self.versioning, session)
-                # make the head points to this new commit
-                Head().update(self.versioning, Head().add_commit_id(commit_id) \
-                              .add_commit_hash(commit_hash), session)
-            elif snapshot_id:
-                commit_id = Commit(snapshot_id=snapshot_id,
-                                   message="Switch to snapshot_id: {}".format(snapshot_id)) \
-                    .insert(self.versioning, session)
-                Head().update(self.versioning, Head().add_commit_id(commit_id).add_commit_hash(commit_hash), session)
+        if commit_hash or (snapshot_id and commit_hash):
+            # prioritize commit_hash over snapshot_id, so find the snapshot this commit_hash points to
+            commit = Commit(commit_hash=commit_hash).find_one(self.versioning)
+            if commit:
+                snapshot_id = commit.snapshot_id
+            else:
+                raise RuntimeError("Attempt to set current ref to an invalid snapshot; operation aborted")
+            self._switch_to_snapshot(snapshot_id)
+        elif snapshot_id:
+            self._switch_to_snapshot(snapshot_id)
+
+    def _switch_to_snapshot(self, snapshot_id):
+        past_snapshot = Snapshot(id=snapshot_id).find_one(self.versioning)
+        if not past_snapshot:
+            raise RuntimeError("Attempt to set current ref to an invalid snapshot; operation aborted")
+        head_commit = Commit.get_head(self.versioning)
+        new_commit_hash = hash_commit(past_snapshot.snapshot_hash, str(past_snapshot.id),
+                                    current_time(), head_commit.commit_hash)
+        # make a new commit with the corresponding snapshot_id
+        commit = Commit(commit_hash=new_commit_hash, snapshot_id=snapshot_id,
+                                    timestamp=current_time(), parent_commit_hash=head_commit.commit_hash, 
+                                    message="Switch to snapshot_id: {}".format(snapshot_id))
+        commit_id = commit.insert(self.versioning, self._which_session())
+        #update the past_snapshot
+        past_snapshot.add_commit_id(commit_id)
+        past_snapshot.update(self.versioning, past_snapshot, session=self._which_session())        
+        # make the head points to this new commit
+        ref = Head(name="CURRENT").find_one(self.versioning)
+        ref.update(self.versioning, ref.add_commit_id(commit_id) \
+            .add_commit_hash(new_commit_hash), self._which_session())
 
     def get_commit(self, snapshot_id):
         """ Gets the commit hash associated with the given snapshot.
@@ -1229,8 +1261,9 @@ class Mongo(DID_Driver):
                                              [{'snapshots': {'$all': [self.working_snapshot_id]},
                                                'document_hash': document_hash}
                                                  , {'$addToSet': {'snapshots': self.working_snapshot_id}}])
-            self.__current_session.action_on(self.collection, Collection.delete_one, [{'snapshots': []}],
-                                             Collection.insert_one, doc._for_insertion())
+            doc_to_be_deleted = Document(snapshots=[]).find_one(self.collection)
+            if doc_to_be_deleted:
+                doc_to_be_deleted.delete(self.collection, self.__current_session)
 
     def get_document_hash(self, document):
         """ Gets the documents hash in the working snapshot.
@@ -1238,17 +1271,18 @@ class Mongo(DID_Driver):
         :type document: DID_Document
         :rtype: str | None
         """
-
-        if not self._current_working_snapshot:
-            raise NoWorkingSnapshotError('There is no snapshot open.')
-        doc = Document(document_id=document.id, snapshots=[self.working_snapshot_id]).find_one(self.collection)
-        if doc:
-            return doc.document_hash
-        else:
-            if self.options.verbose_feedback:
-                print("the current working snapshot does not contains any document with an id of {}"
-                      .format(document.id))
-            return None
+        if document:
+            if not self._current_working_snapshot:
+                raise NoWorkingSnapshotError('There is no snapshot open.')
+            document = document[0] if isinstance(document, list) else document
+            doc = Document(document_id=document.id, snapshots=[self.working_snapshot_id]).find_one(self.collection)
+            if doc:
+                return doc.document_hash
+            else:
+                if self.options.verbose_feedback:
+                    print("the current working snapshot does not contains any document with an id of {}"
+                        .format(document.id))
+                return None
 
     def get_working_document_hashes(self):
         """ Gets the hashes of all documents in the working snapshot.
@@ -1289,15 +1323,21 @@ class Mongo(DID_Driver):
         :param parent: Parent commit's hash, defaults to None.
         :type parent: str, optional
         """
-        if isinstance(snapshot_id, str):
-            snapshot_id = ObjectId(snapshot_id)
-        commit = Commit(commit_hash=commit_hash, snapshot_id=snapshot_id,
-                        timestamp=timestamp, parent_commit_hash=parent, message=message)
-        commit_id = commit.insert(self.versioning, self.__current_transaction)
-        self._current_working_snapshot.add_commit_id(commit_id)
-        Snapshot(id=ObjectId(self.working_snapshot_id)).update(self.versioning,
-                                                               self._current_working_snapshot, self._which_session())
-
+        if self._current_working_snapshot:
+            if isinstance(snapshot_id, str):
+                snapshot_id = ObjectId(snapshot_id)
+            commit = Commit(commit_hash=commit_hash, snapshot_id=snapshot_id,
+                            timestamp=timestamp, parent_commit_hash=parent, message=message)
+            commit_id = commit.insert(self.versioning, self._which_session())
+            self._current_working_snapshot.add_commit_id(commit_id)
+            Snapshot(id=ObjectId(self.working_snapshot_id)).update(self.versioning,
+                                                                self._current_working_snapshot, self._which_session())
+        else:
+            if self.options.verbose_feedback:
+                print('Cannot create a commit without an open snapshot')
+            else:
+                raise NoTransactionError('There is no snapshot open')
+    
     def upsert_ref(self, name, commit_hash):
         """ Creates a ref if it doesn't already exist.
 
@@ -1319,9 +1359,9 @@ class Mongo(DID_Driver):
                        .add_commit_hash(commit_hash), self._which_session())
 
     def _which_session(self):
-        if self.__current_transaction:
+        if self.__current_transaction and self.__current_transaction.has_closed == False:
             return self.__current_transaction
-        elif self.__current_session:
+        elif self.__current_session and self.__current_session.has_closed == False:
             return self.__current_session
         else:
             return None
