@@ -431,7 +431,8 @@ class Document(MongoSchema):
         :rtype: mongo.Document
         """
         document = Document()
-        document._did_query = did_query
+        if did_query:
+            document._did_query = did_query
         return document
 
     def update_document_hash(self, hash=None):
@@ -1081,7 +1082,7 @@ class Mongo(DID_Driver):
         if snapshot_id and not isinstance(snapshot_id, ObjectId):
             snapshot_id = ObjectId(snapshot_id)
         if in_all_history:
-            docs = Document(document_id=id_)
+            docs = Document(document_id=id_).find(self.collection)
             return [DIDDocument(data=doc.data) for doc in docs]
         if (snapshot_id and commit_hash) or snapshot_id:
             docs = Document(document_id=id_).add_snapshot(snapshot_id).find(self.collection)
