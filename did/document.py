@@ -3,7 +3,7 @@ import os
 import struct
 import random
 import copy
-from .tools.settings import get_did_documentpath, get_did_schemapath, parse_didpath
+from .tools.settings import get_documentpath, get_schemapath, parse_didpath
 from datetime import datetime as dt
 
 
@@ -76,7 +76,7 @@ class DIDDocument:
         return doc
 
     @classmethod
-    def from_json(cls, document_type, starting_path=get_did_documentpath()):
+    def from_json(cls, document_type, starting_path=get_documentpath()):
         """
         return the text from a json file location string in NDI. It looks for the corresponding
         JSON file in the starting_path as well as those in all subdirectory of the starting_path
@@ -324,7 +324,7 @@ class DIDDocument:
         self.superclasses[datatype] = self.make_blankdocument(datatype)
         self.data[datatype] = self.superclasses[datatype].data[datatype]
 
-    def add_superclass_fromjson(self, datatype, starting_path=get_did_documentpath()):
+    def add_superclass_fromjson(self, datatype, starting_path=get_documentpath()):
         """
         Add an superclass from an existing JSON document schema
 
@@ -347,7 +347,7 @@ class DIDDocument:
     def add_new_dependency(self, datatype):
         pass
 
-    def add_dependency_fromjson(self, datatype, starting_path=get_did_documentpath()):
+    def add_dependency_fromjson(self, datatype, starting_path=get_documentpath()):
         pass
 
     def add_dependency(self, doc):
