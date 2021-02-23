@@ -31,6 +31,10 @@ class DID(DID_ABC):
         with self.db.transaction_handler():
             if self.db.find_by_id(document.id):
                 raise IntegrityError(f'Duplicate Key error for document id={document.id}.')
+            if 'snapshots' not in document.data['base']:
+                document.data['base']['snapshots'] = []
+            if 'records' not in document.data['base']:
+                document.data['base']['records'] = []
             document.data['base']['snapshots'].insert(0, str(self.db.working_snapshot_id))
             hash_ = hash_document(document)
             document.data['base']['records'].insert(0, hash_)
