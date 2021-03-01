@@ -1,6 +1,6 @@
 from datetime import datetime as dt
 from abc import abstractmethod, ABC, abstractclassmethod
-from ..tools.settings import get_db_connection_string
+from ..settings import get_db_connection_string
 from ..versioning import hash_commit, hash_document, hash_snapshot
 from ..exception import NoTransactionError, NoWorkingSnapshotError, SnapshotIntegrityError
 from .did_driver import DID_Driver
