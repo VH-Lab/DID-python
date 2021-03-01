@@ -52,15 +52,20 @@ class DIDDocument:
 
         def __readjsonfromblankfile__(jsonstr):
             properties = json.loads(jsonstr)
-            properties[properties.get('document_class').get('property_list_name')] = properties
-            for superclass in properties.get('document_class').get('superclasses'):
-                with open(parse_didpath(superclass['definition'])) as f:
-                    doc = __readjsonfromblankfile__(f.read())
-                doc = DIDDocument(data=doc)
-                superclass = os.path.split(superclass['definition'])[1]
-                if superclass.endswith('.json'):
-                    superclass = superclass[:-5]
-                properties[superclass] = doc.data[doc.property_list_name]
+            if 'document_class' not in properties:
+                raise AttributeError("Invalid Document Schema, it must contains document_class as its field")
+            superclasses = []
+            if 'superclasses' in properties['document_class']:
+                for superclass in properties.get('document_class').get('superclasses'):
+                    with open(parse_didpath(superclass['definition'])) as f:
+                        superclasses.append(__readjsonfromblankfile__(f.read()))
+            for superclass in superclasses:
+                for key in superclass:
+                    if key != 'document_class' and key not in properties:
+                        properties[key] = superclass[key]
+                    #merge depends_on
+                    elif key == 'depends_on':
+                        properties['depends_on'].extend(superclass['depends_on'])
             return properties
 
         if not document_type.endswith('.json'):
