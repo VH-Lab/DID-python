@@ -7,8 +7,7 @@
 		"class_version":					1,
 		"superclasses": [
 			{  "definition":				"$DIDDOCUMENT_EX1\/base.json" },
-			{  "definition":				"$DIDDOCUMENT_EX1\/did_document_epochid.json" },
-			{  "definition":				"$DIDDOCUMENT_EX1\/data\/did_document_binaryseries.json" }
+			{  "definition":				"$DIDDOCUMENT_EX1\/did_document_epochid.json" }
 		]
 	},
 	"depends_on": [
