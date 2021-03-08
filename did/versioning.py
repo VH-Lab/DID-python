@@ -1,7 +1,7 @@
 from __future__ import annotations
 import did.types as T
 import json
-from blake3 import blake3
+from blake3 import blake3  # pylint: disable=no-name-in-module
 from copy import deepcopy
 
 def hash_document(document):
@@ -9,6 +9,7 @@ def hash_document(document):
 
     # The following fields are ignored for versioning purposes
     data['base']['records'] = None 
+    data['base']['snapshots'] = None
     data['dependencies'] = None
 
     serialized_data = bytes(json.dumps(data), 'utf8')
@@ -25,7 +26,7 @@ def hash_commit(snapshot_hash, snapshot_id, timestamp, parent_commit_hash = None
     hasher = blake3()
 
     hasher.update(bytes(snapshot_hash, 'utf8'))
-    hasher.update(bytes(snapshot_id))
+    hasher.update(bytes(snapshot_id, 'utf8'))
     hasher.update(bytes(timestamp, 'utf8'))
 
     if parent_commit_hash:

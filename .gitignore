@@ -1,6 +1,7 @@
 # Editor configs
 .vscode/
 .mypy_cache
+.idea
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -59,6 +60,7 @@ example/test_sql_crud
 # Common virtualenv paths
 .venv/
 .env/
+*.env
 
 # Example notebook checkpoint
 example/.ipynb_checkpoints/

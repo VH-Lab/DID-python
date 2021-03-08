@@ -9,6 +9,9 @@ pytest = "*"
 sphinx = "*"
 sphinx-rtd-theme = "*"
 mypy = "*"
+pylint = "*"
+did = {editable = true, path = "."}
+rope = "*"
 
 [packages]
 numpy = "*"
@@ -24,6 +27,8 @@ alchemy-mock = "*"
 sqlalchemy-utils = "*"
 blake3 = "*"
 astropy = "*"
+python-dotenv = "*"
+pymongo = "*"
 
 [requires]
 python_version = "3.8"

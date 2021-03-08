@@ -63,7 +63,7 @@ class BinaryCollection:
 
     def update_document_filenames(self, did_document, name):
         working_snapshot = self.did.driver.working_snapshot_id
-        filename = get_filename_for(did_document, name)
+        filename = self.get_filename_for_name(did_document, name)
         did_document.data['binary_files'] = [
             self.__update_filename_to_snapshot(did_document, filename, working_snapshot) if fn == filename else fn
             for fn in did_document.data['binary_files']
