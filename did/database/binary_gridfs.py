@@ -104,11 +104,11 @@ class GridFSBinary:
 
     def open_write_stream(self, did_document, file_name, save=None):
         self._check_file_existence(did_document, file_name, exist=True)
-        new_binary_doc = {'document_id': did_document.id,
-                            'filename': file_name,
-                            'id': ObjectId()}
-        self.metadata.insert_one(new_binary_doc)
         grid_file = self.fs_bucket.open_upload_stream(file_name)
+        new_binary_doc = {'document_id': did_document.id,
+                    'filename': file_name,
+                    'id': grid_file._id}
+        self.metadata.insert_one(new_binary_doc)
         return BinaryDoc(grid_file)
 
     def open_read_stream(self, did_document, file_name):
