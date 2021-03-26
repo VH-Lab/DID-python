@@ -10,11 +10,13 @@ from .. import DIDDocument
 
 
 class BinaryDoc:
-    def __init__(self, grid_file):
-        if not isinstance(grid_file, GridIn) or not isinstance(grid_file, GridOut):
+    def __init__(self, grid_file, metadata_collection=None, metadata=None):
+        if not isinstance(grid_file, GridIn) and not isinstance(grid_file, GridOut):
             raise ValueError(
                 "grid_file needs to be an instance of grid_file.GridIn or grid_file.GridOut")
         self.__gridfs__ = grid_file
+        self.__metadata__ = metadata
+        self.__metadata_collection__ = metadata_collection
 
     @property
     def grid_file(self):
@@ -28,7 +30,7 @@ class BinaryDoc:
     def ftell(self):
         if not isinstance(self.__gridfs__, GridOut):
             raise ValueError("This binary file is not open for reading")
-        return self.__gridfs__.tell
+        return self.__gridfs__.tell()
 
     def fwrite(self, data):
         if not isinstance(self.__gridfs__, GridIn):
@@ -41,10 +43,9 @@ class BinaryDoc:
         return self.__gridfs__.read(size)
 
     def fclose(self):
-        if self.__gridfs__.closed:
-            raise RuntimeError("The binary doc has already closed")
-        else:
-            self.__gridfs__.close()
+        self.__gridfs__.close()
+        if self.__metadata__ and self.__metadata_collection__:
+            self.__metadata_collection__.insert_one(self.__metadata__)
 
 
 class GridFSBinary:
@@ -66,7 +67,6 @@ class GridFSBinary:
             gridfs_connection = get_db_connection_string('gridfs')
         self.conn = __make_connection(gridfs_connection)
         self.db = self.conn['did_gridfs_binary']
-        self.fs = GridFS(database=self.db, collection=bucket_name)
         self.fs_bucket = GridFSBucket(db=self.db, bucket_name=bucket_name)
         self.metadata = self.db[metadata]
 
@@ -87,7 +87,7 @@ class GridFSBinary:
     def _check_file_existence(self, did_document, file_name, exist=True):
         files_info = self.list_files(did_document)
         if exist:
-            if file_name in files_info:
+            if file_name not in files_info:
                 raise FileNotFoundError(
                     "File name: {} is not associated with this document, \
                             here are the list of associated binary file: {}".format(
@@ -102,14 +102,13 @@ class GridFSBinary:
                 )
         return files_info
 
-    def open_write_stream(self, did_document, file_name, save=None):
-        self._check_file_existence(did_document, file_name, exist=True)
+    def open_write_stream(self, did_document, file_name):
+        self._check_file_existence(did_document, file_name, exist=False)
         grid_file = self.fs_bucket.open_upload_stream(file_name)
         new_binary_doc = {'document_id': did_document.id,
                     'filename': file_name,
                     'id': grid_file._id}
-        self.metadata.insert_one(new_binary_doc)
-        return BinaryDoc(grid_file)
+        return BinaryDoc(grid_file, self.metadata, new_binary_doc)
 
     def open_read_stream(self, did_document, file_name):
         files_info = self._check_file_existence(did_document, file_name, exist=True)

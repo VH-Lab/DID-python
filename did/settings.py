@@ -102,6 +102,8 @@ def get_db_connection_string(db_name):
         return get_variable("MONGO_CONNECTION_STRING")
     elif db_name == 'postgres-sql':
         return get_variable("POSTGRES_CONNECTION_STRING")
+    elif db_name == 'gridfs':
+        return get_variable("GRIDFS_CONNECTION_STRING")
     else:
         raise AttributeError("{} not supported".format(db_name))
 
