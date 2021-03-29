@@ -3,6 +3,9 @@ import setuptools
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
+with open("requirements.txt", "r") as rq:
+	requirements = rq.read().split('\n')
+
 setuptools.setup(
     name="did",
     version="0.0.1",
@@ -16,12 +19,5 @@ setuptools.setup(
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
     ],
-    install_requires=['sqlalchemy', 
-					    'psycopg2-binary', 
-					    'neo', 
-					    'alchemy-mock', 
-					    'sqlalchemy-utils', 
-					    'blake3', 
-					    'astropy',
-					    'pymongo']
+    install_requires=requirements
 )
