@@ -16,4 +16,12 @@ setuptools.setup(
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
     ],
+    install_requires=['sqlalchemy', 
+					    'psycopg2-binary', 
+					    'neo', 
+					    'alchemy-mock', 
+					    'sqlalchemy-utils', 
+					    'blake3', 
+					    'astropy',
+					    'pymongo']
 )
