@@ -22,6 +22,32 @@ $ pipenv shell
 (ndi-python) $ jupyter notebook
 ```
 
+## Setting up MongoDB Locally
+First make sure mongodb has been installed on your computer, if not you can install it using homebrew for MacOS user
+
+```shell
+brew install mongodb-community
+```
+Next, we can set up the mongodb server at the localhost
+
+```shell
+brew services start mongodb-community
+
+# list all the currently running 
+brew services list services
+Name              Status  
+emacs             stopped       
+mongodb-community started       
+unbound           stopped       
+```
+
+By default the mongodb server will be running on port 27018. To shut down the mongodb server run
+
+```shell
+brew services stop mongodb-community
+```
+
+
 ## Developer Notes
 
 The Python package makes use of [native namespace packages available in Python 3.3 and later](https://packaging.python.org/guides/packaging-namespace-packages/#native-namespace-packages).
