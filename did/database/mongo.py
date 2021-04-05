@@ -104,7 +104,7 @@ class MongoSchema(ABC):
         pass
 
     @abstractclassmethod
-    def _from_dict(self, val):
+    def _from_dict(cls, val):
         """
         Convert a key-vaue pairs into an object instantiated with fields that matches the key-value pairs
 
