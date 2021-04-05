@@ -9,7 +9,7 @@ with open("requirements.txt", "r") as rq:
 setuptools.setup(
     name="did",
     version="0.0.1",
-    author="Squishymedia",
+    author="Squishymedia, VHLab",
     author_email="info@squishymedia.com",
     description="DID Python",
     long_description=long_description,
