@@ -1,14 +1,17 @@
 import os
 import dotenv
 import did
+import json
 from urllib.parse import quote_plus
 
 
 # look for config.env in the directory where the modeul is loaded
 INSTALLATION = os.path.split(os.path.abspath(did.__path__[0]))[0]
 ENV = os.path.join(INSTALLATION, 'config.env')
+SUPPORTED_DB = {'mongodb', 'postgres'}
+SUPPORTED_BINARY = {'file_system', 'gridfs'}
 
-# if we can find config.env, we create one
+# if we cannot find config.env, we create one
 if not os.path.isfile(ENV):
     env = open(ENV, 'w')
     env.close()
@@ -30,6 +33,65 @@ if 'POSTGRES_CONNECTION_STRING' not in __config__:
     dotenv.set_key(ENV, 'POSTGRES_CONNECTION_STRING',
                    "postgres://postgres:password@localhost:5432/did_versioning_tests")
 
+def get_db_configuration():
+    """
+    Get the database initiation configuration
+    """
+    config = json.loads(get_variable('DB'))
+    if not isinstance(config, dict) or 'db' not in config or 'binary' not in config:
+        raise TypeError("the DB variable needs to be key-value pairs including both db and binary as keys")
+    db = config['db']
+    binary = config['binary']
+    if not isinstance(db, dict) or 'type' not in db or 'args' not in db:
+        raise TypeError("db type and its args needs to be specified")
+    if not isinstance(binary, dict) or 'type' not in binary or 'args' not in binary:
+        raise TypeError("filesystem type and its args needs to be specified")
+    if db['type'] not in SUPPORTED_DB:
+        raise TypeError("db {} not supported. Please choose from the following list {}".format(
+            db['type'], SUPPORTED_DB)
+        )
+    if binary['type'] not in SUPPORTED_BINARY:
+        raise TypeError("binary_system {} not supported. Please choose from the following list {}".format(
+            binary['type'], SUPPORTED_BINARY)
+        )
+    return (db, binary)
+
+def set_db_configuration(db_type, db_option, filesystem_type, binary_option):
+    if db_type not in SUPPORTED_DB:
+        raise ValueError("db{} is not supported. Please choose from the following db software {}".format(db_type, SUPPORTED_DB))
+    if filesystem_type not in SUPPORTED_BINARY:
+        raise ValueError("filesystem {} is not supported. Please choose from the following file system {}".format(filesystem_type, SUPPORTED_BINARY))
+    if not isinstance(db_option, dict) or not isinstance(binary_option, dict):
+        raise ValueError("db_option and binary_option needs to be a key-value pairs")
+    db_config = {
+        'db': {
+            'type': db_type,
+            'args': db_option
+        },
+        'binary': {
+            'type': filesystem_type,
+            'args': binary_option
+        }
+    }
+    dotenv.set_key(ENV, 'DB', json.dumps(db_config))
+    return db_config
+
+def create_did():
+    """
+    Create an instance of DID given the setting specified in 
+    """
+    from .core import DID
+    from .database import Mongo, SQL, GridFSBinary, FileSystem
+
+    SUPPORTED_DB = {'mongodb': Mongo, 'postgres': SQL}
+    SUPPORTED_BINARY = {'file_system': FileSystem, 'gridfs': GridFSBinary}
+
+    db, binary = get_db_configuration()
+    db_args =db['args']
+    binary_args = binary['args']
+    db_instance = SUPPORTED_DB[db['type']](**db_args)
+    binary_instance = SUPPORTED_BINARY[binary['type']](**binary_args)
+    return DID(driver=db_instance, binary_driver=binary_instance)
 
 def revert_to_default():
     """
@@ -55,7 +117,7 @@ def set_documentpath(path):
     Example:
     >>> import did
     >>> did.set_documentpath('path2cwd/mydocument')
-    >>> did.DIDDOCUMENTPATH
+    >>> did.get_documentpath()
     'path2cwd/mydocument'
 
     :param path: the file path, which can be both relative to the current working directory
@@ -72,7 +134,7 @@ def set_schemapath(path):
     Example:
     >>> import did
     >>> did.set_documentpath('path2cwd/myschema')
-    >>> did.DIDSCHEMAPATH
+    >>> did.get_schemapath()
     'path2cwd/myschema'
 
     :param path: the file path, which can be both relative to the current working directory as well
@@ -143,7 +205,7 @@ def get_variable(key):
 
     Example:
     >>> import did
-    >>> did.globals
+    >>> did.list_variables()
     {'CWD' : '', 'DOCUMENT_PATH' : '', SCHEMA_PATH' : '', 'USER', 'HELLO'}
     >>> did.get_variable('USER')
     'HELLO'

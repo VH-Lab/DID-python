@@ -9,18 +9,18 @@ from did.utils import has_single_snapshot
 from .did_abc import DID_ABC
 
 class DID(DID_ABC):
-    def __init__(self, driver, binary_directory, auto_save=False):
+    def __init__(self, driver, binary_driver, auto_save=False):
         """[summary]
 
         :param driver: A specific database implementation, eg. did.database.SQL.
         :type driver: DID_Driver
-        :param binary_directory: [description]
-        :type binary_directory: [type]
+        :param binary_driver: [description]
+        :type binary_driver: [type]
         :param auto_save: [description], defaults to False
         :type auto_save: bool, optional
         """
         self.driver = driver
-        self.bin = BinaryCollection(binary_directory, self)
+        self.bin = binary_driver
         self.auto_save = auto_save
 
     @property

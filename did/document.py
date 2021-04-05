@@ -4,7 +4,6 @@ import struct
 import random
 import copy
 from .settings import get_documentpath, get_schemapath, parse_didpath
-from datetime import datetime as dt
 from .id import DIDId
 
 
