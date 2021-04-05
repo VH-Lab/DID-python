@@ -89,16 +89,14 @@ class GridFSBinary:
         if exist:
             if file_name not in files_info:
                 raise FileNotFoundError(
-                    "File name: {} is not associated with this document, \
-                            here are the list of associated binary file: {}".format(
-                        file_name, files_info)
+                    "File name: {} is not associated with this document, ".format(file_name) +
+                            "here are the list of associated binary file: {}".format(files_info)
                 )
         else:
             if file_name in files_info:
                 raise ValueError(
-                    "File name: {} is already associated with this document, \
-                            here are the list of associated binary file: {}".format(
-                        file_name, files_info)
+                    "File name: {} is already associated with this document, ".format(file_name) +
+                            "here are the list of associated binary file: {}".format(files_info)
                 )
         return files_info
 
