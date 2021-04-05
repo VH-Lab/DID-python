@@ -5,16 +5,20 @@ import json
 from urllib.parse import quote_plus
 
 
-# look for config.env in the directory where the modeul is loaded
-INSTALLATION = os.path.split(os.path.abspath(did.__path__[0]))[0]
-ENV = os.path.join(INSTALLATION, 'config.env')
+ENV = os.path.join(os.getcwd(), 'config.env')
 SUPPORTED_DB = {'mongodb', 'postgres'}
 SUPPORTED_BINARY = {'file_system', 'gridfs'}
 
-# if we cannot find config.env, we create one
+# Look for config.env in the directory current working directory.
+# If config.env cannot be found, look for config.env in where the module is loaded.
 if not os.path.isfile(ENV):
-    env = open(ENV, 'w')
-    env.close()
+    INSTALLATION = os.path.split(os.path.abspath(did.__path__[0]))[0]
+    ENV = os.path.join(INSTALLATION, 'config.env')
+    if not os.path.isfile(ENV):
+        env = open(ENV, 'w')
+        env.close()
+else:
+    INSTALLATION = os.getcwd()
 
 __config__ = dotenv.dotenv_values(ENV)
 
