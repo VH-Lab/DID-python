@@ -3,7 +3,6 @@ import os
 import struct
 import random
 import copy
-from .settings import get_documentpath, get_schemapath, parse_didpath
 from .id import DIDId
 
 
@@ -23,7 +22,7 @@ class DIDDocument:
     def serialize(self):
         return json.dumps(self.data)
 
-    def _from_schema(self, document_type, starting_path=get_documentpath()):
+    def _from_schema(self, document_type, starting_path=None):
         """
         return the text from a json file location string in NDI. It looks for the corresponding
         JSON file in the starting_path as well as those in all subdirectory of the starting_path
@@ -34,10 +33,15 @@ class DIDDocument:
                                 the script is run
         :return: an instance of DIDDocument
         """
+        from . import settings
+
+        #look for documentpath from the config file
+        if not starting_path:
+            starting_path = settings.get_documentpath()
 
         def __search__(path, fname):
             if not os.path.isdir(path):
-                raise AttributeError("database document path does not exist")
+                raise AttributeError("database document path: {} does not exist".format(path))
             for _dirpath, _dirname, _filename in os.walk(path):
                 if os.path.isfile(os.path.join(_dirpath, fname)):
                     return _dirpath, fname
@@ -56,7 +60,7 @@ class DIDDocument:
             superclasses = []
             if 'superclasses' in properties['document_class']:
                 for superclass in properties.get('document_class').get('superclasses'):
-                    with open(parse_didpath(superclass['definition'])) as f:
+                    with open(settings.parse_didpath(superclass['definition'])) as f:
                         superclasses.append(__readjsonfromblankfile__(f.read()))
             for superclass in superclasses:
                 for key in superclass:
