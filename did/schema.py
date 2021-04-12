@@ -133,10 +133,11 @@ class _DB:
             self._diddocument.data['base']['id'] = getattr(self._schema, '_id')
 
     def _to_diddocument(self):
-        for field in self._diddocument.property_list_name:
+        for field in self._diddocument.data[self._diddocument.property_list_name]:
             print(field)
             self._diddocument.data[self._diddocument.property_list_name][field] = getattr(
                 self._schema, field, None)
+        #TODO ignore base as a superclass
         '''
         for superclass in self._diddocument.superclasses:
             _diddocument = DIDDocument(document_type=superclass['definition'])
