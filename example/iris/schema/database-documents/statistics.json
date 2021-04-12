@@ -1,0 +1,18 @@
+{
+	"document_class": {
+		"definition":						"$DIDDOCUMENT_EX1\/statistics.json",
+		"validation":						"$DIDSCHEMA_EX1\/statistics_schema.json",
+		"class_name":						"statistics",
+		"property_list_name":				"statistics",
+		"class_version":					1,
+		"superclasses": [
+			{ "definition":					"$DIDDOCUMENT_EX1\/base.json" }
+		]
+        },
+	"statistics": {
+        "description": "",
+        "min": 0,
+        "max": 0,
+        "mean": 0
+	}
+}

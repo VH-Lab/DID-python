@@ -1,0 +1,16 @@
+{
+	"document_class": {
+		"definition":						"$DIDDOCUMENT_EX1\/data_loader.json",
+		"validation":						"$DIDSCHEMA_EX1\/data_loader_schema.json",
+		"class_name":						"data_loader",
+		"property_list_name":				"dataloader",
+		"class_version":					1,
+		"superclasses": [
+			{ "definition":					"$DIDDOCUMENT_EX1\/base.json" }
+		]
+        },
+	"dataloader": {
+        "file_location": "",
+		"column_names": []
+	}
+}

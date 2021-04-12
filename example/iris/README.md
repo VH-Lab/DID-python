@@ -1,0 +1,1 @@
+## An example project demonstrating how to write software object that works with DID library (Work in Progress)

@@ -1,0 +1,19 @@
+{
+	"document_class": {
+		"definition":						"$DIDDOCUMENT_EX1\/iris_plant.json",
+		"validation":						"$DIDSCHEMA_EX1\/iris_plant_schema.json",
+		"class_name":						"iris_plant",
+		"property_list_name":				"irisplant",
+		"class_version":					1,
+		"superclasses": [
+			{ "definition":					"$DIDDOCUMENT_EX1\/base.json" }
+		]
+        },
+	"irisplant": {
+        "type": "",
+        "sepal_length": 0,
+        "sepal_width": 0,
+        "petal_length": 0,
+        "petal_width": 0
+	}
+}
