@@ -9,7 +9,7 @@ ENV = os.path.join(os.getcwd(), 'config.env')
 SUPPORTED_DB = {'mongodb', 'postgres'}
 SUPPORTED_BINARY = {'file_system', 'gridfs'}
 
-# Look for config.env in the directory current working directory.
+# Look for config.env in the current working directory.
 # If config.env cannot be found, look for config.env in where the module is loaded.
 if not os.path.isfile(ENV):
     INSTALLATION = os.path.split(os.path.abspath(did.__path__[0]))[0]
@@ -20,22 +20,37 @@ if not os.path.isfile(ENV):
 else:
     INSTALLATION = os.getcwd()
 
-__config__ = dotenv.dotenv_values(ENV)
 
-# check if document_path and schema_path has been override
-if 'DIDDOCUMENTPATH' not in __config__:
-    dotenv.set_key(ENV, 'DIDDOCUMENTPATH', os.path.join(
-        INSTALLATION, 'schema', 'database-documents'))
-if 'DIDSCHEMAPATH' not in __config__:
-    dotenv.set_key(ENV, 'DIDSCHEMAPATH', os.path.join(
-        INSTALLATION, 'schema', 'validation-documents'))
-if 'FILESEP' not in __config__:
-    dotenv.set_key(ENV, 'FILESEP', '/')
-if 'MONGO_CONNECTION_STRING' not in __config__:
-    dotenv.set_key(ENV, 'MONGO_CONNECTION_STRING', "mongodb://localhost:27017")
-if 'POSTGRES_CONNECTION_STRING' not in __config__:
-    dotenv.set_key(ENV, 'POSTGRES_CONNECTION_STRING',
-                   "postgres://postgres:password@localhost:5432/did_versioning_tests")
+def _initialize():
+    __config__ = dotenv.dotenv_values(ENV)
+
+    # check if document_path and schema_path has been override
+    if 'DIDDOCUMENTPATH' not in __config__:
+        dotenv.set_key(ENV, 'DIDDOCUMENTPATH', os.path.join(
+            INSTALLATION, 'schema', 'database-documents'))
+    if 'DIDSCHEMAPATH' not in __config__:
+        dotenv.set_key(ENV, 'DIDSCHEMAPATH', os.path.join(
+            INSTALLATION, 'schema', 'validation-documents'))
+    if 'FILESEP' not in __config__:
+        dotenv.set_key(ENV, 'FILESEP', '/')
+    if 'MONGO_CONNECTION_STRING' not in __config__:
+        dotenv.set_key(ENV, 'MONGO_CONNECTION_STRING',
+                       "mongodb://localhost:27017")
+    if 'POSTGRES_CONNECTION_STRING' not in __config__:
+        dotenv.set_key(ENV, 'POSTGRES_CONNECTION_STRING',
+                       "postgres://postgres:password@localhost:5432/did_versioning_tests")
+
+
+_initialize()
+
+
+def load_external_configuration(filepath):
+    global ENV
+    global INSTALLATION
+    ENV = filepath
+    INSTALLATION = os.path.split(ENV)[0]
+    _initialize()
+
 
 def get_db_configuration():
     """
@@ -43,7 +58,8 @@ def get_db_configuration():
     """
     config = json.loads(get_variable('DB'))
     if not isinstance(config, dict) or 'db' not in config or 'binary' not in config:
-        raise TypeError("the DB variable needs to be key-value pairs including both db and binary as keys")
+        raise TypeError(
+            "the DB variable needs to be key-value pairs including both db and binary as keys")
     db = config['db']
     binary = config['binary']
     if not isinstance(db, dict) or 'type' not in db or 'args' not in db:
@@ -60,13 +76,19 @@ def get_db_configuration():
         )
     return (db, binary)
 
+def which_config():
+    return ENV
+
 def set_db_configuration(db_type, db_option, filesystem_type, binary_option):
     if db_type not in SUPPORTED_DB:
-        raise ValueError("db{} is not supported. Please choose from the following db software {}".format(db_type, SUPPORTED_DB))
+        raise ValueError("db{} is not supported. Please choose from the following db software {}".format(
+            db_type, SUPPORTED_DB))
     if filesystem_type not in SUPPORTED_BINARY:
-        raise ValueError("filesystem {} is not supported. Please choose from the following file system {}".format(filesystem_type, SUPPORTED_BINARY))
+        raise ValueError("filesystem {} is not supported. Please choose from the following file system {}".format(
+            filesystem_type, SUPPORTED_BINARY))
     if not isinstance(db_option, dict) or not isinstance(binary_option, dict):
-        raise ValueError("db_option and binary_option needs to be a key-value pairs")
+        raise ValueError(
+            "db_option and binary_option needs to be a key-value pairs")
     db_config = {
         'db': {
             'type': db_type,
@@ -80,6 +102,7 @@ def set_db_configuration(db_type, db_option, filesystem_type, binary_option):
     dotenv.set_key(ENV, 'DB', json.dumps(db_config))
     return db_config
 
+
 def create_did():
     """
     Create an instance of DID given the setting specified in 
@@ -91,11 +114,12 @@ def create_did():
     SUPPORTED_BINARY = {'file_system': FileSystem, 'gridfs': GridFSBinary}
 
     db, binary = get_db_configuration()
-    db_args =db['args']
+    db_args = db['args']
     binary_args = binary['args']
     db_instance = SUPPORTED_DB[db['type']](**db_args)
     binary_instance = SUPPORTED_BINARY[binary['type']](**binary_args)
     return DID(driver=db_instance, binary_driver=binary_instance)
+
 
 def revert_to_default():
     """
