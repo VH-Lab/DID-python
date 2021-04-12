@@ -26,6 +26,7 @@ $ pipenv shell
 First make sure mongodb has been installed on your computer, if not you can install it using homebrew for MacOS user
 
 ```shell
+brew tap mongodb/brew
 brew install mongodb-community
 ```
 Next, we can set up the mongodb server at the localhost
