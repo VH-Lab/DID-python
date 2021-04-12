@@ -1,58 +1,4 @@
-from did import session, Query, DIDDocument
-
-
-class Meta(type):
-    def __new__(cls, name, bases, attrs):
-        schema = super().__new__(cls, name, bases, attrs)
-        schema._class = name
-        schema._superclasses = bases
-        schema._id = None
-        schema.query = _QueryWrapper(name, schema)
-        return schema
-
-
-class Schema(metaclass=Meta):
-    def __init__(self):
-        if type(self) is Schema:
-            raise NotImplementedError("Schema can not be instantiated")
-
-    @property
-    def db(self):
-        if not hasattr(self, '_db'):
-            self._db = _DB(self)
-        return self._db
-
-
-class _DB:
-    def __init__(self, schema):
-        self.session = session
-        self._schema = schema
-        self._diddocument = DIDDocument(document_type=self._schema._class)
-        if getattr(self._schema, '_id', None):
-            self._diddocument.data['base']['id'] = getattr(self._schema, '_id')
-
-    def _to_diddocument(self):
-        for field in self._diddocument.property_list_name:
-            self._diddocument.data[self._diddocument.property_list_name][field] = getattr(
-                self._schema, field, None)
-        for superclass in self._diddocument.superclasses:
-            _diddocument = DIDDocument(document_type=superclass['definition'])
-            for field in _diddocument.property_list_name:
-                self._diddocument.data[_diddocument.property_list_name][field] = getattr(
-                    self._schema, field, None)
-
-    def insert(self):
-        self._to_diddocument()
-        self.session.add(self._diddocument)
-
-    def delete(self):
-        self._to_diddocument()
-        self.session.delete_by_id(did_id=self._diddocument.id)
-
-    def update(self):
-        self._to_diddocument()
-        self.session.update(self._diddocument)
-
+from did import session, Query, DIDDocument, DID
 
 class _QueryWrapper:
     def __init__(self, schema, schema_class):
@@ -148,3 +94,65 @@ class _QueryWrapper:
 
     def __rshift__(self, value):
         self._query = self._query.__rshift__(value)
+
+
+class Meta(type):
+    def __new__(cls, name, bases, attrs):
+        schema = super().__new__(cls, name, bases, attrs)
+        schema._class = name
+        schema._superclasses = bases
+        schema._id = None
+        schema.query = _QueryWrapper(name, schema)
+        return schema
+
+
+class Schema(metaclass=Meta):
+    def __init__(self):
+        if type(self) is Schema:
+            raise NotImplementedError("Schema cannot be instantiated directly")
+
+    @property
+    def db(self):
+        if not hasattr(self, '_db'):
+            self._db = _DB(self)
+        return self._db
+
+
+class _DB:
+    def __init__(self, schema):
+        if not isinstance(session, DID):
+            self.session = session.init()
+        else:
+            self.session = session
+        self._schema = schema
+        try:
+            self._diddocument = DIDDocument(document_type=self._schema.document_type)
+        except:
+            self._diddocument = DIDDocument(document_type=self._schema._class)
+        if getattr(self._schema, '_id', None):
+            self._diddocument.data['base']['id'] = getattr(self._schema, '_id')
+
+    def _to_diddocument(self):
+        for field in self._diddocument.property_list_name:
+            print(field)
+            self._diddocument.data[self._diddocument.property_list_name][field] = getattr(
+                self._schema, field, None)
+        '''
+        for superclass in self._diddocument.superclasses:
+            _diddocument = DIDDocument(document_type=superclass['definition'])
+            for field in _diddocument.property_list_name:
+                self._diddocument.data[_diddocument.property_list_name][field] = getattr(
+                    self._schema, field, None)
+        '''
+
+    def insert(self):
+        self._to_diddocument()
+        self.session.add(self._diddocument)
+
+    def delete(self):
+        self._to_diddocument()
+        self.session.delete_by_id(did_id=self._diddocument.id)
+
+    def update(self):
+        self._to_diddocument()
+        self.session.update(self._diddocument)
