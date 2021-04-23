@@ -18,7 +18,7 @@ def pascal_to_snake_case(string: str) -> str:
     return pascal_pattern.sub(r'_\1', string).lower()
 
 
-def class_to_collection_name(ndi_class: T.NdiClass) -> str:
+def class_to_collection_name(ndi_class) -> str:
     """Convert a :class:`ndi.ndi_class` __name__ (PascalCase, singular) to a collection name (snake_case, plural).
     .. note::
         For consistency, collection names are made plural by the addition of an 's'.
@@ -40,7 +40,7 @@ def flatten(nested_list: T.List[T.List]) -> T.List:
     return [item for l in nested_list for item in l]
 
 
-def generate_tuple_analog(schema_enum: T.SchemaEnumClass) -> tuple:
+def generate_tuple_analog(schema_enum) -> tuple:
     """Produces a tuple from a flatbuffer schema enum class. The generated tuple is used in an :term:`DID class`\ 's _reconstruct method.
     ::
         class SchemaType(object):
