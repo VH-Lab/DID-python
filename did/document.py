@@ -4,6 +4,7 @@ import struct
 import random
 import copy
 from .id import DIDId
+from .time import current_time
 
 
 class DIDDocument:
@@ -12,6 +13,7 @@ class DIDDocument:
         if document_type:
             self.data = self._from_schema(document_type)
             self.data['base']['id'] = DIDId().id
+            self.data['base']['datestamp'] = current_time()
         else:
             try:
                 data.get('base').get('id')
@@ -21,6 +23,49 @@ class DIDDocument:
 
     def serialize(self):
         return json.dumps(self.data)
+
+    @staticmethod
+    def where(document_type):
+        from . import settings
+
+        def __search__(path, fname):
+            if not os.path.isdir(path):
+                raise AttributeError("database document path: {} does not exist".format(path))
+            for _dirpath, _dirname, _filename in os.walk(path):
+                if os.path.isfile(os.path.join(_dirpath, fname)):
+                    return _dirpath, fname
+                else:
+                    for directory in _dirname:
+                        try:
+                            return __search__(os.path.join(_dirpath, directory), fname)
+                        except FileNotFoundError:
+                            continue
+                    raise FileNotFoundError('{} cannot found from {}'.format(fname, path))
+        
+        return __search__(settings.get_documentpath(), document_type)
+
+    @classmethod
+    def create_emptydoc(cls, class_name, document_type):
+        from .settings import get_variable
+
+        data = {
+            "document_class": {
+                "definition":						"$DIDDOCUMENTPATH" + get_variable('FILESEP') + document_type + '.json',
+                "class_name":						class_name,
+                "property_list_name":				document_type[:-5] if document_type.endswith('.json') else document_type,
+                "class_version":					1,
+                "superclasses":                     []
+            },
+            "base": {
+                "session_id":				        "",
+                "id":                               DIDId().id,
+                "name":							    "",
+                "datestamp":						current_time(),
+                "document_version":					1
+            },
+            document_type[:-5] if document_type.endswith('.json') else document_type: {}
+        }
+        return cls(data=data)
 
     def _from_schema(self, document_type, starting_path=None):
         """
@@ -66,16 +111,24 @@ class DIDDocument:
                 for key in superclass:
                     if key != 'document_class' and key not in properties:
                         properties[key] = superclass[key]
-                    #merge depends_on
-                    elif key == 'depends_on':
-                        properties['depends_on'].extend(superclass['depends_on'])
+            properties['depends_on'] = []
             return properties
 
         if not document_type.endswith('.json'):
             document_type += '.json'
         dirpath, fname = __search__(starting_path, document_type)
         with open(os.path.join(dirpath, fname)) as f:
-            return __readjsonfromblankfile__(f.read())
+            result = __readjsonfromblankfile__(f.read())
+        result['base'] = {
+            "base": {
+                "session_id":				        "",
+                "id":                               "",
+                "name":							    "",
+                "datestamp":						"",
+                "document_version":					1
+            }
+        }
+        return result
 
     # Getters and setters
     @property
@@ -213,3 +266,13 @@ class DIDDocument:
         :return: a list of string
         """
         return self.data.get('document_class').get('superclasses')
+    
+    @property
+    def properties(self, cls_name):
+        """
+        Return the properties associated with cls_name passed in (can be either the 
+        parent class or the child class) 
+
+        :return: key-value pairs of the field and its value
+        """
+        return self.data.get(cls_name)
