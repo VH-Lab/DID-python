@@ -31,6 +31,10 @@ class _QueryWrapper:
     def __init__(self, ds,):
         self.ds = ds
         self.query = Query('document_class.class_name') == self.ds.__name__
+        if not isinstance(session, DID):
+            self.session = session.init()
+        else:
+            self.session = session
 
     def filter(self, filter):
         if not isinstance(session, DID):
@@ -38,13 +42,13 @@ class _QueryWrapper:
         for field in filter:
             self.query = self.query & filter[field]._to_didquery()
 
-    '''
+
     def all(self):
         results = self.session.find(self.query)
         objs = self._to_obj(results)
         return objs
 
-    
+    '''
     def _to_obj(self, docs):
         objs = []
         for doc in docs:
@@ -416,10 +420,10 @@ class DataStructure(metaclass=Meta):
 
         def create_dependency(type_checker, obj, docs):
             if issubclass(obj, DataStructure):
-                dependency = obj.to_diddocument()
-                docs.append(dependency)
-                dependency_id = dependency.base.id
-                return type_checker.generate_depends_on_statement(dependency_id)
+                dependencies = obj.to_diddocument()
+                docs.append(dependencies)
+                depends_on = type_checker.generate_depends_on_statement(dependencies[-1].id)
+                return depends_on
 
         properties = self.serialize()
         property_list_name = getattr(
@@ -433,6 +437,7 @@ class DataStructure(metaclass=Meta):
         docs = []
         field_in_superclass = {}
 
+        # go through the schema files of the superclasses if there is any
         for superclass in getattr(self, '_superclasses'):
             if issubclass(superclass, DataStructure):
                 superclass_schema = superclass.document_schema()
@@ -441,7 +446,8 @@ class DataStructure(metaclass=Meta):
                         'property_list_name': superclass.class_properties.property_list_name,
                         'schema': superclass_schema
                     }
-
+        
+        # perform validation and assign the value to the diddocument
         for field in properties:
             if field in schema:
                 self._process_field(
@@ -463,84 +469,8 @@ class DataStructure(metaclass=Meta):
                     create_dependency,
                     docs
                 )
-        docs.append(data)
+        docs.append(DIDDocument(data=data))
         return docs
-        
-        '''
-        if not hasattr(self, '_doc'):
-            self._initialize_did_doc()
-
-        doc = type(self)._doc
-        dependencies = [doc]
-        type_checker = type(self).schema()[1]
-
-        for field in properties:
-            class_associated = None
-
-            if field in doc.data[doc.property_list_name]:
-                datatype = list(type_checker[field].keys())[0]
-                options = type_checker[field][datatype]
-                SUPPORTED_DATATYPE[datatype].__init__(
-                    **options).validate(properties[field])
-                doc.data[doc.property_list_name][field] = properties[field]
-                class_associated = doc.property_list_name
-            else:
-                for superclass in type(self)._doc.data:
-                    if superclass != 'base' and superclass != 'document_class' and superclass != type(self)._doc.property_list_name:
-                        try:
-                            doc.data[superclass][field] = properties[field]
-                            class_associated = superclass
-                        except KeyError:
-                            pass
-
-            if class_associated:
-                if datatype == 'Dict':
-                    for key, val in enumerate(properties[field]):
-                        if issubclass(type(val), DataStructure):
-                            dependency = val.to_diddocument()
-                            dependencies.append(dependency)
-                            doc['depends_on'].append({
-                                'name': type(val).__name__ + '_id',
-                                'value': dependency.id,
-                                'associated_field': {
-                                    'name': field,
-                                    'type': 'map',
-                                    'location': key
-                                }
-                            })
-                            doc.data[class_associated][field][key] = {
-                                '$DEPENDS_ON$': len(doc['depends_on'])-1}
-                elif datatype == 'List':
-                    for index, item in enumerate(properties[field]):
-                        if issubclass(type(item), DataStructure):
-                            dependency = val.to_diddocument()
-                            dependencies.append(dependency)
-                            doc['depends_on'].append({
-                                'name': type(item).__name__ + '_id',
-                                'value': dependency.id,
-                                'associated_field': {
-                                    'name': field,
-                                    'type': 'list',
-                                    'location': index
-                                }
-                            })
-                            doc.data[class_associated][field][index] = {
-                                '$DEPENDS_ON$': len(doc['depends_on'])-1}
-                elif datatype == 'Object':
-                    dependency = val.to_diddocument()
-                    dependencies.append(dependency)
-                    doc['depends_on'].append({
-                        'name': type(item).__name__ + '_id',
-                        'value': dependency.id,
-                        'associated_field': {
-                            'name': field,
-                            'type': 'obj'
-                        }
-                    })
-                    doc.data[class_associated][field] = {
-                        '$DEPENDS_ON$': len(doc['depends_on'])-1}
-        return dependencies
-        '''
 
     def _process_field(self, schema, field, properties, data, property_list_name, create_dependency, docs):
         if isinstance(schema[field], dict):
@@ -578,14 +508,6 @@ class DataStructure(metaclass=Meta):
             data[property_list_name][field] = properties[field]
 
     @classmethod
-    def _initialize_did_doc(cls):
-        if hasattr(cls, 'document_type'):
-            cls._doc = DIDDocument(document_type=getattr(cls, 'document_type'))
-        else:
-            cls._doc = DIDDocument(
-                document_type=pascal_to_snake_case(getattr(cls, '_class')))
-
-    @classmethod
     def document_schema(cls):
         raise NotImplementedError(
             "the class method document_schema needs to be implemented")
@@ -599,8 +521,19 @@ class _DB:
             self.session = session
         self._schema = schema
 
+    def _flatten(self, ls):
+        def helper(result, list):
+            for item in list:
+                if isinstance(list):
+                    helper(result, item)
+                else:
+                    result.append(item)
+        result = []
+        return helper(result, ls)
+
     def insert(self):
-        docs = self._schema.to_diddocument()
+        # handle cases where there is nested depends_on
+        docs = self._flatten(self._schema.to_diddocument())
         for doc in docs:
             self.session.add(doc)
 
