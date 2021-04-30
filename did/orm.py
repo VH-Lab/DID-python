@@ -2,14 +2,29 @@ from did import session, Query, DIDDocument, DID, DIDId
 from abc import ABC, abstractmethod
 from .validate import SUPPORTED_DATATYPE
 from .utils import pascal_to_snake_case
-from blake3 import blake3  # pylint: disable=no-name-in-module
 from .time import current_time
 import json
 import copy
 import os
 
+'''
+***************************************************************************
+Operators available for querying software objects by their fields' values
 
-class QueryOperator:
+* Equals
+* LessThan
+* GreaterThan
+* LessThanEquals
+* GreaterThanEquals
+***************************************************************************
+'''
+
+class FieldQueryOperator:
+    """
+    Base class for all the operators class which can be used to query software objects
+    by the values of their fields
+    """
+
     @abstractmethod
     def _to_didquery(self, field):
         """
@@ -18,7 +33,26 @@ class QueryOperator:
         pass
 
 
-class Equals:
+class Equals(FieldQueryOperator):
+    """
+    Query a software object by enforcing that a field equals to a certain value
+
+    Example:
+
+    class A(DataStrcture):
+        @classmethod
+        def document_schema(cls):
+            return {
+                'field1': StringType(),
+                'field2': NumberType()
+            }
+
+    A.query.filter({
+        'field1' : Equals("someval")
+        'field2' : Equals(2)
+    })
+    """
+
     def __init__(self, value):
         self.value = value
 
@@ -27,22 +61,142 @@ class Equals:
         return Query(field) == self.value
 
 
+class LessThan(FieldQueryOperator):
+    """
+    Query a software object by enforcing that a field less than a certain value
+
+    Example:
+
+    class A(DataStrcture):
+        @classmethod
+        def document_schema(cls):
+            return {
+                'field1': StringType(),
+                'field2': NumberType()
+            }
+
+    A.query.filter({
+        'field2' : LessThan(2)
+    })
+    """
+
+    def __init__(self, value):
+        self.value = value
+
+    @abstractmethod
+    def _to_didquery(self, field):
+        return Query(field) < self.value
+
+
+class GreaterThan(FieldQueryOperator):
+    """
+    Query a software object by enforcing that a field greater than a certain value
+
+    Example:
+
+    class A(DataStrcture):
+        @classmethod
+        def document_schema(cls):
+            return {
+                'field1': StringType(),
+                'field2': NumberType()
+            }
+
+    A.query.filter({
+        'field2' : GreaterThan(2)
+    })
+    """
+    
+    def __init__(self, value):
+        self.value = value
+
+    @abstractmethod
+    def _to_didquery(self, field):
+        return Query(field) > self.value
+
+
+class LessThanEquals(FieldQueryOperator):
+    """
+    Query a software object by enforcing that a field less than or equals to a certain value
+
+    Example:
+
+    class A(DataStrcture):
+        @classmethod
+        def document_schema(cls):
+            return {
+                'field1': StringType(),
+                'field2': NumberType()
+            }
+
+    A.query.filter({
+        'field2' : LessThanEquals(2)
+    })
+    """    
+
+    def __init__(self, value):
+        self.value = value
+
+    @abstractmethod
+    def _to_didquery(self, field):
+        return Query(field) <= self.value
+
+
+class GreaterThanEquals(FieldQueryOperator):
+    """
+    Query a software object by enforcing that a field greater than or equals to a certain value
+
+    Example:
+
+    class A(DataStrcture):
+        @classmethod
+        def document_schema(cls):
+            return {
+                'field1': StringType(),
+                'field2': NumberType()
+            }
+
+    A.query.filter({
+        'field2' : GreaterThanEquals(2)
+    })
+    """
+
+    def __init__(self, value):
+        self.value = value
+
+    @abstractmethod
+    def _to_didquery(self, field):
+        return Query(field) >= self.value
+
+'''
+*****************************************************************************
+Classes whose instances serve as class properties for the DataStrcture class
+
+* _QueryWrapper
+* _SchemaManager
+* _DocumentClass 
+
+*****************************************************************************
+'''
+
 class _QueryWrapper:
-    def __init__(self, ds,):
+    def __init__(self, ds):
         self.ds = ds
-        self.query = Query('document_class.class_name') == self.ds.__name__
         if not isinstance(session, DID):
             self.session = session.init()
         else:
             self.session = session
 
     def filter(self, filter):
-        if not isinstance(session, DID):
-            session.init()
+        self.query = Query('document_class.class_name') == self.ds.__name__
         for field in filter:
-            self.query = self.query & filter[field]._to_didquery()
+            self.query = self.query & filter[field]._to_didquery(field)
+        return self
 
     def all(self):
+        if not hasattr(self, 'query'):
+            raise RuntimeError(
+                "filter must be called before calling this method")
         results = self.session.find(self.query)
         objs = []
         for result in results:
@@ -57,15 +211,22 @@ class _QueryWrapper:
         raise NotImplementedError()
 
     def _deserialize(self, doc, ds):
-        obj = ds.from_dict(**self._to_dict(doc))
+        kv = self._to_dict(doc)
+        obj = ds.from_dict(kv['properties'])
+        obj._base = _Base(**kv['base'])
         obj._loaded_from_db = doc
         return obj
 
     def _to_dict(self, doc):
+        doc = doc.data
         schema = self.ds.document_schema()
         properties = {}
+        base = doc['base']
+        del base['snapshots']
+        del base['records']
+        document_class = doc['document_class']
         for classname in doc:
-            if classname != 'base' and classname != 'class_properties' and classname != 'depends_on':
+            if classname != 'base' and classname != 'document_class' and classname != 'depends_on':
                 for field in doc[classname]:
                     if isinstance(doc[classname][field], list):
                         key = []
@@ -89,13 +250,13 @@ class _QueryWrapper:
                             else:
                                 val[key] = doc[classname][field][key]
                         properties[field] = val
-                    elif doc[classname][field][key].startswith('$DEPENDS-ON['):
+                    elif isinstance(doc[classname][field], str) and doc[classname][field].startswith('$DEPENDS-ON['):
                         datatype = schema[properties].cls
                         doc = self._find_dependency(item, doc['depends_on'])
                         properties[field] = self._deserialize(doc, datatype)
                     else:
                         properties[field] = doc[classname][field]
-        return properties
+        return {'properties': properties, 'base': base, 'document_class': document_class}
 
     def _find_dependency(self, field, depends_on):
         left, right = field.find("["), field.find("]")
@@ -110,12 +271,19 @@ class _SchemaManager:
         self._ds = ds
         self._ds_type = pascal_to_snake_case(ds.__name__)
 
-    def describe(self, field):
+    def describe(self, field=None):
         schema = self.current()
-        if field in schema[schema['document_class']['property_list_name']]:
-            return schema[schema['document_class']['property_list_name']][field]['description']
-        raise AttributeError(
-            '{} is not a field defined in the schema'.format(field))
+        if field:
+            if field in schema[schema['document_class']['property_list_name']]:
+                return schema[schema['document_class']['property_list_name']][field]['description']
+            raise AttributeError(
+                '{} is not a field defined in the schema'.format(field))
+        else:
+            descriptions = {}
+            for field in schema[schema['document_class']['property_list_name']]:
+                descriptions[field] = schema[schema['document_class']
+                                             ['property_list_name']][field]['description']
+            return descriptions
 
     def current(self):
         from .settings import get_documentpath, get_variable
@@ -246,21 +414,6 @@ class _SchemaManager:
         return latest.data
 
 
-def update_schema(module_name):
-    import sys
-    import inspect
-
-    module = __import__(module_name)
-
-    for _, obj in inspect.getmembers(module):
-        if inspect.isclass(obj) and issubclass(obj, DataStructure) and obj.__name__ != 'DataStrcture':
-            try:
-                obj.schema.update()
-                print("Updated class {}".format(obj.__name__))
-            except RuntimeError:
-                print("Skipping class {}".format(obj.__name__))
-
-
 class _DocumentClass:
     def __init__(self, definition, class_name, property_list_name, class_version=1, superclasses=None):
         self._definition = definition
@@ -340,14 +493,22 @@ class Meta(type):
             datastrcture._superclasses = bases
         return datastrcture
 
+'''
+**********************************************************************************
+Classes whose instances serve as object properties for the DataStrcture instances
+
+* _Base
+* _DB
+**********************************************************************************
+'''
 
 class _Base():
-    def __init__(self, session_id=None, id=None, name=None, datestamp=None, version=1):
-        self.session_id = None
+    def __init__(self, session_id=None, id=None, name=None, datestamp=None, document_version=1):
+        self.session_id = session_id
         self._id = id if isinstance(id, DIDId) else DIDId().id
-        self.name = None
+        self.name = name
         self.datestamp = current_time() if datestamp is None else datestamp
-        self._version = version
+        self._version = document_version
 
     def __repr__(self):
         return json.dumps({
@@ -400,7 +561,7 @@ class DataStructure(metaclass=Meta):
 
     @classmethod
     def from_dict(cls, kv):
-        return cls.__init__(**kv)
+        return cls(**kv)
 
     @classmethod
     def schema(cls):
@@ -426,9 +587,11 @@ class DataStructure(metaclass=Meta):
         properties = {}
         built_in_properties = {'db', 'query',
                                'base', 'class_properties', 'schema'}
-        for field in dir(self):
-            if not field.startswith('_') and not callable(getattr(self, field)) and field not in built_in_properties:
-                properties[field] = getattr(self, field)
+        for field in type(self).document_schema():
+            if field in built_in_properties:
+                raise RuntimeError(
+                    "db, query, base, class_properties are reserved properties")
+            properties[field] = getattr(self, field)
         return properties
 
     @classmethod
@@ -465,7 +628,7 @@ class DataStructure(metaclass=Meta):
 
         # go through the schema files of the superclasses if there is any
         for superclass in getattr(self, '_superclasses'):
-            if issubclass(superclass, DataStructure):
+            if issubclass(superclass, DataStructure) and superclass.__name__ != DataStructure.__name__:
                 superclass_schema = superclass.document_schema()
                 for field in superclass_schema:
                     field_in_superclass[field] = {
@@ -508,7 +671,7 @@ class DataStructure(metaclass=Meta):
         if properties[field] is list:
             data[property_list_name][field] = None * len(properties[field])
             for index, item in enumerate(properties[field]):
-                if issubclass(properties[field][index], DataStructure):
+                if issubclass(type(properties[field][index]), DataStructure):
                     data[property_list_name][field][index] = '$DEPENDS-ON[{}]$'.format(
                         len(data['depends_on']))
                     data['depends_on'].append(create_dependency(
@@ -518,14 +681,14 @@ class DataStructure(metaclass=Meta):
         elif properties[field] is dict:
             data[property_list_name][field] = {}
             for key, value in properties[field].items():
-                if issubclass(properties[field][key], DataStructure):
+                if issubclass(type(properties[field][key]), DataStructure):
                     data[property_list_name][field][key] = '$DEPENDS-ON[{}]$'.format(
                         len(data['depends_on']))
                     data['depends_on'].append(create_dependency(
                         type_checker, properties[field][key], docs))
                 else:
                     data[property_list_name][field][key] = value
-        elif issubclass(properties[field], DataStructure):
+        elif issubclass(type(properties[field]), DataStructure):
             data[property_list_name][field] = '$DEPENDS-ON[{}]$'.format(
                 len(data['depends_on']))
             data['depends_on'].append(create_dependency(
@@ -548,14 +711,15 @@ class _DB:
         self._schema = schema
 
     def _flatten(self, ls):
-        def helper(result, list):
-            for item in list:
-                if isinstance(list):
+        def helper(result, ls):
+            for item in ls:
+                if isinstance(item, list):
                     helper(result, item)
                 else:
                     result.append(item)
         result = []
-        return helper(result, ls)
+        helper(result, ls)
+        return result
 
     def insert(self):
         # handle cases where there is nested depends_on
