@@ -116,6 +116,22 @@ class ListType(DataType):
         self.min_length = min_length
         self.max_length = max_length
         self.datatypes = datatypes
+
+    def get(self, index):
+        if self.datatypes is None:
+            return Any
+        elif isinstance(self.datatypes, dict):
+            if index in self.datatypes:
+                return self.datatypes[index]
+            else:
+                return Any
+        elif isinstance(self.datatypes, list):
+            if index < len(self.datatypes):
+                return self.datatypes[index]
+            else:
+                return Any
+        else:
+            return self.datatypes
     
     def validate(self, value):
         if not isinstance(value, list):

@@ -42,42 +42,67 @@ class _QueryWrapper:
         for field in filter:
             self.query = self.query & filter[field]._to_didquery()
 
-
     def all(self):
         results = self.session.find(self.query)
-        objs = self._to_obj(results)
-        return objs
-
-    '''
-    def _to_obj(self, docs):
         objs = []
-        for doc in docs:
-            obj_dict, dependencies = self._doc_to_dict(doc)
-            dependencies.append(doc)
-
-            obj = self.schema_class.from_diddocument(obj_dict)
-            obj._pre_loaded = dependencies
+        for result in results:
+            obj = self._deserialize(result, self.ds)
             objs.append(obj)
         return objs
 
-    def _doc_to_dict(self, doc):
-        output = {}
-        dependencies = {}
+    def limit(self, num):
+        raise NotImplementedError()
+
+    def sort(self, field):
+        raise NotImplementedError()
+
+    def _deserialize(self, doc, ds):
+        obj = ds.from_dict(**self._to_dict(doc))
+        obj._loaded_from_db = doc
+        return obj
+
+    def _to_dict(self, doc):
+        schema = self.ds.document_schema()
+        properties = {}
         for classname in doc:
             if classname != 'base' and classname != 'class_properties' and classname != 'depends_on':
                 for field in doc[classname]:
-                    output[field] = doc[classname][field]
-        if 'depends_on' in doc:
-            for dependency in doc['depends_on']:
-                obj = self.session.find_by_id(did_id=dependency['value'])
-                dependencies[obj.property_list_name] = obj
-                if dependency['associated_field']['type'] == 'obj':
-                    output[dependency['associated_field']['name']] = obj
-                else:
-                    output[dependency['associated_field']['name']
-                           ][dependency['associated_field']['location']] = obj
-        return output, dependencies
-    '''
+                    if isinstance(doc[classname][field], list):
+                        key = []
+                        for index, item in enumerate(doc[classname][field]):
+                            if item.startswith('$DEPENDS-ON['):
+                                datatype = schema[properties].get(index).cls
+                                doc = self._find_dependency(
+                                    item, doc['depends_on'])
+                                key.append(self._deserialize(doc, datatype))
+                            else:
+                                key.append(item)
+                        properties[field] = key
+                    elif isinstance(doc[classname][field], dict):
+                        val = {}
+                        for key in doc[classname][field]:
+                            if doc[classname][field][key].startswith('$DEPENDS-ON['):
+                                datatype = schema[properties].get(index).cls
+                                doc = self._find_dependency(
+                                    item, doc['depends_on'])
+                                val[key] = self._deserialize(doc, datatype)
+                            else:
+                                val[key] = doc[classname][field][key]
+                        properties[field] = val
+                    elif doc[classname][field][key].startswith('$DEPENDS-ON['):
+                        datatype = schema[properties].cls
+                        doc = self._find_dependency(item, doc['depends_on'])
+                        properties[field] = self._deserialize(doc, datatype)
+                    else:
+                        properties[field] = doc[classname][field]
+        return properties
+
+    def _find_dependency(self, field, depends_on):
+        left, right = field.find("["), field.find("]")
+        index_depends_on = int(field[left+1:right])
+        dependency_doc_id = depends_on[index_depends_on]['value']
+        dependency_doc = self.session.find_by_id(dependency_doc_id)
+        return dependency_doc
 
 
 class _SchemaManager:
@@ -422,7 +447,8 @@ class DataStructure(metaclass=Meta):
             if issubclass(obj, DataStructure):
                 dependencies = obj.to_diddocument()
                 docs.append(dependencies)
-                depends_on = type_checker.generate_depends_on_statement(dependencies[-1].id)
+                depends_on = type_checker.generate_depends_on_statement(
+                    dependencies[-1].id)
                 return depends_on
 
         properties = self.serialize()
@@ -446,7 +472,7 @@ class DataStructure(metaclass=Meta):
                         'property_list_name': superclass.class_properties.property_list_name,
                         'schema': superclass_schema
                     }
-        
+
         # perform validation and assign the value to the diddocument
         for field in properties:
             if field in schema:
@@ -533,14 +559,15 @@ class _DB:
 
     def insert(self):
         # handle cases where there is nested depends_on
-        docs = self._flatten(self._schema.to_diddocument())
+        self._loaded_from_db = self._schema.to_diddocument()
+        docs = self._flatten(self._loaded_from_db)
         for doc in docs:
             self.session.add(doc)
 
     def delete(self):
-        if not hasattr(self._schema, '_preloaded'):
+        if not hasattr(self._schema, '_loaded_from_db'):
             raise RuntimeError("DIDDocument must come from the database")
-        docs = getattr(self._schema, 'pre_loaded')
+        docs = getattr(self._schema, '_loaded_from_db')
         for doc in docs:
             self.session.delete_by_id(did_id=doc.id)
 
