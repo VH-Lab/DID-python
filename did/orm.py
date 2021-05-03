@@ -1,4 +1,5 @@
-from did import session, Query, DIDDocument, DID, DIDId
+import did
+from did import Query, DIDDocument, DID, DIDId
 from abc import ABC, abstractmethod
 from .validate import SUPPORTED_DATATYPE
 from .utils import pascal_to_snake_case
@@ -182,10 +183,8 @@ Classes whose instances serve as class properties for the DataStrcture class
 class _QueryWrapper:
     def __init__(self, ds):
         self.ds = ds
-        if not isinstance(session, DID):
-            self.session = session.init()
-        else:
-            self.session = session
+        if not isinstance(did.session, DID):
+            did.session.init()
 
     def filter(self, filter):
         self.query = Query('document_class.class_name') == self.ds.__name__
@@ -197,7 +196,7 @@ class _QueryWrapper:
         if not hasattr(self, 'query'):
             raise RuntimeError(
                 "filter must be called before calling this method")
-        results = self.session.find(self.query)
+        results = did.session.find(self.query)
         objs = []
         for result in results:
             obj = self._deserialize(result, self.ds)
@@ -262,7 +261,7 @@ class _QueryWrapper:
         left, right = field.find("["), field.find("]")
         index_depends_on = int(field[left+1:right])
         dependency_doc_id = depends_on[index_depends_on]['value']
-        dependency_doc = self.session.find_by_id(dependency_doc_id)
+        dependency_doc = did.session.find_by_id(dependency_doc_id)
         return dependency_doc
 
 
@@ -324,12 +323,13 @@ class _SchemaManager:
                         'schema': json.load(f)
                     })
 
-        versions = sorted(versions, key=lambda x: -1 * x['version'])
+        #TODO sort Schema by DIDId creation time
+        #versions = sorted(versions, key=lambda x: -1 * x['version'])
 
         latest, _ = self._create_schema()
 
         versions.insert(0, {
-            'version': 'latest (version: {})'.format(versions[0]['version'] + 1) if len(versions) > 0 else "Latest (version: 1)",
+            'version': 'latest',
             'schema': latest.data
         })
         return versions
@@ -349,7 +349,7 @@ class _SchemaManager:
             version = schema['document_class']['class_version']
             if schema[latest.property_list_name] == latest.data[latest.property_list_name]:
                 return schema
-            latest.data['document_class']['class_version'] = version + 1
+            latest.data['document_class']['class_version'] = DIDId().id
             f.seek(0)
             f.truncate()
             json.dump(latest.data, f, indent=6)
@@ -502,7 +502,7 @@ Classes whose instances serve as object properties for the DataStrcture instance
 **********************************************************************************
 '''
 
-class _Base():
+class _Base:
     def __init__(self, session_id=None, id=None, name=None, datestamp=None, document_version=1):
         self.session_id = session_id
         self._id = id if isinstance(id, DIDId) else DIDId().id
@@ -548,10 +548,20 @@ class _Base():
 class DataStructure(metaclass=Meta):
     def __init__(self, **kwargs):
         if type(self) is DataStructure:
-            raise NotImplementedError("Schema cannot be instantiated directly")
+            raise NotImplementedError("DataStrcture cannot be instantiated directly")
         else:
             for f, v in kwargs.items():
                 setattr(self, f, v)
+    
+    def __repr__(self):
+        output = ["<"]
+        fv = self.serialize()
+        for field in type(self).document_schema():
+            output.append("{}={}".format(field, fv[field]))
+            output.append(", ")
+        output.pop(-1)
+        output.append(">")
+        return "".join(output)
 
     @property
     def base(self):
@@ -704,10 +714,8 @@ class DataStructure(metaclass=Meta):
 
 class _DB:
     def __init__(self, schema):
-        if not isinstance(session, DID):
-            self.session = session.init()
-        else:
-            self.session = session
+        if not isinstance(did.session, DID):
+            did.session.init()
         self._schema = schema
 
     def _flatten(self, ls):
@@ -726,14 +734,14 @@ class _DB:
         self._loaded_from_db = self._schema.to_diddocument()
         docs = self._flatten(self._loaded_from_db)
         for doc in docs:
-            self.session.add(doc)
+            did.session.add(doc)
 
     def delete(self):
         if not hasattr(self._schema, '_loaded_from_db'):
             raise RuntimeError("DIDDocument must come from the database")
         docs = getattr(self._schema, '_loaded_from_db')
         for doc in docs:
-            self.session.delete_by_id(did_id=doc.id)
+            did.session.delete_by_id(did_id=doc.id)
 
     def update(self):
         if not hasattr(self, '_preloaded'):
@@ -741,4 +749,4 @@ class _DB:
         _, id = getattr(self, '_preloaded')
         doc = self._schema.to_diddocument()
         doc.data['base']['id'] = id
-        self.session.update(doc)
+        did.session.update(doc)
