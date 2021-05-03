@@ -88,6 +88,7 @@ class NumberType(DataType):
                 raise ValueError("expected an int <= {}".format(self.max))
 
     def as_dict(self):
+        datatype_name = 'Integer' if type(self).__name__ == 'IntegerType' else 'Number'
         if self.discrete_value:
             if not isinstance(self.discrete_value, list):
                 raise ValueError("discrete_value option needs to be a list")
@@ -98,13 +99,13 @@ class NumberType(DataType):
                 else:
                     if not isinstance(val, int) and not isinstance(val, float):
                         raise ValueError("individual item in discrete value needs to be float or int, got {} instead".format(val))
-            return {'Integer': {'discrete_value' : self.discrete_value}}
+            return {datatype_name: {'discrete_value' : self.discrete_value}}
         else:
-            output = {'Integer': {}}
+            output = {datatype_name: {}}
             if self.min:
-                output['Integer']['min'] = self.min
+                output[datatype_name]['min'] = self.min
             if self.max:
-                output['Integer']['max'] = self.max
+                output[datatype_name]['max'] = self.max
         return output
 
 class IntegerType(NumberType):
