@@ -20,10 +20,12 @@ Operators available for querying software objects by their fields' values
 ***************************************************************************
 '''
 
-class FieldQueryOperator:
+class FieldQueryOperator(ABC):
     """
-    Base class for all the operators class which can be used to query software objects
-    by the values of their fields
+    Abstract base class for operator that can be used to construct conditional statements so that
+    the subclasses of the DataStrcture class can query their corresponding object instances
+    stored as DIDDocuments based the criteria specified for each field using the constrcuted 
+    conditional statements
     """
 
     @abstractmethod
@@ -36,7 +38,7 @@ class FieldQueryOperator:
 
 class Equals(FieldQueryOperator):
     """
-    Query a software object by enforcing that a field equals to a certain value
+    Query object instances that contain a field equals to a certain value
 
     Example:
 
@@ -64,7 +66,7 @@ class Equals(FieldQueryOperator):
 
 class LessThan(FieldQueryOperator):
     """
-    Query a software object by enforcing that a field less than a certain value
+    Query object instances that contain a field less than to a certain value
 
     Example:
 
@@ -91,7 +93,7 @@ class LessThan(FieldQueryOperator):
 
 class GreaterThan(FieldQueryOperator):
     """
-    Query a software object by enforcing that a field greater than a certain value
+    Query object instances that contain a field greater than to a certain value
 
     Example:
 
@@ -118,7 +120,7 @@ class GreaterThan(FieldQueryOperator):
 
 class LessThanEquals(FieldQueryOperator):
     """
-    Query a software object by enforcing that a field less than or equals to a certain value
+    Query object instances that contain a field less than or equals to a certain value
 
     Example:
 
@@ -145,7 +147,7 @@ class LessThanEquals(FieldQueryOperator):
 
 class GreaterThanEquals(FieldQueryOperator):
     """
-    Query a software object by enforcing that a field greater than or equals to a certain value
+    Query object instances that contain a field greater than or equals to a certain value
 
     Example:
 
