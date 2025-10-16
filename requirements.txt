@@ -1,0 +1,6 @@
+mkdocs
+numpy
+pandas
+portalocker
+networkx
+matplotlib

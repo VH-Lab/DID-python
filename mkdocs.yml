@@ -1,0 +1,8 @@
+site_name: DID-Python
+nav:
+    - Home: index.md
+    - Database: database.md
+    - Document: document.md
+    - SQLiteDB: sqlitedb.md
+    - Query: query.md
+    - Functions: fun.md
