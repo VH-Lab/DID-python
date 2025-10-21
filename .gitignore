@@ -1,79 +1,19 @@
-# Editor configs
-.vscode/
-.mypy_cache
-.idea
-
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
-*.py[cod]
-*$py.class
-
-# C extensions
-*.so
-
-# Distribution / packaging
+*.pyc
+*.pyo
+*.pyd
 .Python
-develop-eggs/
-build/
-*/build/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
-
-# Installer logs
+env/
+venv/
+pip-selfcheck.json
 pip-log.txt
-pip-delete-this-directory.txt
+*.egg-info/
+dist/
+build/
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
-example/test_sql_crud
+# DID-matlab
+DID-matlab/
 
-# Common virtualenv paths
-.venv/
-.env/
-*.env
-
-# Example notebook checkpoint
-example/.ipynb_checkpoints/
-
-# Example binary files
-example/test_db/document_binary/*
-
-# MacOS
-*.DS_Store
-
-# symlinked schema
-ndi/schema
-*/.ndi
-
-# mypy cache
-3.8/
+# MkDocs
+site/
