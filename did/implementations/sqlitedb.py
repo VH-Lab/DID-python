@@ -77,6 +77,7 @@ class SQLiteDB(Database):
     def do_delete_branch(self, branch_id):
         self.do_run_sql_query('DELETE FROM branch_docs WHERE branch_id = ?', branch_id)
         self.do_run_sql_query('DELETE FROM branches WHERE branch_id = ?', branch_id)
+        self.conn.commit()
 
     def do_get_branch_parent(self, branch_id):
         data = self.do_run_sql_query('SELECT parent_id FROM branches WHERE branch_id = ?', branch_id)
@@ -109,6 +110,7 @@ class SQLiteDB(Database):
             cursor = self.conn.cursor()
             cursor.execute('INSERT INTO docs (doc_id, json_code, timestamp) VALUES (?, ?, ?)',
                            (doc_id, json_code, 0))
+            self.conn.commit()
             doc_idx = cursor.lastrowid
         else:
             doc_idx = existing_doc[0]['doc_idx']

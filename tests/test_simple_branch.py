@@ -4,10 +4,12 @@ from did.implementations.sqlitedb import SQLiteDB
 from tests.helpers import make_doc_tree, verify_db_document_structure
 
 class TestSimpleBranch(unittest.TestCase):
-    DB_FILENAME = 'test_db_docs.sqlite'
+    DB_FILENAME = 'test_db_simple_branch.sqlite'
 
     @classmethod
     def setUpClass(cls):
+        if os.path.exists(cls.DB_FILENAME):
+            os.remove(cls.DB_FILENAME)
         cls.db = SQLiteDB(cls.DB_FILENAME)
         cls.db.add_branch('a')
         cls.g, cls.node_names, cls.docs = make_doc_tree([10, 10, 10])
