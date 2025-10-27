@@ -1,83 +1,64 @@
+import networkx as nx
 import numpy as np
+from did.datastructures.utils import field_search
 
 def number_to_alpha_label(n):
     """
-    Returns an alphabetic label for a number; 1 is a, 2 is b, 27 is aa, etc.
+    Converts a positive integer to a base-26 alphabetic label.
+    1 -> 'a', 2 -> 'b', ..., 26 -> 'z', 27 -> 'aa', etc.
     """
-    s = ''
+    if n <= 0:
+        raise ValueError("Input must be a positive integer")
+
+    label = ""
     while n > 0:
         n, remainder = divmod(n - 1, 26)
-        s = chr(65 + remainder) + s
-    return s.lower()
-
-def name_tree(g, initial_node_name_prefix='', node_start=None):
-    """
-    Names the nodes in a tree structure with a given adjacency matrix.
-    """
-    if node_start is None:
-        node_start = np.where(np.sum(g, axis=1) == 0)[0]
-
-    node_names = [''] * g.shape[0]
-    node_indexes = []
-
-    for i, node_here in enumerate(node_start):
-        prefix = initial_node_name_prefix
-        if prefix and not prefix.endswith('_'):
-            prefix += '_'
-
-        node_names[node_here] = prefix + number_to_alpha_label(i + 1)
-        node_indexes.append(node_here)
-
-        next_nodes = np.where(g[:, node_here] == 1)[0]
-
-        if next_nodes.any():
-            sub_names, sub_indexes = name_tree(g, node_names[node_here], next_nodes)
-            for k, index_here in enumerate(sub_indexes):
-                if sub_names[index_here]:
-                    if node_names[index_here]:
-                        raise ValueError("We visited a node twice, should not happen in a real tree.")
-                    node_names[index_here] = sub_names[index_here]
-            node_indexes.extend(sub_indexes)
-
-    return node_names, node_indexes
+        label = chr(97 + remainder) + label
+    return label
 
 def make_tree(n_initial, children_rate, children_rate_decay, max_depth):
     """
-    Constructs a random tree structure.
+    Generates a random tree structure using networkx.
+    Returns a networkx.DiGraph and a list of the root node names.
     """
-    if max_depth < 0:
-        children_rate = 0
+    graph = nx.DiGraph()
 
-    g = np.zeros((n_initial, n_initial))
+    root_nodes = [number_to_alpha_label(i + 1) for i in range(n_initial)]
+    for node_name in root_nodes:
+        graph.add_node(node_name)
 
-    for i in range(n_initial):
-        current_nodes = g.shape[0]
-        num_children_here = np.random.poisson(children_rate)
+    q = [(root_name, 0) for root_name in root_nodes]
 
-        g_ = make_tree(num_children_here, children_rate * children_rate_decay, children_rate_decay, max_depth - 1)[0]
+    head = 0
+    while head < len(q):
+        parent_name, depth = q[head]
+        head += 1
 
-        new_g = np.zeros((g.shape[0] + g_.shape[0], g.shape[1] + g_.shape[1]))
-        new_g[:g.shape[0], :g.shape[1]] = g
-        new_g[g.shape[0]:, g.shape[1]:] = g_
-        g = new_g
+        if depth >= max_depth:
+            continue
 
-        if num_children_here > 0:
-            g[current_nodes:current_nodes + num_children_here, i] = 1
+        current_rate = children_rate * (children_rate_decay ** depth)
+        num_children = np.random.poisson(current_rate)
 
-    node_names = name_tree(g)[0]
-    return g, node_names
+        for i in range(num_children):
+            child_suffix = number_to_alpha_label(i + 1)
+            child_name = f"{parent_name}_{child_suffix}"
+            graph.add_node(child_name)
+            graph.add_edge(parent_name, child_name)
+            q.append((child_name, depth + 1))
+
+    return graph, root_nodes
 
 def apply_did_query(docs, q):
     """
-    Applies a did.query to a list of documents.
+    Applies a did.query to a list of documents and returns the matching
+    documents and their IDs.
     """
-    from did.datastructures.utils import field_search
-
     search_params = q.to_search_structure()
-    ids = []
-    d = []
+    matching_docs = []
+    matching_ids = []
     for doc in docs:
         if field_search(doc.document_properties, search_params):
-            d.append(doc)
-            ids.append(doc.id())
-    return ids, d
+            matching_docs.append(doc)
+            matching_ids.append(doc.id())
+    return matching_ids, matching_docs

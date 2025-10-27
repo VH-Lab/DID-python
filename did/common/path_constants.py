@@ -1,40 +1,31 @@
 import os
-import tempfile
-from pathlib import Path
-
-def _ensure_writable(folder_path):
-    """
-    Ensures that a folder exists and is writable.
-    """
-    p = Path(folder_path)
-    p.mkdir(parents=True, exist_ok=True)
-
-    test_file = p / f"testfile_{os.urandom(8).hex()}.txt"
-    try:
-        with open(test_file, 'w') as f:
-            f.write('test')
-        os.remove(test_file)
-    except OSError as e:
-        raise OSError(f"We do not have write access to the folder at {folder_path}") from e
+from appdirs import user_data_dir
 
 class PathConstants:
     """
-    Defines some global constants for the DID package.
+    Defines standard paths for the DID application.
     """
+    APP_NAME = "DID"
+    APP_AUTHOR = "VH-Lab"
 
-    PATH = Path(__file__).resolve().parent.parent.parent
-    DEF_PATH = PATH / 'schemas'
+    # Use appdirs to determine the platform-specific user data directory
+    USER_DATA_DIR = user_data_dir(APP_NAME, APP_AUTHOR)
+
+    # Ensure the directory exists
+    os.makedirs(USER_DATA_DIR, exist_ok=True)
+
+    FILE_CACHE_PATH = os.path.join(USER_DATA_DIR, "FileCache")
+    PREFERENCES = os.path.join(USER_DATA_DIR, "Preferences")
+
+    # Define project root and schema paths
+    PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    SCHEMA_PATH = os.path.join(PROJECT_ROOT, 'schemas')
+    DB_DOCS_PATH = os.path.join(SCHEMA_PATH, 'database_documents')
+    DB_SCHEMA_PATH = os.path.join(SCHEMA_PATH, 'database_schema')
 
     DEFINITIONS = {
-        '$DIDDOCUMENT_EX1': str(DEF_PATH / 'database_documents'),
-        '$DIDSCHEMA_EX1': str(DEF_PATH / 'database_schema'),
+        '$DID_MATLAB_DIR': PROJECT_ROOT, # Legacy support
+        '$DID_SCHEMA_PATH': SCHEMA_PATH,
+        '$DIDDOCUMENT_EX1': DB_DOCS_PATH,
+        '$DIDSCHEMA_EX1': DB_SCHEMA_PATH
     }
-
-    TEMP_PATH = os.path.join(tempfile.gettempdir(), 'didtemp')
-    _ensure_writable(TEMP_PATH)
-
-    FILE_CACHE_PATH = os.path.join(Path.home(), 'Documents', 'DID', 'fileCache')
-    _ensure_writable(FILE_CACHE_PATH)
-
-    PREFERENCES = os.path.join(Path.home(), 'Documents', 'DID', 'Preferences')
-    _ensure_writable(PREFERENCES)

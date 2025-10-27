@@ -93,21 +93,27 @@ def field_search(a, search_struct):
         return all(field_search(a, s) for s in search_struct)
 
     b = False
-    is_there, value = is_full_field(a, search_struct['field'])
 
     negation = search_struct['operation'].startswith('~')
     op = search_struct['operation'].lstrip('~')
 
-    if op == 'regexp':
-        if is_there and isinstance(value, str):
-            import re
-            b = bool(re.search(search_struct['param1'], value))
-    elif op == 'exact_string':
+    if op == 'isa':
+        # In the Matlab version, this checks all superclasses.
+        # For now, we will just check the direct class name.
+        is_there, value = is_full_field(a, 'document_class.class_name')
         if is_there:
             b = value == search_struct['param1']
-    # ... other cases ...
     elif op == 'or':
         b = field_search(a, search_struct['param1']) or field_search(a, search_struct['param2'])
+    else:
+        is_there, value = is_full_field(a, search_struct['field'])
+        if op == 'regexp':
+            if is_there and isinstance(value, str):
+                import re
+                b = bool(re.search(search_struct['param1'], value))
+        elif op == 'exact_string':
+            if is_there:
+                b = value == search_struct['param1']
 
     return not b if negation else b
 

@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import os
+import shutil
 from ..database import Database
 from ..document import Document
 from ..datastructures.utils import json_encode_nan
@@ -103,6 +104,19 @@ class SQLiteDB(Database):
 
     def do_add_doc(self, document_obj, branch_id, on_duplicate='error'):
         doc_id = document_obj.id()
+
+        # File ingestion logic
+        if 'files' in document_obj.document_properties and 'file_info' in document_obj.document_properties['files']:
+            for file_info in document_obj.document_properties['files']['file_info']:
+                for location in file_info['locations']:
+                    if location.get('ingest'):
+                        src = location['location']
+                        dst = os.path.join(self.file_dir, location['uid'])
+                        if os.path.exists(src):
+                            shutil.copy(src, dst)
+                            if location.get('delete_original'):
+                                os.remove(src)
+
         existing_doc = self.do_run_sql_query('SELECT doc_idx FROM docs WHERE doc_id = ?', doc_id)
 
         if not existing_doc:

@@ -14,8 +14,6 @@ class Document:
             self.document_properties['base']['id'] = str(uuid.uuid4())
             self.document_properties['base']['datestamp'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             for key, value in options.items():
-                # This is where the original code used eval, which is unsafe.
-                # We will set properties by traversing the dictionary.
                 keys = key.split('.')
                 d = self.document_properties
                 for k in keys[:-1]:
@@ -46,6 +44,8 @@ class Document:
 
     def _read_json_file_location(self, json_file_location_string):
         from .common.path_constants import PathConstants
+
+        # Handle placeholders
         for key, value in PathConstants.DEFINITIONS.items():
             if key in json_file_location_string:
                 return json_file_location_string.replace(key, value)
@@ -54,7 +54,13 @@ class Document:
         if not json_file_location_string.endswith('.json'):
             json_file_location_string += '.json'
 
-        for path in PathConstants.DEFINITIONS.values():
+        # Search in the default schema path and its subdirectories
+        search_paths = [
+            PathConstants.SCHEMA_PATH,
+            os.path.join(PathConstants.SCHEMA_PATH, 'database_documents'),
+            os.path.join(PathConstants.SCHEMA_PATH, 'database_schema')
+        ]
+        for path in search_paths:
             full_path = os.path.join(path, json_file_location_string)
             if os.path.exists(full_path):
                 return full_path
