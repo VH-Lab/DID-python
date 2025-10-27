@@ -1,5 +1,7 @@
 import unittest
 import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from did.implementations.sqlitedb import SQLiteDB
 from tests.helpers import make_doc_tree, verify_db_document_structure
 

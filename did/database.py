@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import re
+from .datastructures.utils import field_search
 
 class Database(ABC):
     """
@@ -144,11 +145,11 @@ class Database(ABC):
                     pass
             self.do_add_doc(doc, branch_id, on_duplicate=on_duplicate)
 
-    def get_docs(self, document_ids=None, on_missing='error'):
+    def get_docs(self, document_ids=None, branch_id=None, on_missing='error'):
         self.open()
 
         if document_ids is None:
-            document_ids = self.get_doc_ids()
+            document_ids = self.get_doc_ids(branch_id=branch_id)
 
         if not document_ids:
             return []
@@ -312,16 +313,14 @@ class Database(ABC):
     def do_search(self, query_obj, branch_id):
         # This method can be overridden by subclasses if a more efficient
         # search mechanism is available.
-        if hasattr(query_obj, 'searchstructure'):
-            query_obj = query_obj.searchstructure
+        if hasattr(query_obj, 'to_search_structure'):
+            query_obj = query_obj.to_search_structure()
 
-        # Simplified search logic for demonstration
-        if isinstance(query_obj, dict):
-            all_docs = self.get_docs()
-            matching_ids = []
-            for doc in all_docs:
-                if self._doc_matches_query(doc, query_obj):
-                    matching_ids.append(doc.id())
-            return matching_ids
-
-        return self.run_sql_query(query_obj)
+        # This is where the conversion from search_structure to SQL would happen.
+        # For now, we will just use fieldsearch for a simplified implementation.
+        all_docs = self.get_docs(branch_id=branch_id)
+        matching_ids = []
+        for doc in all_docs:
+            if field_search(doc.document_properties, query_obj):
+                matching_ids.append(doc.id())
+        return matching_ids
