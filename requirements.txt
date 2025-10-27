@@ -1,7 +1,0 @@
-numpy
-scipy
-jsonschema
-pandas
-mkdocs
-networkx
-appdirs

@@ -35,10 +35,10 @@ To get started with DID-Python, you will need to set up a Python virtual environ
 
 3.  **Install dependencies:**
 
-    All required packages are listed in the `requirements.txt` file. Install them using pip:
+    With the virtual environment activated, install the project in editable mode. This will also install all the necessary dependencies.
 
     ```bash
-    pip install -r requirements.txt
+    pip install -e .
     ```
 
 ## Running the Test Suite
