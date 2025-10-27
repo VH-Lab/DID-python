@@ -96,7 +96,51 @@ class BinaryTable:
             finally:
                 self.file.fclose()
 
-    # The other methods (insert_row, delete_row, write_entry, etc.) would be implemented here,
-    # following a similar pattern of acquiring the lock, opening the file, performing
-    # the operation, and then closing the file and releasing the lock.
-    # Due to the complexity of these methods, they are omitted here for brevity.
+    def insert_row(self, insert_after, data_cell):
+        with self._lock:
+            r, _ = self.get_size()
+            if insert_after > r:
+                raise ValueError(f"Row must be in 0..{r}.")
+
+            if insert_after == r:
+                try:
+                    self.file.permission = 'a'
+                    self.file.fopen()
+                    for i, data in enumerate(data_cell):
+                        self.file.fwrite(data, self.record_type[i])
+                finally:
+                    self.file.fclose()
+            else:
+                # This is a simplified implementation that does not handle
+                # inserting rows in the middle of the file. A more complete
+                # implementation would require creating a new file and copying
+                # the data over.
+                raise NotImplementedError("Inserting rows in the middle of the file is not yet implemented.")
+
+    def delete_row(self, row):
+        # This is a simplified implementation that does not handle
+        # deleting rows from the middle of the file.
+        raise NotImplementedError("Deleting rows is not yet implemented.")
+
+    def write_entry(self, row, col, value):
+        with self._lock:
+            try:
+                self.file.permission = 'r+'
+                self.file.fopen()
+                offset = self.header_size + (row - 1) * self.row_size() + sum(self.record_size[:col-1])
+                self.file.fid.seek(offset)
+
+                dtype = self.record_type[col-1]
+                # This is a simplified way to handle types.
+                if dtype == 'char':
+                    fmt = f'{self.elements_per_column[col-1]}s'
+                elif dtype == 'double':
+                    fmt = f'{self.elements_per_column[col-1]}d'
+                elif dtype == 'uint64':
+                    fmt = f'{self.elements_per_column[col-1]}Q'
+                else:
+                    raise ValueError(f"Unsupported data type: {dtype}")
+
+                self.file.fid.write(struct.pack(self.file.machineformat + fmt, value))
+            finally:
+                self.file.fclose()

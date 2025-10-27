@@ -148,6 +148,7 @@ class SQLiteDB(Database):
 
         doc_idx = doc[0]['doc_idx']
         self.do_run_sql_query('DELETE FROM branch_docs WHERE doc_idx = ? AND branch_id = ?', doc_idx, branch_id)
+        self.conn.commit()
 
     def do_open_doc(self, document_id, filename, **options):
         # This is a simplified implementation that assumes the file is in the file_dir.

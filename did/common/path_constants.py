@@ -22,13 +22,12 @@ class PathConstants:
     Defines some global constants for the DID package.
     """
 
-    PATH = Path(os.environ.get('DID_PYTHON_PATH', '.'))
-    DEF_PATH = PATH / 'DID-matlab' / 'src' / 'did' / 'example_schema' / 'demo_schema1'
+    PATH = Path(__file__).resolve().parent.parent.parent
+    DEF_PATH = PATH / 'schemas'
 
     DEFINITIONS = {
         '$DIDDOCUMENT_EX1': str(DEF_PATH / 'database_documents'),
         '$DIDSCHEMA_EX1': str(DEF_PATH / 'database_schema'),
-        '$DIDCONTROLLEDVOCAB_EX1': str(DEF_PATH / 'controlled_vocabulary'),
     }
 
     TEMP_PATH = os.path.join(tempfile.gettempdir(), 'didtemp')
