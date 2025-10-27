@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "did"
+version = "0.1.0"
+authors = [
+  { name="VH-Lab", email="author@example.com" },
+]
+description = "A Python port of the VH-Lab/DID-matlab project."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "jsonschema",
+    "pandas",
+    "mkdocs",
+    "networkx",
+    "appdirs",
+]
+
+[tool.setuptools]
+packages = ["did"]
