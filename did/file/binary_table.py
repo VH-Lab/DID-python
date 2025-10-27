@@ -1,146 +1,124 @@
+import sqlite3
 import os
-import struct
-import threading
-from .file_obj import FileObj
 
 class BinaryTable:
     def __init__(self, f, record_type, record_size, elements_per_column, header_size):
-        self.file = f
-        self.file.machineformat = '<'  # little-endian
+        self.db_filename = f.fullpathfilename
         self.record_type = record_type
-        self.record_size = record_size
-        self.elements_per_column = elements_per_column
         self.header_size = header_size
-        self._lock = threading.Lock()
+        self._conn = None
 
-        if not self.file.fullpathfilename:
-            raise ValueError("A full path file name must be given to the file object.")
+        self._create_tables()
+
+    def _get_conn(self):
+        if self._conn is None:
+            self._conn = sqlite3.connect(self.db_filename)
+            self._conn.row_factory = sqlite3.Row
+        return self._conn
+
+    def _create_tables(self):
+        conn = self._get_conn()
+        cursor = conn.cursor()
+
+        # Header table
+        cursor.execute("CREATE TABLE IF NOT EXISTS header (key TEXT PRIMARY KEY, value BLOB)")
+
+        # Data table
+        columns = ', '.join([f'col{i} {self._py_type(self.record_type[i])}' for i in range(len(self.record_type))])
+        cursor.execute(f"CREATE TABLE IF NOT EXISTS data (id INTEGER PRIMARY KEY AUTOINCREMENT, {columns})")
+
+        conn.commit()
+
+    def _py_type(self, matlab_type):
+        if matlab_type == 'char':
+            return 'TEXT'
+        elif matlab_type == 'double':
+            return 'REAL'
+        elif matlab_type == 'uint64':
+            return 'INTEGER'
+        else:
+            return 'BLOB'
 
     def get_size(self):
-        try:
-            file_size = os.path.getsize(self.file.fullpathfilename)
-            data_size = file_size - self.header_size
-        except FileNotFoundError:
-            data_size = 0
-
-        c = len(self.record_size)
-        row_size = sum(self.record_size)
-        r = data_size // row_size if row_size > 0 else 0
-        return r, c, data_size
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM data")
+        r = cursor.fetchone()[0]
+        c = len(self.record_type)
+        return r, c, self.header_size + r * sum(self.record_size) if hasattr(self, 'record_size') else 0
 
     def read_header(self):
-        with self._lock:
-            try:
-                self.file.permission = 'r'
-                self.file.fopen()
-                return self.file.fread(self.header_size, 'B')
-            finally:
-                self.file.fclose()
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM header WHERE key = 'header_data'")
+        row = cursor.fetchone()
+        return row['value'] if row else None
 
     def write_header(self, header_data):
-        if len(header_data) > self.header_size:
-            raise ValueError("Header data to write is larger than the header size.")
-
-        with self._lock:
-            try:
-                self.file.permission = 'r+' if os.path.exists(self.file.fullpathfilename) else 'w'
-                self.file.fopen()
-                self.file.fid.write(header_data)
-            finally:
-                self.file.fclose()
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO header (key, value) VALUES (?, ?)", ('header_data', header_data))
+        conn.commit()
 
     def row_size(self):
-        return sum(self.record_size)
+        return sum(self.record_size) if hasattr(self, 'record_size') else 0
 
     def read_row(self, row, col):
-        if col < 1 or col > len(self.record_size):
-            raise ValueError(f"Column must be in 1..{len(self.record_size)}.")
+        conn = self._get_conn()
+        cursor = conn.cursor()
 
-        with self._lock:
-            try:
-                self.file.permission = 'r'
-                self.file.fopen()
-                r, _ = self.get_size()
+        if isinstance(row, float) and row == float('inf'):
+            cursor.execute(f"SELECT col{col-1} FROM data")
+            return [r[f'col{col-1}'] for r in cursor.fetchall()]
 
-                if isinstance(row, float) and row == float('inf'):
-                    row = list(range(1, r + 1))
-                elif not isinstance(row, list):
-                    row = [row]
+        if not isinstance(row, list):
+            row = [row]
 
-                if any(ro > r for ro in row):
-                    raise ValueError(f"Rows must be in 1..{r}.")
-
-                data = []
-                for ro in row:
-                    offset = self.header_size + (ro - 1) * self.row_size() + sum(self.record_size[:col-1])
-                    self.file.fid.seek(offset)
-
-                    dtype = self.record_type[col-1]
-                    num_elements = self.elements_per_column[col-1]
-
-                    # This is a simplified way to handle types. A more robust solution
-                    # would map Matlab types to Python struct format characters.
-                    if dtype == 'char':
-                        fmt = f'{num_elements}s'
-                    elif dtype == 'double':
-                        fmt = f'{num_elements}d'
-                    elif dtype == 'uint64':
-                        fmt = f'{num_elements}Q'
-                    else:
-                        raise ValueError(f"Unsupported data type: {dtype}")
-
-                    d_read = struct.unpack(self.file.machineformat + fmt, self.file.fid.read(self.record_size[col-1]))
-                    data.append(d_read[0] if len(d_read) == 1 else d_read)
-
-                return data
-            finally:
-                self.file.fclose()
+        placeholders = ','.join('?' for _ in row)
+        cursor.execute(f"SELECT col{col-1} FROM data WHERE id IN ({placeholders})", row)
+        return [r[f'col{col-1}'] for r in cursor.fetchall()]
 
     def insert_row(self, insert_after, data_cell):
-        with self._lock:
-            r, _ = self.get_size()
-            if insert_after > r:
-                raise ValueError(f"Row must be in 0..{r}.")
-
-            if insert_after == r:
-                try:
-                    self.file.permission = 'a'
-                    self.file.fopen()
-                    for i, data in enumerate(data_cell):
-                        self.file.fwrite(data, self.record_type[i])
-                finally:
-                    self.file.fclose()
-            else:
-                # This is a simplified implementation that does not handle
-                # inserting rows in the middle of the file. A more complete
-                # implementation would require creating a new file and copying
-                # the data over.
-                raise NotImplementedError("Inserting rows in the middle of the file is not yet implemented.")
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        columns = ', '.join([f'col{i}' for i in range(len(data_cell))])
+        placeholders = ', '.join('?' for _ in data_cell)
+        cursor.execute(f"INSERT INTO data ({columns}) VALUES ({placeholders})", data_cell)
+        conn.commit()
 
     def delete_row(self, row):
-        # This is a simplified implementation that does not handle
-        # deleting rows from the middle of the file.
-        raise NotImplementedError("Deleting rows is not yet implemented.")
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM data WHERE id = ?", (row,))
+        conn.commit()
+
+    def write_table(self, data):
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM data")
+
+        if not data:
+            conn.commit()
+            return
+
+        columns = ', '.join([f'col{i}' for i in range(len(data[0]))])
+        placeholders = ', '.join('?' for _ in data[0])
+        cursor.executemany(f"INSERT INTO data ({columns}) VALUES ({placeholders})", data)
+        conn.commit()
+
+    def find_row(self, col, value, sorted=False):
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT id FROM data WHERE col{col-1} = ?", (value,))
+        row = cursor.fetchone()
+        if row:
+            return row['id'], row['id'] -1 if row['id'] > 1 else 0
+
+        r, _, _ = self.get_size()
+        return 0, r
 
     def write_entry(self, row, col, value):
-        with self._lock:
-            try:
-                self.file.permission = 'r+'
-                self.file.fopen()
-                offset = self.header_size + (row - 1) * self.row_size() + sum(self.record_size[:col-1])
-                self.file.fid.seek(offset)
-
-                dtype = self.record_type[col-1]
-                # This is a simplified way to handle types.
-                if dtype == 'char':
-                    fmt = f'{self.elements_per_column[col-1]}s'
-                elif dtype == 'double':
-                    fmt = f'{self.elements_per_column[col-1]}d'
-                elif dtype == 'uint64':
-                    fmt = f'{self.elements_per_column[col-1]}Q'
-                else:
-                    raise ValueError(f"Unsupported data type: {dtype}")
-
-                self.file.fid.write(struct.pack(self.file.machineformat + fmt, value))
-            finally:
-                self.file.fclose()
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE data SET col{col-1} = ? WHERE id = ?", (value, row))
+        conn.commit()
