@@ -27,7 +27,7 @@ This is a Python port of the VH-Lab/DID-matlab project.
 3.  **Install dependencies:**
 
     ```bash
-    pip install numpy scipy pandas
+    pip install -r requirements.txt
     ```
 
 ## Running Tests
