@@ -1,0 +1,11 @@
+site_name: DID-Python
+nav:
+    - Home: index.md
+theme: readthedocs
+plugins:
+    - search
+markdown_extensions:
+    - toc:
+        permalink: true
+watch:
+    - did

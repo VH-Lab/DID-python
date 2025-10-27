@@ -1,8 +1,39 @@
-# Data Interface Database
+# DID-Python
 
-The did-python library is a versioned database API built to manage [DID documents](https://github.com/VH-Lab/DID-matlab/wiki/Discussion-on-DID-document-core) and associated binary data.
+This is a Python port of the VH-Lab/DID-matlab project.
 
-It is a port from DID-matlab (https://github.com/VH-lab/DID-matlab)
+## Setup
 
-The Python package makes use of [native namespace packages available in Python 3.3 and later](https://packaging.python.org/guides/packaging-namespace-packages/#native-namespace-packages).
+1.  **Create a virtual environment:**
 
+    ```bash
+    python -m venv venv
+    ```
+
+2.  **Activate the virtual environment:**
+
+    *   On macOS and Linux:
+
+        ```bash
+        source venv/bin/activate
+        ```
+
+    *   On Windows:
+
+        ```bash
+        .\\venv\\Scripts\\activate
+        ```
+
+3.  **Install dependencies:**
+
+    ```bash
+    pip install numpy scipy pandas
+    ```
+
+## Running Tests
+
+To run the tests, execute the following command from the root of the project:
+
+```bash
+python -m unittest discover tests
+```
