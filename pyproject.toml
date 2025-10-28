@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "did"
 version = "0.1.0"
 authors = [
-  { name="VH-Lab", email="author@example.com" },
+  { name="VH-Lab", email="vanhoosr@brandeis.edu" },
 ]
 description = "A Python port of the VH-Lab/DID-matlab project."
 readme = "README.md"
