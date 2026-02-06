@@ -44,7 +44,7 @@ The `did` library provides a framework for managing and querying data that is or
 To run the test suite, use the following command:
 
 ```bash
-python -m unittest discover tests
+pytest
 ```
 
 This will discover and run all the tests in the `tests` directory.
