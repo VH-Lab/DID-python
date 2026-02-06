@@ -34,9 +34,9 @@ The `did` library provides a framework for managing and querying data that is or
     source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
     ```
 
-3.  **Install the required dependencies:**
+3.  **Install the package and dependencies:**
     ```bash
-    pip install -r requirements.txt
+    pip install -e ".[dev]"
     ```
 
 ### Running the Tests
@@ -44,7 +44,7 @@ The `did` library provides a framework for managing and querying data that is or
 To run the test suite, use the following command:
 
 ```bash
-find . -name "test_*.py" -exec python -m unittest {} +
+python -m unittest discover tests
 ```
 
 This will discover and run all the tests in the `tests` directory.
