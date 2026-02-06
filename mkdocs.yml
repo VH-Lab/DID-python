@@ -1,4 +1,6 @@
 site_name: DID-Python
+theme:
+  name: material
 nav:
     - Home: index.md
     - API Reference: api.md
