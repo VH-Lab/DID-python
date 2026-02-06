@@ -58,6 +58,9 @@ def make_doc_tree(rates):
             doc.set_dependency_value('item3', ids_c[dep_c], error_if_not_found=False)
             g.add_edge(ids_c[dep_c], doc.id())
 
+        if 'depends_on' not in doc.document_properties:
+            doc.document_properties['depends_on'] = []
+
         counter += 1
         c_count += 1
 
@@ -270,3 +273,30 @@ def delete_random_branch(db, g, node_names):
     del node_names[node_to_remove]
 
     return g, node_names
+
+def get_demo_type(doc):
+    """
+    Finds the first demo class for a given document.
+    """
+    if 'demoA' in doc.document_properties:
+        return 'demoA'
+    elif 'demoB' in doc.document_properties:
+        return 'demoB'
+    elif 'demoC' in doc.document_properties:
+        return 'demoC'
+    return ''
+
+def apply_did_query(docs, q):
+    """
+    Returns the expected document and id output of the selected query.
+    """
+    from src.did.datastructures import field_search
+
+    search_params = q.to_search_structure()
+    ids = []
+    d = []
+    for doc in docs:
+        if field_search(doc.document_properties, search_params):
+            d.append(doc)
+            ids.append(doc.id())
+    return ids, d

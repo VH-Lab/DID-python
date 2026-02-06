@@ -1,42 +1,60 @@
-# DID-Python
+# DID.py
 
 This is a Python port of the VH-Lab/DID-matlab project.
 
-## Setup
+## Introduction
 
-To set up the environment and run the tests, follow these steps:
+The `did` library provides a framework for managing and querying data that is organized into documents and branches. It is designed to be a flexible and extensible system for data management and analysis.
 
-1.  **Create a virtual environment:**
+## Key Features
+
+*   **Document-oriented data model:** Data is stored in documents, which are flexible, JSON-like structures.
+*   **Branching and versioning:** The library supports branching, allowing you to create and manage different versions of your data.
+*   **Powerful querying:** The library provides a rich query language for retrieving documents from the database.
+*   **Extensible architecture:** The library is designed to be extensible, allowing you to add new functionality and data types.
+
+## Getting Started
+
+### Prerequisites
+
+*   Python 3.10 or later
+*   `pip` for installing packages
+
+### Setup
+
+1.  **Clone the repository:**
     ```bash
-    python -m venv venv
+    git clone https://github.com/your-username/DID-python.git
+    cd DID-python
     ```
 
-2.  **Activate the virtual environment:**
-    *   On Windows:
-        ```bash
-        venv\Scripts\activate
-        ```
-    *   On macOS and Linux:
-        ```bash
-        source venv/bin/activate
-        ```
+2.  **Create and activate a virtual environment:**
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+    ```
 
-3.  **Install dependencies:**
+3.  **Install the required dependencies:**
     ```bash
     pip install -r requirements.txt
     ```
 
-4.  **Run tests:**
-    ```bash
-    python -m unittest discover tests
-    ```
+### Running the Tests
+
+To run the test suite, use the following command:
+
+```bash
+find . -name "test_*.py" -exec python -m unittest {} +
+```
+
+This will discover and run all the tests in the `tests` directory.
 
 ## Documentation
 
-This project uses [MkDocs](https://www.mkdocs.org/) for documentation. To view the documentation locally, run the following command:
+The documentation for this project is built using `mkdocs`. To build the documentation, run the following command:
 
 ```bash
-mkdocs serve
+mkdocs build
 ```
 
-Then, open your web browser and navigate to `http://127.0.0.1:8000`.
+The documentation will be generated in the `site` directory. You can then open the `site/index.html` file in your web browser to view the documentation.

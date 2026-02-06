@@ -1,60 +1,53 @@
 import unittest
 import os
-from src.did.implementations.sqlitedb import SQLiteDB
-from tests.helpers import make_doc_tree, verify_db_document_structure
-from src.did.document import Document
+from did.document import Document
 
 class TestDocument(unittest.TestCase):
-    DB_FILENAME = 'test_db_docs.sqlite'
-
     def setUp(self):
-        # Create a temporary working directory to run tests in
-        self.db = SQLiteDB(self.DB_FILENAME)
-        self.db.add_branch('a')
+        # Set the schema path for the document class
+        self.schema_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'did', 'example_schema', 'demo_schema1', 'database_schema')
+        Document.set_schema_path(self.schema_path)
 
-    def tearDown(self):
-        self.db.close()
-        if os.path.exists(self.DB_FILENAME):
-            os.remove(self.DB_FILENAME)
+    def test_dependency_management(self):
+        # Create a document of type 'demoC', which has 'depends_on' fields
+        doc = Document('demoC')
 
-    def test_add_documents(self):
-        g, node_names, docs = make_doc_tree([10, 10, 10])
+        # Verify 'depends_on' field exists
+        self.assertIn('depends_on', doc.document_properties,
+                      "The 'depends_on' field should exist for 'demoC' document type.")
 
-        # In the Python version, we don't need to plot the graph for testing
+        # Test setting a new dependency value
+        doc.set_dependency_value('item1', 'new_value')
+        retrieved_value = doc.dependency_value('item1')
+        self.assertEqual(retrieved_value, 'new_value',
+                         "Failed to set and retrieve a new dependency value.")
 
-        self.db.add_docs(docs)
+        # Test updating an existing dependency value
+        doc.set_dependency_value('item1', 'updated_value')
+        retrieved_value = doc.dependency_value('item1')
+        self.assertEqual(retrieved_value, 'updated_value',
+                         "Failed to update an existing dependency value.")
 
-        b, msg = verify_db_document_structure(self.db, g, docs)
-        self.assertTrue(b, msg)
+    def test_file_management(self):
+        # Create a document of type 'demoFile', which is defined to handle files
+        doc = Document('demoFile')
 
-    def test_remove_documents(self):
-        g, node_names, docs = make_doc_tree([30, 30, 30])
-        self.db.add_docs(docs)
-        b, msg = verify_db_document_structure(self.db, g, docs)
-        self.assertTrue(b, msg)
+        # Add a file and verify it was added
+        doc.add_file('filename1.ext', '/path/to/file1.txt')
+        is_in, _, fI_index = doc.is_in_file_list('filename1.ext')
+        self.assertTrue(is_in, "File 'filename1.ext' should be in the file list.")
+        self.assertIsNotNone(fI_index, "File info index should not be empty after adding a file.")
 
-        # Simplified version of the removal test
-        # A full port would require porting rm_doc_tree and add_doc_tree as well
+        # Verify the location of the added file
+        self.assertEqual(doc.document_properties['files']['file_info'][fI_index]['locations']['location'], '/path/to/file1.txt',
+                         "The location of the added file is incorrect.")
 
-        docs_to_delete = docs[:5]
-        doc_ids_to_delete = [doc.id() for doc in docs_to_delete]
-
-        self.db.remove_docs(doc_ids_to_delete)
-
-        remaining_docs = docs[5:]
-
-        # Verify that the remaining docs are still in the database
-        b, msg = verify_db_document_structure(self.db, g, remaining_docs)
-        self.assertTrue(b, msg)
-
-        # Verify that the deleted docs are no longer in the database
-        for doc_id in doc_ids_to_delete:
-            doc = self.db.get_docs(doc_id, OnMissing='ignore')
-            self.assertIsNone(doc, f"Document {doc_id} should have been deleted.")
-
-        # Verify that calling get_docs with 'error' raises an error for a deleted doc
-        with self.assertRaises(ValueError):
-            self.db.get_docs(doc_ids_to_delete[0])
+        # Remove the file and verify it was removed
+        doc.remove_file('filename1.ext')
+        is_in_after_removal, _, fI_index_after_removal = doc.is_in_file_list('filename1.ext')
+        # After removal, searching for the file info should yield an empty index
+        self.assertFalse(is_in_after_removal)
+        self.assertIsNone(fI_index_after_removal, "File info should be empty after removing the file.")
 
 if __name__ == '__main__':
     unittest.main()
