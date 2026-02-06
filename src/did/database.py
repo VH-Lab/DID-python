@@ -87,18 +87,49 @@ class Database(abc.ABC):
     def _do_add_doc(self, document_obj, branch_id, **kwargs):
         pass
 
-    def get_docs(self, document_ids, OnMissing='error'):
+    def get_docs(self, document_ids, branch_id=None, OnMissing='error', **kwargs):
+        is_single = False
         if not isinstance(document_ids, list):
             document_ids = [document_ids]
+            is_single = True
+
+        # If branch_id is provided, we might want to validate it or pass it down.
+        # Current _do_get_doc doesn't take branch_id, but maybe it should?
+        # For now, I'll ignore passing it to _do_get_doc unless I change its signature.
+        # But wait, checking if doc is in branch is important if branch_id is given.
+
+        # Checking logic here (inefficient but generic):
+        if branch_id is not None:
+             branch_doc_ids = self.get_doc_ids(branch_id)
+             # If branch doesn't exist? get_doc_ids might return empty or raise?
+             # get_doc_ids calls _do_get_doc_ids.
 
         docs = []
         for doc_id in document_ids:
-            docs.append(self._do_get_doc(doc_id, OnMissing=OnMissing))
+            if branch_id is not None:
+                if doc_id not in branch_doc_ids:
+                    # Document not in branch
+                    if OnMissing == 'error':
+                        raise ValueError(f"Document {doc_id} not found in branch {branch_id}")
+                    elif OnMissing == 'warn':
+                         print(f"Warning: Document {doc_id} not found in branch {branch_id}")
+                         continue
+                    else:
+                         continue
 
-        return docs[0] if len(docs) == 1 else docs
+            docs.append(self._do_get_doc(doc_id, OnMissing=OnMissing, **kwargs))
+
+        if not docs and OnMissing != 'ignore' and len(document_ids) > 0:
+             # If filtered out all?
+             pass
+
+        if is_single:
+             return docs[0] if docs else None
+        else:
+             return docs
 
     @abc.abstractmethod
-    def _do_get_doc(self, document_id, OnMissing='error'):
+    def _do_get_doc(self, document_id, OnMissing='error', **kwargs):
         pass
 
     def remove_docs(self, document_ids, branch_id=None, **kwargs):
@@ -140,6 +171,26 @@ class Database(abc.ABC):
     @abc.abstractmethod
     def _do_get_branch_parent(self, branch_id):
         pass
+
+    def search(self, query_obj, branch_id=None):
+        from .datastructures import field_search
+
+        if branch_id is None:
+            branch_id = self.current_branch_id
+
+        doc_ids = self.get_doc_ids(branch_id)
+        docs = self.get_docs(doc_ids, OnMissing='ignore')
+        if docs is None: docs = []
+        if not isinstance(docs, list): docs = [docs]
+
+        search_params = query_obj.to_search_structure()
+
+        matched_ids = []
+        for doc in docs:
+            if doc and field_search(doc.document_properties, search_params):
+                matched_ids.append(doc.id())
+
+        return matched_ids
 
     # ... other abstract do_* methods for documents ...
 

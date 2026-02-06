@@ -3,7 +3,7 @@ import os
 from did.document import Document
 from did.file import ReadOnlyFileobj
 from did.implementations.sqlitedb import SQLiteDB
-from .helpers import make_doc_tree
+from tests.helpers import make_doc_tree
 
 class TestFileDocument(unittest.TestCase):
     DB_FILENAME = 'test_file_document.sqlite'
@@ -27,7 +27,7 @@ class TestFileDocument(unittest.TestCase):
 
     def test_add_and_open_file(self):
         # Create a document of type 'demoFile'
-        schema_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'did', 'example_schema', 'demo_schema1', 'database_schema')
+        schema_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'did', 'example_schema', 'demo_schema1')
         Document.set_schema_path(schema_path)
         doc = Document('demoFile')
 

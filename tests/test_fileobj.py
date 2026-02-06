@@ -5,7 +5,7 @@ class TestFileobj(unittest.TestCase):
     def test_constructor(self):
         # Test creating a fileobj
         the_file_obj = Fileobj()
-        self.assertEqual(the_file_obj.fid, -1)
+        self.assertIsNone(the_file_obj.fid)
         self.assertEqual(the_file_obj.permission, 'r')
         self.assertEqual(the_file_obj.machineformat, 'n')
         self.assertEqual(the_file_obj.fullpathfilename, '')

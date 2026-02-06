@@ -5,7 +5,7 @@ from did.document import Document
 class TestDocument(unittest.TestCase):
     def setUp(self):
         # Set the schema path for the document class
-        self.schema_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'did', 'example_schema', 'demo_schema1', 'database_schema')
+        self.schema_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'did', 'example_schema', 'demo_schema1')
         Document.set_schema_path(self.schema_path)
 
     def test_dependency_management(self):

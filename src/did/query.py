@@ -1,5 +1,17 @@
 class Query:
+    VALID_OPS = {
+        'regexp', 'exact_string', 'exact_string_anycase', 'contains_string', 'exact_number',
+        'lessthan', 'lessthaneq', 'greaterthan', 'greaterthaneq', 'hassize', 'hasmember',
+        'hasfield', 'partial_struct', 'hasanysubfield_contains_string', 'hasanysubfield_exact_string',
+        'or', 'depends_on', 'isa'
+    }
+
     def __init__(self, field=None, op=None, param1=None, param2=None):
+        if op:
+            check_op = op[1:] if op.startswith('~') else op
+            if check_op.lower() not in self.VALID_OPS:
+                raise ValueError(f"Invalid operator: {op}")
+
         if isinstance(field, dict):
             self.search_structure = field
         elif isinstance(field, list):

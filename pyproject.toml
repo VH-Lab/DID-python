@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "did"
+version = "0.1.0"
+description = "A Python port of the VH-Lab/DID-matlab project"
+readme = "README.md"
+authors = [
+  { name = "Author", email = "vanhoosr@brandeis.edu" },
+]
+dependencies = [
+    "numpy",
+    "pandas",
+    "portalocker",
+    "networkx",
+    "matplotlib",
+]
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+dev = [
+    "mkdocs",
+    "mkdocs-material",
+    "mkdocstrings[python]",
+]
+
+[tool.setuptools]
+packages = ["did"]
+
+[tool.setuptools.package-dir]
+"" = "src"

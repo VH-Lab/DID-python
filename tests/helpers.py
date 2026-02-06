@@ -1,7 +1,7 @@
 import random
 import numpy as np
 import networkx as nx
-from src.did.document import Document
+from did.document import Document
 
 def make_doc_tree(rates):
     """
@@ -70,7 +70,7 @@ def verify_db_document_structure(db, g, expected_docs, OnMissing='error'):
     """
     Verifies that the documents in the database match the expected documents and their relationships.
     """
-    from src.did.datastructures import eq_len
+    from did.datastructures import eq_len
 
     fieldset = ['demoA', 'demoB', 'demoC']
 
@@ -290,7 +290,7 @@ def apply_did_query(docs, q):
     """
     Returns the expected document and id output of the selected query.
     """
-    from src.did.datastructures import field_search
+    from did.datastructures import field_search
 
     search_params = q.to_search_structure()
     ids = []

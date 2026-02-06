@@ -20,7 +20,7 @@ class Document:
                 if key in self.document_properties:
                     self.document_properties[key] = value
 
-        self._reset_file_info()
+            self._reset_file_info()
 
     def id(self):
         return self.document_properties.get('base', {}).get('id')
@@ -38,7 +38,49 @@ class Document:
 
     def _reset_file_info(self):
         if 'files' in self.document_properties:
-            self.document_properties['files']['file_info'] = datastructures.empty_struct('name', 'locations')
+            # Only reset if file_info is missing or we are initializing a new document
+            if 'file_info' not in self.document_properties['files']:
+                self.document_properties['files']['file_info'] = datastructures.empty_struct('name', 'locations')
+
+    def is_in_file_list(self, filename):
+        file_info = self.document_properties.get('files', {}).get('file_info', [])
+        if isinstance(file_info, dict) and not file_info:
+             file_info = []
+
+        for i, info in enumerate(file_info):
+            if info.get('name') == filename:
+                return True, info, i
+        return False, None, None
+
+    def add_file(self, filename, location):
+        if 'files' not in self.document_properties:
+            self.document_properties['files'] = {'file_info': []}
+
+        files_prop = self.document_properties['files']
+        if 'file_info' not in files_prop:
+             files_prop['file_info'] = []
+
+        if isinstance(files_prop['file_info'], dict) and not files_prop['file_info']:
+            files_prop['file_info'] = []
+
+        file_info_list = files_prop['file_info']
+
+        is_in, _, _ = self.is_in_file_list(filename)
+        if not is_in:
+             new_info = {
+                 'name': filename,
+                 'locations': {'location': location}
+             }
+             file_info_list.append(new_info)
+
+    def remove_file(self, filename):
+        is_in, _, index = self.is_in_file_list(filename)
+        if is_in:
+            del self.document_properties['files']['file_info'][index]
+
+    @staticmethod
+    def set_schema_path(path):
+        PathConstants.DEFPATH = path
 
     @staticmethod
     def read_blank_definition(json_file_location_string):

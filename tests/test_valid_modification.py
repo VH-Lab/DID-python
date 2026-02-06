@@ -2,7 +2,7 @@ import unittest
 import os
 from did.document import Document
 from did.implementations.sqlitedb import SQLiteDB
-from .helpers import make_doc_tree
+from tests.helpers import make_doc_tree
 
 class TestValidModification(unittest.TestCase):
     DB_FILENAME = 'test_valid_modification.sqlite'

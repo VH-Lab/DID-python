@@ -62,7 +62,7 @@ class Fileobj:
         return self
 
     def fclose(self):
-        if self.fid:
+        if getattr(self, 'fid', None):
             self.fid.close()
             self.fid = None
 

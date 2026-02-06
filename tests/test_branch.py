@@ -1,7 +1,7 @@
 import unittest
 import os
 import networkx as nx
-from src.did.implementations.sqlitedb import SQLiteDB
+from did.implementations.sqlitedb import SQLiteDB
 from tests.helpers import make_tree, name_tree, add_branch_nodes, verify_branch_nodes, verify_branch_node_structure, delete_random_branch
 
 class TestBranch(unittest.TestCase):
