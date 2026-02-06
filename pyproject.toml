@@ -24,6 +24,7 @@ dev = [
     "mkdocs",
     "mkdocs-material",
     "mkdocstrings[python]",
+    "pytest",
 ]
 
 [tool.setuptools]
