@@ -41,13 +41,19 @@ The `did` library provides a framework for managing and querying data that is or
 
 ### Running the Tests
 
-To run the test suite, use the following command:
+You can run the tests using either `pytest` (if you installed the development dependencies) or the standard `unittest` module.
 
+**Using pytest (Recommended for development):**
 ```bash
 pytest
 ```
 
-This will discover and run all the tests in the `tests` directory.
+**Using unittest (Standard):**
+```bash
+python -m unittest discover tests
+```
+
+Both commands will discover and run all the tests in the `tests` directory.
 
 ## Documentation
 
