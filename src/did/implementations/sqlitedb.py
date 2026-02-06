@@ -14,6 +14,7 @@ class SQLiteDB(Database):
 
         is_new = not os.path.exists(self.connection)
         self.dbid = sqlite3.connect(self.connection)
+        self.dbid.execute("PRAGMA foreign_keys = ON")
         self.dbid.row_factory = sqlite3.Row
 
         if is_new:
@@ -116,12 +117,16 @@ class SQLiteDB(Database):
         import time
         cursor = self.dbid.cursor()
 
+        # Handle empty string parent as NULL
+        if parent_branch_id == '':
+            parent_branch_id = None
+
         # Add the new branch
         cursor.execute('INSERT INTO branches (branch_id, parent_id, timestamp) VALUES (?, ?, ?)',
                        (branch_id, parent_branch_id, time.time()))
 
         # Copy docs from parent branch
-        if parent_branch_id and parent_branch_id != '':
+        if parent_branch_id:
             cursor.execute('SELECT doc_idx FROM branch_docs WHERE branch_id = ?', (parent_branch_id,))
             doc_indices = [row['doc_idx'] for row in cursor.fetchall()]
             for doc_idx in doc_indices:
@@ -164,12 +169,17 @@ class SQLiteDB(Database):
             # Simplified field insertion
             # A full implementation would parse the document and insert into doc_data
 
-        cursor.execute('INSERT OR IGNORE INTO branch_docs (branch_id, doc_idx, timestamp) VALUES (?, ?, ?)',
-                       (branch_id, doc_idx, time.time()))
+        try:
+            cursor.execute('INSERT INTO branch_docs (branch_id, doc_idx, timestamp) VALUES (?, ?, ?)',
+                           (branch_id, doc_idx, time.time()))
+            self.dbid.commit()
+        except sqlite3.IntegrityError as e:
+            if "FOREIGN KEY" in str(e):
+                raise ValueError(f"Branch '{branch_id}' does not exist.")
+            # Ignore other integrity errors (duplicates)
+            pass
 
-        self.dbid.commit()
-
-    def _do_get_doc(self, document_id, OnMissing='error'):
+    def _do_get_doc(self, document_id, OnMissing='error', **kwargs):
         from ..document import Document
         import json
 
@@ -189,8 +199,33 @@ class SQLiteDB(Database):
             else:
                 raise ValueError(f"Document id '{document_id}' not found.")
 
+    def open_doc(self, doc_id, filename):
+        from ..file import ReadOnlyFileobj
+
+        doc = self.get_docs(doc_id)
+        if not doc:
+            raise ValueError(f"Document {doc_id} not found.")
+
+        is_in, info, _ = doc.is_in_file_list(filename)
+        if is_in:
+             location = info['locations']['location']
+
+             # Rebase path if it's relative, assuming it's relative to the DB location
+             if not os.path.isabs(location):
+                 db_dir = os.path.dirname(os.path.abspath(self.connection))
+                 location = os.path.join(db_dir, location)
+
+             return ReadOnlyFileobj(location)
+
+        raise FileNotFoundError(f"File {filename} not found in document {doc_id}.")
+
     def _do_remove_doc(self, document_id, branch_id, **kwargs):
         cursor = self.dbid.cursor()
+
+        # Check if branch exists
+        cursor.execute('SELECT 1 FROM branches WHERE branch_id = ?', (branch_id,))
+        if not cursor.fetchone():
+             raise ValueError(f"Branch '{branch_id}' does not exist.")
 
         # Get doc_idx from doc_id
         cursor.execute('SELECT doc_idx FROM docs WHERE doc_id = ?', (document_id,))

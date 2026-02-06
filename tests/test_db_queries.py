@@ -3,7 +3,7 @@ import os
 import random
 from did.implementations.sqlitedb import SQLiteDB
 from did.query import Query
-from .helpers import make_doc_tree, verify_db_document_structure, get_demo_type, apply_did_query
+from tests.helpers import make_doc_tree, verify_db_document_structure, get_demo_type, apply_did_query
 
 class TestDbQueries(unittest.TestCase):
     DB_FILENAME = 'test_db_queries.sqlite'

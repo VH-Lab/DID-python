@@ -256,6 +256,20 @@ def field_search(a, search_struct):
     elif op_lower == 'or':
         if isinstance(param1, dict) and isinstance(param2, dict):
             b = field_search(a, param1) or field_search(a, param2)
+    elif op_lower == 'depends_on':
+        # param1 = dependency name, param2 = dependency value
+        if 'depends_on' in a:
+            for dep in a['depends_on']:
+                if dep.get('name') == param1:
+                    if dep.get('value') == param2:
+                        b = True
+                        break
+    elif op_lower == 'isa':
+        # param1 = class name
+        if param1 in a:
+            b = True
+        elif 'document_class' in a and a['document_class'].get('class_name') == param1:
+            b = True
     else:
         raise ValueError(f"Unknown search operation: {operation}")
 
@@ -299,3 +313,14 @@ def struct_merge(s1, s2, error_if_new_field=False, do_alphabetical=True):
         return {key: s_out[key] for key in sorted(s_out)}
     else:
         return s_out
+def table_cross_join(t1, t2):
+    """
+    Performs a cross join (Cartesian product) of two lists of dictionaries.
+    """
+    result = []
+    for r1 in t1:
+        for r2 in t2:
+            new_row = r1.copy()
+            new_row.update(r2)
+            result.append(new_row)
+    return result

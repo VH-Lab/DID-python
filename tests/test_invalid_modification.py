@@ -2,7 +2,7 @@ import unittest
 import os
 from did.document import Document
 from did.implementations.sqlitedb import SQLiteDB
-from .helpers import make_doc_tree
+from tests.helpers import make_doc_tree
 
 class TestInvalidModification(unittest.TestCase):
     DB_FILENAME = 'test_invalid_modification.sqlite'
@@ -49,7 +49,7 @@ class TestInvalidModification(unittest.TestCase):
     def test_get_doc_from_nonexistent_branch(self):
         doc_id = self.docs[0].id()
         # This should not raise an error, but should return None
-        result = self.db.get_docs(doc_id, branch_id='nonexistent_branch')
+        result = self.db.get_docs(doc_id, branch_id='nonexistent_branch', OnMissing='ignore')
         self.assertIsNone(result)
 
 if __name__ == '__main__':

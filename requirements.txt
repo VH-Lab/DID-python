@@ -1,8 +1,0 @@
-mkdocs
-mkdocs-material
-mkdocstrings[python]
-numpy
-pandas
-portalocker
-networkx
-matplotlib
