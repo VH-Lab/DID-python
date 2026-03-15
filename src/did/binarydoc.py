@@ -1,5 +1,6 @@
 import abc
 
+
 class BinaryDoc(abc.ABC):
     def __init__(self, *args, **kwargs):
         pass
@@ -7,7 +8,7 @@ class BinaryDoc(abc.ABC):
     def __del__(self):
         try:
             self.fclose()
-        except:
+        except Exception:
             pass
 
     @abc.abstractmethod

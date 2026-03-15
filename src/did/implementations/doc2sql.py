@@ -6,46 +6,41 @@ def get_field(doc_props, fields):
         fields = [fields]
 
     for field in fields:
-        path = field.split('.')
+        path = field.split(".")
         d = doc_props
         try:
             for p in path:
                 d = d[p]
-            if d is not None and d != '':
+            if d is not None and d != "":
                 return d
         except (KeyError, TypeError, IndexError):
             continue
-    return ''
+    return ""
 
 
 def new_column(name, value, matlab_type=None):
     if matlab_type is None:
         matlab_type = type(value).__name__
     return {
-        'name': name,
-        'matlabType': matlab_type,
-        'sqlType': sql_type_of(matlab_type),
-        'value': value
+        "name": name,
+        "matlabType": matlab_type,
+        "sqlType": sql_type_of(matlab_type),
+        "value": value,
     }
 
 
 def sql_type_of(matlab_type):
-    type_map = {
-        'bool': 'BOOLEAN',
-        'str': 'TEXT',
-        'int': 'INTEGER',
-        'float': 'REAL'
-    }
-    return type_map.get(matlab_type, 'BLOB')
+    type_map = {"bool": "BOOLEAN", "str": "TEXT", "int": "INTEGER", "float": "REAL"}
+    return type_map.get(matlab_type, "BLOB")
 
 
 def _get_class_name(doc_props):
     """Extract class name from document properties, supporting both DID-python and NDI formats."""
     # DID-python schema format
-    if 'classname' in doc_props:
-        return doc_props['classname']
+    if "classname" in doc_props:
+        return doc_props["classname"]
     # NDI / MATLAB format
-    return get_field(doc_props, ['document_class.class_name', 'ndi_document.type'])
+    return get_field(doc_props, ["document_class.class_name", "ndi_document.type"])
 
 
 def _get_superclass_str(doc_props):
@@ -56,63 +51,63 @@ def _get_superclass_str(doc_props):
     For DID-python style ["base", "demoA"], use directly.
     """
     # DID-python schema format: top-level 'superclasses' list of strings
-    if 'superclasses' in doc_props and isinstance(doc_props['superclasses'], list):
-        superclasses = doc_props['superclasses']
+    if "superclasses" in doc_props and isinstance(doc_props["superclasses"], list):
+        superclasses = doc_props["superclasses"]
         if not superclasses:
-            return ''
+            return ""
         names = []
         for sc in superclasses:
             if isinstance(sc, str):
                 names.append(sc)
-            elif isinstance(sc, dict) and 'definition' in sc:
+            elif isinstance(sc, dict) and "definition" in sc:
                 # MATLAB-style: extract name from definition path
-                defn = sc['definition']
-                name = re.sub(r'.+/', '', defn)
-                name = re.sub(r'\..+$', '', name)
+                defn = sc["definition"]
+                name = re.sub(r".+/", "", defn)
+                name = re.sub(r"\..+$", "", name)
                 names.append(name)
         names = sorted(set(names))
-        return ', '.join(names)
+        return ", ".join(names)
 
     # NDI / MATLAB format: document_class.superclasses
-    superclasses = get_field(doc_props, ['document_class.superclasses'])
+    superclasses = get_field(doc_props, ["document_class.superclasses"])
     if isinstance(superclasses, list):
         names = []
         for sc in superclasses:
-            if isinstance(sc, dict) and 'definition' in sc:
-                defn = sc['definition']
-                name = re.sub(r'.+/', '', defn)
-                name = re.sub(r'\..+$', '', name)
+            if isinstance(sc, dict) and "definition" in sc:
+                defn = sc["definition"]
+                name = re.sub(r".+/", "", defn)
+                name = re.sub(r"\..+$", "", name)
                 names.append(name)
             elif isinstance(sc, str):
                 names.append(sc)
         names = sorted(set(names))
-        return ', '.join(names)
+        return ", ".join(names)
 
-    return ''
+    return ""
 
 
 def _serialize_depends_on(doc_props):
     """Serialize depends_on matching MATLAB's format: 'name,value;name,value;'"""
-    depends_on = doc_props.get('depends_on', [])
+    depends_on = doc_props.get("depends_on", [])
     if not depends_on or not isinstance(depends_on, list):
-        return ''
+        return ""
 
     parts = []
     for dep in depends_on:
         if isinstance(dep, dict):
-            name = str(dep.get('name', ''))
-            value = str(dep.get('value', ''))
+            name = str(dep.get("name", ""))
+            value = str(dep.get("value", ""))
             if name and value:
-                parts.append(f'{name},{value};')
+                parts.append(f"{name},{value};")
 
-    return ''.join(parts)
+    return "".join(parts)
 
 
-def _flatten_dict(d, prefix=''):
+def _flatten_dict(d, prefix=""):
     """Flatten a nested dict using ___ separator for nested keys (matching MATLAB's getMetaTableFrom)."""
     items = []
     for key, value in d.items():
-        col_name = f'{prefix}___{key}' if prefix else key
+        col_name = f"{prefix}___{key}" if prefix else key
         if isinstance(value, dict):
             items.extend(_flatten_dict(value, col_name))
         elif isinstance(value, list):
@@ -125,20 +120,24 @@ def _flatten_dict(d, prefix=''):
 
 def _get_meta_table_from(group_name, doc_id, field_value):
     """Create a meta-table from a field group, matching MATLAB's getMetaTableFrom."""
-    table = {
-        'name': group_name,
-        'columns': [new_column('doc_id', doc_id)]
-    }
+    table = {"name": group_name, "columns": [new_column("doc_id", doc_id)]}
 
     if isinstance(field_value, dict):
         for col_name, col_value in _flatten_dict(field_value):
-            table['columns'].append(new_column(col_name, col_value))
+            table["columns"].append(new_column(col_name, col_value))
 
     return table
 
 
 # Fields to skip when building per-group meta-tables
-_SKIP_FIELDS = {'classname', 'document_class', 'superclasses', 'depends_on', 'files', 'file'}
+_SKIP_FIELDS = {
+    "classname",
+    "document_class",
+    "superclasses",
+    "depends_on",
+    "files",
+    "file",
+}
 
 
 def doc_to_sql(doc):
@@ -155,25 +154,25 @@ def doc_to_sql(doc):
     doc_props = doc.document_properties
 
     # Build the 'meta' table
-    meta = {'name': 'meta', 'columns': []}
+    meta = {"name": "meta", "columns": []}
 
-    id_val = get_field(doc_props, ['base.id', 'ndi_document.id'])
-    meta['columns'].append(new_column('doc_id', id_val))
+    id_val = get_field(doc_props, ["base.id", "ndi_document.id"])
+    meta["columns"].append(new_column("doc_id", id_val))
 
     class_name = _get_class_name(doc_props)
-    meta['columns'].append(new_column('class', class_name))
+    meta["columns"].append(new_column("class", class_name))
 
     superclass = _get_superclass_str(doc_props)
-    meta['columns'].append(new_column('superclass', superclass))
+    meta["columns"].append(new_column("superclass", superclass))
 
-    datestamp = get_field(doc_props, ['base.datestamp', 'ndi_document.datestamp'])
-    meta['columns'].append(new_column('datestamp', datestamp))
+    datestamp = get_field(doc_props, ["base.datestamp", "ndi_document.datestamp"])
+    meta["columns"].append(new_column("datestamp", datestamp))
 
-    meta['columns'].append(new_column('creation', ''))
-    meta['columns'].append(new_column('deletion', ''))
+    meta["columns"].append(new_column("creation", ""))
+    meta["columns"].append(new_column("deletion", ""))
 
     depends_on_str = _serialize_depends_on(doc_props)
-    meta['columns'].append(new_column('depends_on', depends_on_str))
+    meta["columns"].append(new_column("depends_on", depends_on_str))
 
     meta_tables = [meta]
 

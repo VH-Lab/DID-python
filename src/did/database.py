@@ -1,19 +1,20 @@
 import abc
 
+
 class Database(abc.ABC):
-    def __init__(self, connection='', **kwargs):
+    def __init__(self, connection="", **kwargs):
         self.connection = connection
         self.version = None
-        self.current_branch_id = ''
+        self.current_branch_id = ""
         self.frozen_branch_ids = []
         self.dbid = None
         self.preferences = {}
-        self.debug = kwargs.get('debug', False)
+        self.debug = kwargs.get("debug", False)
 
     def __del__(self):
         try:
             self.close()
-        except:
+        except Exception:
             pass
 
     def open(self):
@@ -87,7 +88,7 @@ class Database(abc.ABC):
     def _do_add_doc(self, document_obj, branch_id, **kwargs):
         pass
 
-    def get_docs(self, document_ids, branch_id=None, OnMissing='error', **kwargs):
+    def get_docs(self, document_ids, branch_id=None, OnMissing="error", **kwargs):
         is_single = False
         if not isinstance(document_ids, list):
             document_ids = [document_ids]
@@ -100,36 +101,40 @@ class Database(abc.ABC):
 
         # Checking logic here (inefficient but generic):
         if branch_id is not None:
-             branch_doc_ids = self.get_doc_ids(branch_id)
-             # If branch doesn't exist? get_doc_ids might return empty or raise?
-             # get_doc_ids calls _do_get_doc_ids.
+            branch_doc_ids = self.get_doc_ids(branch_id)
+            # If branch doesn't exist? get_doc_ids might return empty or raise?
+            # get_doc_ids calls _do_get_doc_ids.
 
         docs = []
         for doc_id in document_ids:
             if branch_id is not None:
                 if doc_id not in branch_doc_ids:
                     # Document not in branch
-                    if OnMissing == 'error':
-                        raise ValueError(f"Document {doc_id} not found in branch {branch_id}")
-                    elif OnMissing == 'warn':
-                         print(f"Warning: Document {doc_id} not found in branch {branch_id}")
-                         continue
+                    if OnMissing == "error":
+                        raise ValueError(
+                            f"Document {doc_id} not found in branch {branch_id}"
+                        )
+                    elif OnMissing == "warn":
+                        print(
+                            f"Warning: Document {doc_id} not found in branch {branch_id}"
+                        )
+                        continue
                     else:
-                         continue
+                        continue
 
             docs.append(self._do_get_doc(doc_id, OnMissing=OnMissing, **kwargs))
 
-        if not docs and OnMissing != 'ignore' and len(document_ids) > 0:
-             # If filtered out all?
-             pass
+        if not docs and OnMissing != "ignore" and len(document_ids) > 0:
+            # If filtered out all?
+            pass
 
         if is_single:
-             return docs[0] if docs else None
+            return docs[0] if docs else None
         else:
-             return docs
+            return docs
 
     @abc.abstractmethod
-    def _do_get_doc(self, document_id, OnMissing='error', **kwargs):
+    def _do_get_doc(self, document_id, OnMissing="error", **kwargs):
         pass
 
     def remove_docs(self, document_ids, branch_id=None, **kwargs):
@@ -179,9 +184,11 @@ class Database(abc.ABC):
             branch_id = self.current_branch_id
 
         doc_ids = self.get_doc_ids(branch_id)
-        docs = self.get_docs(doc_ids, OnMissing='ignore')
-        if docs is None: docs = []
-        if not isinstance(docs, list): docs = [docs]
+        docs = self.get_docs(doc_ids, OnMissing="ignore")
+        if docs is None:
+            docs = []
+        if not isinstance(docs, list):
+            docs = [docs]
 
         search_params = query_obj.to_search_structure()
 

@@ -1,11 +1,11 @@
 import unittest
 import os
-from did.document import Document
 from did.implementations.sqlitedb import SQLiteDB
 from tests.helpers import make_doc_tree
 
+
 class TestValidModification(unittest.TestCase):
-    DB_FILENAME = 'test_valid_modification.sqlite'
+    DB_FILENAME = "test_valid_modification.sqlite"
 
     def setUp(self):
         # Create a temporary database for testing
@@ -13,14 +13,14 @@ class TestValidModification(unittest.TestCase):
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
         self.db = SQLiteDB(self.db_path)
-        self.db.add_branch('a')
+        self.db.add_branch("a")
         # Ensure at least one document is created
         _, _, self.docs = make_doc_tree([1, 1, 1])
         while not self.docs:
             _, _, self.docs = make_doc_tree([1, 1, 1])
 
         for doc in self.docs:
-            self.db._do_add_doc(doc, 'a')
+            self.db._do_add_doc(doc, "a")
 
     def tearDown(self):
         # Clean up the database file
@@ -33,19 +33,20 @@ class TestValidModification(unittest.TestCase):
         doc_id = doc.id()
 
         # Remove the document
-        self.db.remove_docs(doc_id, 'a')
+        self.db.remove_docs(doc_id, "a")
 
         # Verify it's gone
-        retrieved_doc = self.db.get_docs(doc_id, OnMissing='ignore')
+        retrieved_doc = self.db.get_docs(doc_id, OnMissing="ignore")
         self.assertIsNone(retrieved_doc)
 
         # Re-add the document
-        self.db._do_add_doc(doc, 'a')
+        self.db._do_add_doc(doc, "a")
 
         # Verify it's back
         retrieved_doc = self.db.get_docs(doc_id)
         self.assertIsNotNone(retrieved_doc)
         self.assertEqual(retrieved_doc.id(), doc_id)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
