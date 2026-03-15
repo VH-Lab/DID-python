@@ -1,5 +1,6 @@
 import networkx as nx
 
+
 def docs_to_graph(document_objs):
     """
     Creates a directed graph from a list of Document objects.
@@ -12,9 +13,9 @@ def docs_to_graph(document_objs):
 
     for doc in document_objs:
         here_node = doc.id()
-        dependencies = doc.document_properties.get('depends_on', [])
+        dependencies = doc.document_properties.get("depends_on", [])
         for dep in dependencies:
-            there_node = dep.get('value')
+            there_node = dep.get("value")
             if there_node in nodes:
                 # Edge from B to A if A depends on B
                 g.add_edge(there_node, here_node)
@@ -22,6 +23,7 @@ def docs_to_graph(document_objs):
     # In networkx, the graph object itself is the primary output.
     # The adjacency matrix and node list can be accessed from the graph object.
     return g
+
 
 def find_all_dependencies(graph, doc_ids):
     """
@@ -33,13 +35,14 @@ def find_all_dependencies(graph, doc_ids):
             all_deps.update(nx.descendants(graph, doc_id))
     return list(all_deps)
 
+
 def find_docs_missing_dependencies(db, *dependency_names):
     """
     Finds documents that have dependencies on documents that do not exist.
     """
     from .query import Query
 
-    q = Query('depends_on', 'hasfield', '', '')
+    q = Query("depends_on", "hasfield", "", "")
     docs_with_deps = db.search(q)
 
     missing_deps_docs = []
@@ -47,21 +50,22 @@ def find_docs_missing_dependencies(db, *dependency_names):
     all_doc_ids = db.all_doc_ids()
 
     for doc in docs_with_deps:
-        dependencies = doc.document_properties.get('depends_on', [])
+        dependencies = doc.document_properties.get("depends_on", [])
         for dep in dependencies:
-            dep_name = dep.get('name')
-            dep_value = dep.get('value')
+            dep_name = dep.get("name")
+            dep_value = dep.get("value")
 
             if dependency_names and dep_name not in dependency_names:
                 continue
 
             if dep_value and dep_value not in all_doc_ids:
                 missing_deps_docs.append(doc)
-                break # Move to the next document
+                break  # Move to the next document
 
     return missing_deps_docs
 
-def plot_interactive_doc_graph(docs, g, layout='spring'):
+
+def plot_interactive_doc_graph(docs, g, layout="spring"):
     """
     Plots an interactive document graph.
 
@@ -71,8 +75,8 @@ def plot_interactive_doc_graph(docs, g, layout='spring'):
 
     fig, ax = plt.subplots()
 
-    if layout == 'layered':
-        pos = nx.nx_agraph.graphviz_layout(g, prog='dot')
+    if layout == "layered":
+        pos = nx.nx_agraph.graphviz_layout(g, prog="dot")
     else:
         pos = nx.spring_layout(g)
 
@@ -83,10 +87,10 @@ def plot_interactive_doc_graph(docs, g, layout='spring'):
             return
 
         # Find the closest node to the click
-        min_dist = float('inf')
+        min_dist = float("inf")
         closest_node = None
         for node, (x, y) in pos.items():
-            dist = (x - event.xdata)**2 + (y - event.ydata)**2
+            dist = (x - event.xdata) ** 2 + (y - event.ydata) ** 2
             if dist < min_dist:
                 min_dist = dist
                 closest_node = node
@@ -112,5 +116,5 @@ def plot_interactive_doc_graph(docs, g, layout='spring'):
                 clicked_node = clicked_doc
                 print("Global variable 'clicked_node' set to clicked document")
 
-    fig.canvas.mpl_connect('button_press_event', on_click)
+    fig.canvas.mpl_connect("button_press_event", on_click)
     plt.show()

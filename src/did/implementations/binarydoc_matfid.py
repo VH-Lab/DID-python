@@ -1,18 +1,19 @@
 from ..binarydoc import BinaryDoc
 from ..file import Fileobj
 
+
 class BinaryDocMatfid(BinaryDoc, Fileobj):
-    def __init__(self, key='', doc_unique_id='', **kwargs):
+    def __init__(self, key="", doc_unique_id="", **kwargs):
         super().__init__(**kwargs)
         self.key = key
         self.doc_unique_id = doc_unique_id
         # Ensure machine format is little-endian for cross-platform compatibility
-        self.machineformat = 'l'
+        self.machineformat = "l"
 
     def fclose(self):
         super().fclose()
         # Reset properties after closing
-        self.permission = 'r'
+        self.permission = "r"
 
     # The abstract methods from BinaryDoc would be implemented here,
     # likely by calling the corresponding methods of the Fileobj superclass.

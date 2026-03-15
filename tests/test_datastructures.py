@@ -1,21 +1,39 @@
 import unittest
-from did.datastructures import *
+from did.datastructures import (
+    cell_or_item,
+    cell_to_str,
+    col_vec,
+    empty_struct,
+    eq_emp,
+    eq_len,
+    eq_tot,
+    eq_unique,
+    field_search,
+    find_closest,
+    is_empty,
+    is_full_field,
+    json_encode_nan,
+    size_eq,
+    struct_merge,
+    struct_partial_match,
+)
+
 
 class TestDataStructures(unittest.TestCase):
     def test_cell_to_str(self):
-        self.assertEqual(cell_to_str(['a', 'b', 'c']), '["a", "b", "c"]')
-        self.assertEqual(cell_to_str([]), '[]')
+        self.assertEqual(cell_to_str(["a", "b", "c"]), '["a", "b", "c"]')
+        self.assertEqual(cell_to_str([]), "[]")
 
     def test_cell_or_item(self):
-        self.assertEqual(cell_or_item(['a', 'b', 'c'], 1), 'b')
-        self.assertEqual(cell_or_item('a'), 'a')
+        self.assertEqual(cell_or_item(["a", "b", "c"], 1), "b")
+        self.assertEqual(cell_or_item("a"), "a")
 
     def test_col_vec(self):
         self.assertEqual(col_vec([1, 2, 3]), [1, 2, 3])
         self.assertEqual(col_vec([[1, 2], [3, 4]]), [1, 3, 2, 4])
 
     def test_empty_struct(self):
-        self.assertEqual(empty_struct('a', 'b'), {})
+        self.assertEqual(empty_struct("a", "b"), {})
 
     def test_is_empty(self):
         self.assertTrue(is_empty(None))
@@ -46,22 +64,24 @@ class TestDataStructures(unittest.TestCase):
         self.assertEqual(eq_unique([[1, 2], [1, 2], [1, 3]]), [[1, 2], [1, 3]])
 
     def test_is_full_field(self):
-        d = {'a': {'b': {'c': 1}}}
-        self.assertTrue(is_full_field(d, 'a.b.c')[0])
-        self.assertFalse(is_full_field(d, 'a.b.d')[0])
+        d = {"a": {"b": {"c": 1}}}
+        self.assertTrue(is_full_field(d, "a.b.c")[0])
+        self.assertFalse(is_full_field(d, "a.b.d")[0])
 
     def test_struct_partial_match(self):
-        a = {'a': 1, 'b': 2}
-        b = {'a': 1}
-        c = {'a': 2}
+        a = {"a": 1, "b": 2}
+        b = {"a": 1}
+        c = {"a": 2}
         self.assertTrue(struct_partial_match(a, b))
         self.assertFalse(struct_partial_match(a, c))
 
     def test_field_search(self):
-        a = {'a': 1, 'b': 'hello'}
-        search_struct = [{'field': 'a', 'operation': 'exact_number', 'param1': 1}]
+        a = {"a": 1, "b": "hello"}
+        search_struct = [{"field": "a", "operation": "exact_number", "param1": 1}]
         self.assertTrue(field_search(a, search_struct))
-        search_struct = [{'field': 'b', 'operation': 'contains_string', 'param1': 'ell'}]
+        search_struct = [
+            {"field": "b", "operation": "contains_string", "param1": "ell"}
+        ]
         self.assertTrue(field_search(a, search_struct))
 
     def test_find_closest(self):
@@ -70,15 +90,16 @@ class TestDataStructures(unittest.TestCase):
         self.assertEqual(find_closest(arr, 14), (3, 15))
 
     def test_json_encode_nan(self):
-        d = {'a': 1, 'b': float('nan')}
-        self.assertIn('NaN', json_encode_nan(d))
+        d = {"a": 1, "b": float("nan")}
+        self.assertIn("NaN", json_encode_nan(d))
 
     def test_struct_merge(self):
-        s1 = {'a': 1, 'b': 2}
-        s2 = {'b': 3, 'c': 4}
-        self.assertEqual(struct_merge(s1, s2), {'a': 1, 'b': 3, 'c': 4})
+        s1 = {"a": 1, "b": 2}
+        s2 = {"b": 3, "c": 4}
+        self.assertEqual(struct_merge(s1, s2), {"a": 1, "b": 3, "c": 4})
         with self.assertRaises(ValueError):
             struct_merge(s1, s2, error_if_new_field=True)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

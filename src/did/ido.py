@@ -1,6 +1,7 @@
 import uuid
 import re
 
+
 class IDO:
     def __init__(self, id_value=None):
         if id_value and self.is_valid(id_value):
@@ -25,5 +26,7 @@ class IDO:
         Checks if a unique ID is valid.
         """
         # A simple regex to check for UUID format
-        pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z', re.I)
+        pattern = re.compile(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z", re.I
+        )
         return bool(pattern.match(str(id_value)))

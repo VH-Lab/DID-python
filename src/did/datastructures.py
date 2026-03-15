@@ -2,6 +2,7 @@ import json
 import numpy as np
 import re
 
+
 def cell_to_str(the_list):
     """
     Converts a 1-D list to a string representation.
@@ -9,9 +10,10 @@ def cell_to_str(the_list):
     This function mimics the behavior of the Matlab `cell2str` function.
     """
     if not the_list:
-        return '[]'
+        return "[]"
 
     return json.dumps(the_list)
+
 
 def cell_or_item(var, index=0, use_index_for_var=False):
     """
@@ -27,13 +29,15 @@ def cell_or_item(var, index=0, use_index_for_var=False):
         else:
             return var
 
+
 def col_vec(x):
     """
     Returns a matrix reshaped as a column vector.
 
     This function mimics the behavior of the Matlab `colvec` function.
     """
-    return np.array(x).flatten('F').tolist()
+    return np.array(x).flatten("F").tolist()
+
 
 def empty_struct(*field_names):
     """
@@ -43,6 +47,7 @@ def empty_struct(*field_names):
     In Python, this returns an empty dictionary.
     """
     return {}
+
 
 def is_empty(x):
     """
@@ -54,6 +59,7 @@ def is_empty(x):
         return len(x) == 0
     except TypeError:
         return False
+
 
 def eq_emp(x, y):
     """
@@ -71,6 +77,7 @@ def eq_emp(x, y):
     else:
         return x == y
 
+
 def size_eq(x, y):
     """
     Determines if the size of two variables is the same.
@@ -79,6 +86,7 @@ def size_eq(x, y):
     """
     return np.array(x).shape == np.array(y).shape
 
+
 def eq_tot(x, y):
     """
     Returns the logical AND of all the results of an element-wise comparison.
@@ -86,6 +94,7 @@ def eq_tot(x, y):
     This function mimics the behavior of the Matlab `eqtot` function.
     """
     return np.array_equal(x, y)
+
 
 def eq_len(x, y):
     """
@@ -97,6 +106,7 @@ def eq_len(x, y):
         return eq_tot(x, y)
     else:
         return False
+
 
 def eq_unique(in_list):
     """
@@ -115,6 +125,7 @@ def eq_unique(in_list):
             out_list.append(item)
     return out_list
 
+
 def is_full_field(a, composite_field_name):
     """
     Checks if a nested field exists in a dictionary.
@@ -124,7 +135,7 @@ def is_full_field(a, composite_field_name):
     if not isinstance(a, dict):
         return False, None
 
-    field_names = composite_field_name.split('.')
+    field_names = composite_field_name.split(".")
     current_level = a
 
     for field_name in field_names:
@@ -134,6 +145,7 @@ def is_full_field(a, composite_field_name):
             return False, None
 
     return True, current_level
+
 
 def struct_partial_match(a, b):
     """
@@ -148,6 +160,7 @@ def struct_partial_match(a, b):
 
     return True
 
+
 def field_search(a, search_struct):
     """
     Searches a dictionary to determine if it matches a search structure.
@@ -160,75 +173,75 @@ def field_search(a, search_struct):
 
     b = False  # Assume no match initially
 
-    field = search_struct.get('field', '')
-    operation = search_struct.get('operation', '')
-    param1 = search_struct.get('param1')
-    param2 = search_struct.get('param2')
+    field = search_struct.get("field", "")
+    operation = search_struct.get("operation", "")
+    param1 = search_struct.get("param1")
+    param2 = search_struct.get("param2")
 
     is_there, value = is_full_field(a, field) if field else (True, a)
 
     negation = False
-    if operation.startswith('~'):
+    if operation.startswith("~"):
         negation = True
         operation = operation[1:]
 
     op_lower = operation.lower()
 
-    if op_lower == 'regexp':
+    if op_lower == "regexp":
         if is_there and isinstance(value, str):
             if re.search(param1, value):
                 b = True
-    elif op_lower == 'exact_string':
+    elif op_lower == "exact_string":
         if is_there:
-            b = (value == param1)
-    elif op_lower == 'exact_string_anycase':
+            b = value == param1
+    elif op_lower == "exact_string_anycase":
         if is_there and isinstance(value, str):
-            b = (value.lower() == param1.lower())
-    elif op_lower == 'contains_string':
+            b = value.lower() == param1.lower()
+    elif op_lower == "contains_string":
         if is_there and isinstance(value, str):
-            b = (param1 in value)
-    elif op_lower == 'exact_number':
+            b = param1 in value
+    elif op_lower == "exact_number":
         if is_there:
             b = eq_len(value, param1)
-    elif op_lower == 'lessthan':
+    elif op_lower == "lessthan":
         if is_there:
             try:
                 b = np.all(np.array(value) < param1)
             except (ValueError, TypeError):
                 pass
-    elif op_lower == 'lessthaneq':
+    elif op_lower == "lessthaneq":
         if is_there:
             try:
                 b = np.all(np.array(value) <= param1)
             except (ValueError, TypeError):
                 pass
-    elif op_lower == 'greaterthan':
+    elif op_lower == "greaterthan":
         if is_there:
             try:
                 b = np.all(np.array(value) > param1)
             except (ValueError, TypeError):
                 pass
-    elif op_lower == 'greaterthaneq':
+    elif op_lower == "greaterthaneq":
         if is_there:
             try:
                 b = np.all(np.array(value) >= param1)
             except (ValueError, TypeError):
                 pass
-    elif op_lower == 'hassize':
+    elif op_lower == "hassize":
         if is_there:
             b = eq_len(np.array(value).shape, param1)
-    elif op_lower == 'hasmember':
+    elif op_lower == "hasmember":
         if is_there:
             try:
                 b = param1 in value
             except TypeError:
                 pass
-    elif op_lower == 'hasfield':
+    elif op_lower == "hasfield":
         b = is_there
-    elif op_lower == 'partial_struct':
+    elif op_lower == "partial_struct":
         if is_there:
             b = struct_partial_match(value, param1)
-    elif op_lower in ('hasanysubfield_contains_string', 'hasanysubfield_exact_string'):
+    elif op_lower in ("hasanysubfield_contains_string", "hasanysubfield_exact_string"):
         if is_there and (isinstance(value, list) or isinstance(value, dict)):
             items_to_check = value if isinstance(value, list) else [value]
             param1_list = param1 if isinstance(param1, list) else [param1]
@@ -242,38 +255,39 @@ def field_search(a, search_struct):
                         if not sub_is_there:
                             match = False
                             break
-                        if op_lower == 'hasanysubfield_contains_string':
+                        if op_lower == "hasanysubfield_contains_string":
                             if not (isinstance(sub_value, str) and p2 in sub_value):
                                 match = False
                                 break
-                        elif op_lower == 'hasanysubfield_exact_string':
+                        elif op_lower == "hasanysubfield_exact_string":
                             if not (isinstance(sub_value, str) and sub_value == p2):
                                 match = False
                                 break
                     if match:
                         b = True
                         break
-    elif op_lower == 'or':
+    elif op_lower == "or":
         if isinstance(param1, dict) and isinstance(param2, dict):
             b = field_search(a, param1) or field_search(a, param2)
-    elif op_lower == 'depends_on':
+    elif op_lower == "depends_on":
         # param1 = dependency name, param2 = dependency value
-        if 'depends_on' in a:
-            for dep in a['depends_on']:
-                if dep.get('name') == param1:
-                    if dep.get('value') == param2:
+        if "depends_on" in a:
+            for dep in a["depends_on"]:
+                if dep.get("name") == param1:
+                    if dep.get("value") == param2:
                         b = True
                         break
-    elif op_lower == 'isa':
+    elif op_lower == "isa":
         # param1 = class name
         if param1 in a:
             b = True
-        elif 'document_class' in a and a['document_class'].get('class_name') == param1:
+        elif "document_class" in a and a["document_class"].get("class_name") == param1:
             b = True
     else:
         raise ValueError(f"Unknown search operation: {operation}")
 
     return not b if negation else b
+
 
 def find_closest(arr, v):
     """
@@ -287,6 +301,7 @@ def find_closest(arr, v):
     idx = (np.abs(arr - v)).argmin()
     return idx, arr[idx]
 
+
 def json_encode_nan(obj):
     """
     Encodes a Python object into a JSON object, allowing for NaN/Infinity.
@@ -294,6 +309,7 @@ def json_encode_nan(obj):
     This function mimics the behavior of the Matlab `jsonencodenan` function.
     """
     return json.dumps(obj, allow_nan=True, indent=4)
+
 
 def struct_merge(s1, s2, error_if_new_field=False, do_alphabetical=True):
     """
@@ -304,7 +320,9 @@ def struct_merge(s1, s2, error_if_new_field=False, do_alphabetical=True):
     if error_if_new_field:
         missing_fields = set(s2.keys()) - set(s1.keys())
         if missing_fields:
-            raise ValueError(f"Some fields of the second dictionary are not in the first: {', '.join(missing_fields)}")
+            raise ValueError(
+                f"Some fields of the second dictionary are not in the first: {', '.join(missing_fields)}"
+            )
 
     s_out = s1.copy()
     s_out.update(s2)
@@ -313,6 +331,8 @@ def struct_merge(s1, s2, error_if_new_field=False, do_alphabetical=True):
         return {key: s_out[key] for key in sorted(s_out)}
     else:
         return s_out
+
+
 def table_cross_join(t1, t2):
     """
     Performs a cross join (Cartesian product) of two lists of dictionaries.
