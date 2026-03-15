@@ -50,6 +50,68 @@ class Query:
         return Query(field='', op='or', param1=self.search_structure, param2=other.search_structure)
 
     def to_search_structure(self):
-        # A full implementation would recursively resolve 'isa', 'depends_on', etc.
-        # This is a simplified version for now.
-        return self.search_structure
+        """Resolve high-level operations (isa, depends_on) into lower-level ones.
+
+        This matches MATLAB's query.to_searchstructure which converts:
+        - 'isa' -> OR(hasanysubfield_contains_string on superclasses, exact_string on class)
+        - 'depends_on' -> hasanysubfield_exact_string on depends_on
+        """
+        return self._resolve_search_structure(self.search_structure)
+
+    @staticmethod
+    def _resolve_search_structure(ss):
+        """Recursively resolve a search structure."""
+        if isinstance(ss, list):
+            return [Query._resolve_single(item) for item in ss]
+        return Query._resolve_single(ss)
+
+    @staticmethod
+    def _resolve_single(item):
+        if not isinstance(item, dict):
+            return item
+
+        operation = item.get('operation', '')
+        negation = False
+        op = operation
+        if op.startswith('~'):
+            negation = True
+            op = op[1:]
+        op_lower = op.lower()
+
+        if op_lower == 'isa':
+            classname = item.get('param1', '')
+            # We keep 'isa' unresolved for field_search (which handles it directly)
+            # and let the SQL search handle it via its own isa logic.
+            # This avoids breaking the brute-force field_search path which
+            # works with both DID-python and MATLAB document formats.
+            return item
+
+        elif op_lower == 'depends_on':
+            name_param = item.get('param1', '')
+            value_param = item.get('param2', '')
+            param1_list = ['name', 'value']
+            param2_list = [name_param, value_param]
+            # Wildcard: if name is '*', only match on value
+            if name_param == '*':
+                param1_list = ['value']
+                param2_list = [value_param]
+            resolved = {
+                'field': 'depends_on',
+                'operation': '~hasanysubfield_exact_string' if negation else 'hasanysubfield_exact_string',
+                'param1': param1_list,
+                'param2': param2_list
+            }
+            return resolved
+
+        elif op_lower == 'or':
+            # Recursively resolve OR sub-structures
+            p1 = item.get('param1')
+            p2 = item.get('param2')
+            return {
+                'field': item.get('field', ''),
+                'operation': operation,
+                'param1': Query._resolve_search_structure(p1) if p1 else p1,
+                'param2': Query._resolve_search_structure(p2) if p2 else p2
+            }
+
+        return item
