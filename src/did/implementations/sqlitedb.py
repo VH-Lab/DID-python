@@ -261,11 +261,11 @@ class SQLiteDB(Database):
         """
         dc = props.get("document_class", {})
         sc = dc.get("superclasses")
-        if isinstance(sc, dict):
+        if sc is not None and not isinstance(sc, list):
             dc["superclasses"] = [sc]
 
         dep = props.get("depends_on")
-        if isinstance(dep, dict):
+        if dep is not None and not isinstance(dep, list):
             props["depends_on"] = [dep]
 
         return props

@@ -103,6 +103,8 @@ class Document:
                 # Ensure the 'base' key exists
                 if "base" not in data:
                     data["base"] = {}
+                # Convert flat classname/superclasses to document_class format
+                data = Document._normalize_to_document_class(data)
                 return data
 
         # Fallback for base
@@ -120,6 +122,21 @@ class Document:
         raise FileNotFoundError(
             f"Could not find definition for {json_file_location_string}"
         )
+
+    @staticmethod
+    def _normalize_to_document_class(data):
+        """Convert flat schema format to MATLAB-compatible document_class format."""
+        if "document_class" in data:
+            return data
+        class_name = data.pop("classname", "")
+        superclasses = data.pop("superclasses", [])
+        data["document_class"] = {
+            "class_name": class_name,
+            "property_list_name": class_name,
+            "class_version": 1,
+            "superclasses": superclasses,
+        }
+        return data
 
     def dependency_value(self, dependency_name, error_if_not_found=True):
         if "depends_on" in self.document_properties:
