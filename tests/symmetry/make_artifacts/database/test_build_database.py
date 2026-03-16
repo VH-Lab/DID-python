@@ -15,14 +15,11 @@ import random
 import shutil
 
 import numpy as np
-import pytest
 
-from did.document import Document
 from did.implementations.sqlitedb import SQLiteDB
 from did.util import compare_database_summary, database_summary
 from tests.helpers import make_doc_tree
 from tests.symmetry.conftest import PYTHON_ARTIFACTS
-
 
 DB_FILENAME = "symmetry_test.sqlite"
 
@@ -99,12 +96,10 @@ class TestBuildDatabase:
         assert os.path.isfile(db_path), "Database file was not created."
         assert os.path.isfile(summary_path), "summary.json was not created."
         for branch_name in branch_names:
-            branch_file = os.path.join(
-                json_branches_dir, f"branch_{branch_name}.json"
-            )
-            assert os.path.isfile(branch_file), (
-                f"Branch JSON file missing for {branch_name}"
-            )
+            branch_file = os.path.join(json_branches_dir, f"branch_{branch_name}.json")
+            assert os.path.isfile(
+                branch_file
+            ), f"Branch JSON file missing for {branch_name}"
 
         # Step 6: Self-check -- re-summarize and compare
         summary_check = database_summary(db)

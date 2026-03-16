@@ -55,9 +55,9 @@ class TestReadBuildDatabase:
 
         # Step 3: Compare the saved summary against the live database summary
         report = compare_database_summary(saved_summary, live_summary)
-        assert report == [], (
-            f"Database summary mismatch for {source_type}: {'; '.join(report)}"
-        )
+        assert (
+            report == []
+        ), f"Database summary mismatch for {source_type}: {'; '.join(report)}"
 
         # Step 4: Also verify per-branch JSON files match the live database
         branch_names = saved_summary["branchNames"]
@@ -82,9 +82,9 @@ class TestReadBuildDatabase:
 
             # Verify document count matches the live database
             actual_doc_ids = db.get_doc_ids(branch_name)
-            assert len(actual_doc_ids) == saved_branch["docCount"], (
-                f"Document count mismatch in branch {branch_name} from {source_type}"
-            )
+            assert (
+                len(actual_doc_ids) == saved_branch["docCount"]
+            ), f"Document count mismatch in branch {branch_name} from {source_type}"
 
             # Verify each saved document exists in the live database
             saved_docs = saved_branch.get("documents", [])
