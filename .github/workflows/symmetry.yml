@@ -22,28 +22,34 @@ jobs:
         uses: matlab-actions/setup-matlab@v2
         with:
           release: latest
+          cache: true
+          products: Statistics_and_Machine_Learning_Toolbox
 
-      - name: Run MATLAB makeArtifact tests
-        uses: matlab-actions/run-tests@v2
-        with:
-          source-folder: DID-matlab/src/did
-          select-by-folder: DID-matlab/tests
-          select-by-tag: ""
-          test-results-junit: matlab-make-results.xml
-          start-script: |
-            addpath(genpath('DID-matlab/src/did'));
-            addpath(genpath('DID-matlab/tests'));
-            addpath(genpath('DID-matlab/tools'));
+      - name: Install MatBox
+        uses: ehennestad/matbox-actions/install-matbox@v1
 
-      - name: Run MATLAB makeArtifact symmetry tests specifically
+      - name: Install dependencies (mksqlite etc.)
         uses: matlab-actions/run-command@v2
         with:
           command: |
-            addpath(genpath('DID-matlab/src/did'));
-            addpath(genpath('DID-matlab/tests'));
-            addpath(genpath('DID-matlab/tools'));
-            results = runtests('did.symmetry.makeArtifacts', 'IncludeSubpackages', true);
-            assertSuccess(results);
+            addpath(genpath("DID-matlab/src"));
+            addpath(genpath("DID-matlab/tools"));
+            matbox.installRequirements(fullfile(pwd, "DID-matlab"));
+
+      - name: Run MATLAB makeArtifact symmetry tests
+        uses: matlab-actions/run-command@v2
+        with:
+          command: |
+            addpath(genpath("DID-matlab/src"));
+            addpath(genpath("DID-matlab/tests"));
+            addpath(genpath("DID-matlab/tools"));
+            import matlab.unittest.TestRunner;
+            import matlab.unittest.TestSuite;
+            runner = TestRunner.withTextOutput;
+            makeSuite = TestSuite.fromPackage("did.symmetry.makeArtifacts", "IncludingSubpackages", true);
+            makeResults = runner.run(makeSuite);
+            disp(table(makeResults));
+            assert(all([makeResults.Passed]), "makeArtifacts tests failed");
 
       - name: Upload MATLAB artifacts
         uses: actions/upload-artifact@v4
@@ -108,6 +114,19 @@ jobs:
         uses: matlab-actions/setup-matlab@v2
         with:
           release: latest
+          cache: true
+          products: Statistics_and_Machine_Learning_Toolbox
+
+      - name: Install MatBox
+        uses: ehennestad/matbox-actions/install-matbox@v1
+
+      - name: Install dependencies (mksqlite etc.)
+        uses: matlab-actions/run-command@v2
+        with:
+          command: |
+            addpath(genpath("DID-matlab/src"));
+            addpath(genpath("DID-matlab/tools"));
+            matbox.installRequirements(fullfile(pwd, "DID-matlab"));
 
       - name: Download Python artifacts
         uses: actions/download-artifact@v4
@@ -125,8 +144,17 @@ jobs:
         uses: matlab-actions/run-command@v2
         with:
           command: |
-            addpath(genpath('DID-matlab/src/did'));
-            addpath(genpath('DID-matlab/tests'));
-            addpath(genpath('DID-matlab/tools'));
-            results = runtests('did.symmetry.readArtifacts', 'IncludeSubpackages', true);
-            assertSuccess(results);
+            addpath(genpath("DID-matlab/src"));
+            addpath(genpath("DID-matlab/tests"));
+            addpath(genpath("DID-matlab/tools"));
+            import matlab.unittest.TestRunner;
+            import matlab.unittest.TestSuite;
+            runner = TestRunner.withTextOutput;
+            readSuite = TestSuite.fromPackage("did.symmetry.readArtifacts", "IncludingSubpackages", true);
+            readResults = runner.run(readSuite);
+            disp(table(readResults));
+            nFailed = sum([readResults.Failed]);
+            nPassed = sum([readResults.Passed]);
+            nSkipped = sum([readResults.Incomplete]);
+            fprintf("Results: %d passed, %d failed, %d skipped\n", nPassed, nFailed, nSkipped);
+            assert(nFailed == 0, "readArtifacts tests failed");
