@@ -16,10 +16,18 @@ class Document:
             self.document_properties["base"]["datestamp"] = str(datetime.utcnow())
 
             for key, value in kwargs.items():
-                # This is a simplified way to set properties. A full implementation
-                # would need to handle nested properties like 'base.name'.
-                if key in self.document_properties:
-                    self.document_properties[key] = value
+                path = key.split(".")
+                if len(path) == 1:
+                    if key in self.document_properties:
+                        self.document_properties[key] = value
+                else:
+                    d = self.document_properties
+                    for p in path[:-1]:
+                        existing = d.get(p)
+                        if not isinstance(existing, dict):
+                            d[p] = {}
+                        d = d[p]
+                    d[path[-1]] = value
 
             self._reset_file_info()
 
@@ -95,6 +103,8 @@ class Document:
                 # Ensure the 'base' key exists
                 if "base" not in data:
                     data["base"] = {}
+                # Convert flat classname/superclasses to document_class format
+                data = Document._normalize_to_document_class(data)
                 return data
 
         # Fallback for base
@@ -112,6 +122,21 @@ class Document:
         raise FileNotFoundError(
             f"Could not find definition for {json_file_location_string}"
         )
+
+    @staticmethod
+    def _normalize_to_document_class(data):
+        """Convert flat schema format to MATLAB-compatible document_class format."""
+        if "document_class" in data:
+            return data
+        class_name = data.pop("classname", "")
+        superclasses = data.pop("superclasses", [])
+        data["document_class"] = {
+            "class_name": class_name,
+            "property_list_name": class_name,
+            "class_version": 1,
+            "superclasses": superclasses,
+        }
+        return data
 
     def dependency_value(self, dependency_name, error_if_not_found=True):
         if "depends_on" in self.document_properties:

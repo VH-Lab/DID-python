@@ -1,0 +1,95 @@
+name: Cross-Language Symmetry Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  symmetry:
+    name: MATLAB <-> Python symmetry tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out DID-python
+        uses: actions/checkout@v4
+
+      - name: Check out DID-matlab
+        uses: actions/checkout@v4
+        with:
+          repository: VH-Lab/DID-matlab
+          path: DID-matlab
+
+      # --- MATLAB setup ---
+      - name: Set up MATLAB
+        uses: matlab-actions/setup-matlab@v2
+        with:
+          release: latest
+          cache: true
+          products: Statistics_and_Machine_Learning_Toolbox
+
+      - name: Install MatBox
+        uses: ehennestad/matbox-actions/install-matbox@v1
+
+      - name: Install MATLAB dependencies (mksqlite etc.)
+        uses: matlab-actions/run-command@v2
+        with:
+          command: |
+            addpath(genpath("DID-matlab/src"));
+            addpath(genpath("DID-matlab/tools"));
+            matbox.installRequirements(fullfile(pwd, "DID-matlab"));
+
+      # --- Python setup ---
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # --- Step 1: MATLAB makeArtifacts ---
+      - name: "Step 1: MATLAB makeArtifact tests"
+        uses: matlab-actions/run-command@v2
+        with:
+          command: |
+            addpath(genpath("DID-matlab/src"));
+            addpath(genpath("DID-matlab/tests"));
+            addpath(genpath("DID-matlab/tools"));
+            import matlab.unittest.TestRunner;
+            import matlab.unittest.TestSuite;
+            runner = TestRunner.withTextOutput;
+            makeSuite = TestSuite.fromPackage("did.symmetry.makeArtifacts", "IncludingSubpackages", true);
+            makeResults = runner.run(makeSuite);
+            disp(table(makeResults));
+            assert(all([makeResults.Passed]), "makeArtifacts tests failed");
+
+      # --- Step 2: Python makeArtifacts + readArtifacts ---
+      - name: "Step 2: Python makeArtifact tests"
+        run: pytest -m make_artifacts -v
+
+      - name: "Step 2: Python readArtifact tests"
+        run: pytest -m read_artifacts -v
+
+      # --- Step 3: MATLAB readArtifacts ---
+      - name: "Step 3: MATLAB readArtifact tests"
+        uses: matlab-actions/run-command@v2
+        with:
+          command: |
+            addpath(genpath("DID-matlab/src"));
+            addpath(genpath("DID-matlab/tests"));
+            addpath(genpath("DID-matlab/tools"));
+            import matlab.unittest.TestRunner;
+            import matlab.unittest.TestSuite;
+            runner = TestRunner.withTextOutput;
+            readSuite = TestSuite.fromPackage("did.symmetry.readArtifacts", "IncludingSubpackages", true);
+            readResults = runner.run(readSuite);
+            disp(table(readResults));
+            nFailed = sum([readResults.Failed]);
+            nPassed = sum([readResults.Passed]);
+            nSkipped = sum([readResults.Incomplete]);
+            fprintf("Results: %d passed, %d failed, %d skipped\n", nPassed, nFailed, nSkipped);
+            assert(nFailed == 0, "readArtifacts tests failed");

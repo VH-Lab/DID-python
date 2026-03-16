@@ -27,6 +27,14 @@ dev = [
     "pytest",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "symmetry: cross-language symmetry tests (MATLAB <-> Python)",
+    "make_artifacts: tests that generate artifacts for symmetry testing",
+    "read_artifacts: tests that read and validate artifacts from another implementation",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

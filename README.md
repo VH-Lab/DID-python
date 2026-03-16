@@ -43,17 +43,55 @@ The `did` library provides a framework for managing and querying data that is or
 
 You can run the tests using either `pytest` (if you installed the development dependencies) or the standard `unittest` module.
 
-**Using pytest (Recommended for development):**
+**Run all tests (unit + symmetry):**
 ```bash
 pytest
 ```
 
-**Using unittest (Standard):**
+**Run only the unit tests (excluding symmetry tests):**
+```bash
+pytest tests/ --ignore=tests/symmetry
+```
+
+**Run only the symmetry tests:**
+```bash
+pytest -m symmetry
+```
+
+**Run only the makeArtifact symmetry tests** (generate cross-language artifacts):
+```bash
+pytest -m make_artifacts
+```
+
+**Run only the readArtifact symmetry tests** (validate artifacts from Python and/or MATLAB):
+```bash
+pytest -m read_artifacts
+```
+
+**Using unittest (unit tests only):**
 ```bash
 python -m unittest discover tests
 ```
 
-Both commands will discover and run all the tests in the `tests` directory.
+#### Symmetry Tests
+
+The `tests/symmetry/` directory contains cross-language symmetry tests that verify
+DID databases created in Python can be read by MATLAB and vice versa:
+
+*   **`make_artifacts/`** — Creates a DID database with multiple branches and
+    documents, then writes the database file and JSON summary artifacts to a
+    well-known temporary directory
+    (`<tempdir>/DID/symmetryTest/pythonArtifacts/`).
+*   **`read_artifacts/`** — Reads artifacts produced by either the Python or
+    MATLAB test suite, re-summarizes the live database, and compares the
+    result against the saved summary. Tests are parameterized over
+    `matlabArtifacts` and `pythonArtifacts` and skip gracefully when
+    artifacts from a given source are not available.
+
+The CI workflow runs the full cross-language cycle:
+1. MATLAB `makeArtifact` tests create artifacts
+2. Python `makeArtifact` and `readArtifact` tests run (reading MATLAB artifacts)
+3. MATLAB `readArtifact` tests run (reading Python artifacts)
 
 ## Documentation
 
