@@ -229,6 +229,47 @@ class SQLiteDB(Database):
                 rows,
             )
 
+    @staticmethod
+    def _matlab_compatible_props(props):
+        """Return a deep copy of props with single-element lists unwrapped to scalars.
+
+        MATLAB's jsonencode converts single-element cell arrays to scalars.
+        This replicates that behavior so DID-matlab can read Python-created databases.
+        """
+        import copy
+
+        props = copy.deepcopy(props)
+
+        # Unwrap document_class.superclasses
+        dc = props.get("document_class", {})
+        sc = dc.get("superclasses")
+        if isinstance(sc, list) and len(sc) == 1:
+            dc["superclasses"] = sc[0]
+
+        # Unwrap depends_on
+        dep = props.get("depends_on")
+        if isinstance(dep, list) and len(dep) == 1:
+            props["depends_on"] = dep[0]
+
+        return props
+
+    @staticmethod
+    def _normalize_loaded_props(props):
+        """Ensure superclasses and depends_on are always lists.
+
+        Inverse of _matlab_compatible_props. Mutates and returns props.
+        """
+        dc = props.get("document_class", {})
+        sc = dc.get("superclasses")
+        if isinstance(sc, dict):
+            dc["superclasses"] = [sc]
+
+        dep = props.get("depends_on")
+        if isinstance(dep, dict):
+            props["depends_on"] = [dep]
+
+        return props
+
     def _do_add_doc(self, document_obj, branch_id, **kwargs):
         import json
         import time
@@ -242,7 +283,9 @@ class SQLiteDB(Database):
         if row:
             doc_idx = row["doc_idx"]
         else:
-            json_code = json.dumps(document_obj.document_properties)
+            json_code = json.dumps(
+                self._matlab_compatible_props(document_obj.document_properties)
+            )
             cursor.execute(
                 "INSERT INTO docs (doc_id, json_code, timestamp) VALUES (?, ?, ?)",
                 (doc_id, json_code, time.time()),
@@ -463,6 +506,7 @@ class SQLiteDB(Database):
         if row:
             json_code = row[0]["json_code"]
             doc_struct = json.loads(json_code)
+            doc_struct = self._normalize_loaded_props(doc_struct)
             return Document(doc_struct)
         else:
             # Handle missing document
@@ -473,6 +517,74 @@ class SQLiteDB(Database):
                 return None
             else:
                 raise ValueError(f"Document id '{document_id}' not found.")
+
+    def get_docs(self, document_ids, branch_id=None, OnMissing="error", **kwargs):
+        """Bulk-fetch documents in a single SQL query.
+
+        Overrides the base class one-at-a-time loop for efficiency.
+        """
+        from ..document import Document
+        import json
+
+        is_single = isinstance(document_ids, str)
+        if is_single:
+            document_ids = [document_ids]
+
+        if not document_ids:
+            return [] if not is_single else None
+
+        # Filter by branch if requested
+        if branch_id is not None:
+            branch_doc_ids = set(self.get_doc_ids(branch_id))
+            requested = []
+            for doc_id in document_ids:
+                if doc_id in branch_doc_ids:
+                    requested.append(doc_id)
+                elif OnMissing == "error":
+                    raise ValueError(
+                        f"Document {doc_id} not found in branch {branch_id}"
+                    )
+                elif OnMissing == "warn":
+                    print(f"Warning: Document {doc_id} not found in branch {branch_id}")
+            document_ids = requested
+
+        if not document_ids:
+            return [] if not is_single else None
+
+        # Single SELECT ... WHERE doc_id IN (?, ?, ...)
+        placeholders = ",".join("?" for _ in document_ids)
+        rows = self.do_run_sql_query(
+            f"SELECT doc_id, json_code FROM docs WHERE doc_id IN ({placeholders})",
+            tuple(document_ids),
+        )
+
+        # Build lookup dict
+        doc_map = {}
+        for row in rows:
+            doc_struct = json.loads(row["json_code"])
+            doc_struct = self._normalize_loaded_props(doc_struct)
+            doc_map[row["doc_id"]] = Document(doc_struct)
+
+        # Preserve original order
+        docs = []
+        for doc_id in document_ids:
+            if doc_id in doc_map:
+                docs.append(doc_map[doc_id])
+            elif OnMissing == "error":
+                raise ValueError(f"Document id '{doc_id}' not found.")
+            elif OnMissing == "warn":
+                print(f"Warning: Document id '{doc_id}' not found.")
+
+        if is_single:
+            return docs[0] if docs else None
+        return docs
+
+    def get_docs_by_branch(self, branch_id=None):
+        """Return all documents on a branch."""
+        if branch_id is None:
+            branch_id = self.current_branch_id
+        doc_ids = self.get_doc_ids(branch_id)
+        return self.get_docs(doc_ids, OnMissing="ignore")
 
     def open_doc(self, doc_id, filename):
         from ..file import ReadOnlyFileobj
