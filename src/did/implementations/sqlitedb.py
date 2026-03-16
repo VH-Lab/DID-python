@@ -283,7 +283,9 @@ class SQLiteDB(Database):
         if row:
             doc_idx = row["doc_idx"]
         else:
-            json_code = json.dumps(self._matlab_compatible_props(document_obj.document_properties))
+            json_code = json.dumps(
+                self._matlab_compatible_props(document_obj.document_properties)
+            )
             cursor.execute(
                 "INSERT INTO docs (doc_id, json_code, timestamp) VALUES (?, ?, ?)",
                 (doc_id, json_code, time.time()),
@@ -543,9 +545,7 @@ class SQLiteDB(Database):
                         f"Document {doc_id} not found in branch {branch_id}"
                     )
                 elif OnMissing == "warn":
-                    print(
-                        f"Warning: Document {doc_id} not found in branch {branch_id}"
-                    )
+                    print(f"Warning: Document {doc_id} not found in branch {branch_id}")
             document_ids = requested
 
         if not document_ids:
