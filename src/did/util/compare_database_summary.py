@@ -86,10 +86,20 @@ def compare_database_summary(summary_a, summary_b):
                 has_a = field in props_a
                 has_b = field in props_b
                 if has_a and has_b:
-                    if props_a[field] != props_b[field]:
+                    val_a = (
+                        props_a[field].get("value")
+                        if isinstance(props_a[field], dict)
+                        else props_a[field]
+                    )
+                    val_b = (
+                        props_b[field].get("value")
+                        if isinstance(props_b[field], dict)
+                        else props_b[field]
+                    )
+                    if val_a != val_b:
                         report.append(
                             f'Branch "{branch_name}", doc "{doc_id}": '
-                            f"{field} mismatch."
+                            f"{field}.value mismatch ({val_a} vs {val_b})."
                         )
                 elif has_a != has_b:
                     report.append(

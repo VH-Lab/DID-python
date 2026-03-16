@@ -267,8 +267,7 @@ def field_search(a, search_struct):
                         b = True
                         break
     elif op_lower == "or":
-        if isinstance(param1, dict) and isinstance(param2, dict):
-            b = field_search(a, param1) or field_search(a, param2)
+        b = field_search(a, param1) or field_search(a, param2)
     elif op_lower == "depends_on":
         # param1 = dependency name, param2 = dependency value
         if "depends_on" in a:

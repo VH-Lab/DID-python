@@ -16,10 +16,18 @@ class Document:
             self.document_properties["base"]["datestamp"] = str(datetime.utcnow())
 
             for key, value in kwargs.items():
-                # This is a simplified way to set properties. A full implementation
-                # would need to handle nested properties like 'base.name'.
-                if key in self.document_properties:
-                    self.document_properties[key] = value
+                path = key.split(".")
+                if len(path) == 1:
+                    if key in self.document_properties:
+                        self.document_properties[key] = value
+                else:
+                    d = self.document_properties
+                    for p in path[:-1]:
+                        existing = d.get(p)
+                        if not isinstance(existing, dict):
+                            d[p] = {}
+                        d = d[p]
+                    d[path[-1]] = value
 
             self._reset_file_info()
 
