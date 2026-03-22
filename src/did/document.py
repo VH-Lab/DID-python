@@ -53,10 +53,22 @@ class Document:
                     datastructures.empty_struct("name", "locations")
                 )
 
+    @staticmethod
+    def _normalize_file_info(file_info):
+        """Normalize file_info to a list.
+
+        MATLAB's jsonencode converts single-element cell arrays to scalars,
+        so file_info may arrive as a bare dict instead of a list.
+        """
+        if isinstance(file_info, dict):
+            return [file_info] if file_info else []
+        if not isinstance(file_info, list):
+            return []
+        return file_info
+
     def is_in_file_list(self, filename):
         file_info = self.document_properties.get("files", {}).get("file_info", [])
-        if isinstance(file_info, dict) and not file_info:
-            file_info = []
+        file_info = self._normalize_file_info(file_info)
 
         for i, info in enumerate(file_info):
             if info.get("name") == filename:
@@ -71,8 +83,7 @@ class Document:
         if "file_info" not in files_prop:
             files_prop["file_info"] = []
 
-        if isinstance(files_prop["file_info"], dict) and not files_prop["file_info"]:
-            files_prop["file_info"] = []
+        files_prop["file_info"] = self._normalize_file_info(files_prop["file_info"])
 
         file_info_list = files_prop["file_info"]
 
@@ -82,6 +93,11 @@ class Document:
             file_info_list.append(new_info)
 
     def remove_file(self, filename):
+        files_prop = self.document_properties.get("files")
+        if files_prop is not None:
+            files_prop["file_info"] = self._normalize_file_info(
+                files_prop.get("file_info", [])
+            )
         is_in, _, index = self.is_in_file_list(filename)
         if is_in:
             del self.document_properties["files"]["file_info"][index]
@@ -138,7 +154,14 @@ class Document:
         }
         return data
 
+    def _ensure_depends_on_list(self):
+        """Normalize depends_on to a list if it is a bare dict."""
+        dep = self.document_properties.get("depends_on")
+        if isinstance(dep, dict):
+            self.document_properties["depends_on"] = [dep]
+
     def dependency_value(self, dependency_name, error_if_not_found=True):
+        self._ensure_depends_on_list()
         if "depends_on" in self.document_properties:
             for dep in self.document_properties["depends_on"]:
                 if dep.get("name") == dependency_name:
@@ -149,6 +172,7 @@ class Document:
         return None
 
     def set_dependency_value(self, dependency_name, value, error_if_not_found=True):
+        self._ensure_depends_on_list()
         if "depends_on" in self.document_properties:
             for dep in self.document_properties["depends_on"]:
                 if dep.get("name") == dependency_name:
