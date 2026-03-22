@@ -89,6 +89,8 @@ def _get_superclass_str(doc_props):
 def _serialize_depends_on(doc_props):
     """Serialize depends_on matching MATLAB's format: 'name,value;name,value;'"""
     depends_on = doc_props.get("depends_on", [])
+    if isinstance(depends_on, dict):
+        depends_on = [depends_on]
     if not depends_on or not isinstance(depends_on, list):
         return ""
 
@@ -152,6 +154,11 @@ def doc_to_sql(doc):
         'columns': list of column dicts with 'name' and 'value'
     """
     doc_props = doc.document_properties
+
+    # Normalize bare dict depends_on to a list (MATLAB's jsonencode converts
+    # single-element cell arrays to scalars).
+    if isinstance(doc_props.get("depends_on"), dict):
+        doc_props["depends_on"] = [doc_props["depends_on"]]
 
     # Build the 'meta' table
     meta = {"name": "meta", "columns": []}

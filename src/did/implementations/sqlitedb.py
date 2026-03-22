@@ -251,11 +251,19 @@ class SQLiteDB(Database):
         if isinstance(dep, list) and len(dep) == 1:
             props["depends_on"] = dep[0]
 
+        # Unwrap files.file_info
+        files = props.get("files")
+        if isinstance(files, dict):
+            fi = files.get("file_info")
+            if isinstance(fi, list):
+                if len(fi) == 1:
+                    files["file_info"] = fi[0]
+
         return props
 
     @staticmethod
     def _normalize_loaded_props(props):
-        """Ensure superclasses and depends_on are always lists.
+        """Ensure superclasses, depends_on, file_info, and locations are always lists.
 
         Inverse of _matlab_compatible_props. Mutates and returns props.
         """
@@ -267,6 +275,14 @@ class SQLiteDB(Database):
         dep = props.get("depends_on")
         if dep is not None and not isinstance(dep, list):
             props["depends_on"] = [dep]
+
+        # Re-wrap files.file_info (but not locations, which may be a bare dict
+        # from add_file in the Python API)
+        files = props.get("files")
+        if isinstance(files, dict):
+            fi = files.get("file_info")
+            if isinstance(fi, dict):
+                files["file_info"] = [fi]
 
         return props
 
