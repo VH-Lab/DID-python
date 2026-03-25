@@ -10,15 +10,11 @@ class TestGetSuperclassStrBareDict:
     """Bare dict superclasses (from MATLAB's jsonencode) should be handled."""
 
     def test_top_level_bare_dict(self):
-        doc_props = {
-            "superclasses": {"definition": "$NDIDOCUMENTPATH/base.json"}
-        }
+        doc_props = {"superclasses": {"definition": "$NDIDOCUMENTPATH/base.json"}}
         assert _get_superclass_str(doc_props) == "base"
 
     def test_top_level_list_single(self):
-        doc_props = {
-            "superclasses": [{"definition": "$NDIDOCUMENTPATH/base.json"}]
-        }
+        doc_props = {"superclasses": [{"definition": "$NDIDOCUMENTPATH/base.json"}]}
         assert _get_superclass_str(doc_props) == "base"
 
     def test_document_class_bare_dict(self):

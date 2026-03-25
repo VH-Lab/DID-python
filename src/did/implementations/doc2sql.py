@@ -51,7 +51,9 @@ def _get_superclass_str(doc_props):
     For DID-python style ["base", "demoA"], use directly.
     """
     # DID-python schema format: top-level 'superclasses' list of strings
-    if "superclasses" in doc_props and isinstance(doc_props["superclasses"], (list, dict)):
+    if "superclasses" in doc_props and isinstance(
+        doc_props["superclasses"], (list, dict)
+    ):
         superclasses = doc_props["superclasses"]
         # Normalize bare dict to a single-element list (MATLAB's jsonencode
         # unwraps single-element cell arrays into scalars).
