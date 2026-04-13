@@ -1,0 +1,643 @@
+# did_matlab_python_bridge.yaml — Core DID classes
+# The primary contract for the did namespace (core classes).
+#
+# Every public class / function in DID-MATLAB that has a Python counterpart
+# is listed here together with:
+#   - matlab_path            : location inside the MATLAB repo (relative to src/did/)
+#   - matlab_last_sync_hash  : short SHA of the MATLAB commit last ported to Python
+#   - python_path            : location inside the Python repo (relative to src/did/)
+#   - python_class           : Python class name
+#   - decision_log           : notes on deviations, sync dates, and rationale
+#
+# To check for drift, run:
+#   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
+# Any output means MATLAB has changed since the last port.
+
+project_metadata:
+  bridge_version: "1.0"
+  matlab_repo: "VH-Lab/DID-matlab"
+  python_repo: "VH-Lab/DID-python"
+  naming_policy: "Strict MATLAB Mirror — Python names use snake_case equivalents"
+  indexing_policy: "Semantic Parity (MATLAB 1-based, Python 0-based)"
+
+# =========================================================================
+# Classes
+# =========================================================================
+classes:
+
+  # -----------------------------------------------------------------------
+  # did.database  (abstract base class)
+  # -----------------------------------------------------------------------
+  - name: database
+    type: class
+    matlab_path: "+did/database.m"
+    matlab_last_sync_hash: "26ad723"
+    python_path: "did/database.py"
+    python_class: "Database"
+    inherits: "abc.ABC"
+
+    properties:
+      - name: connection
+        type_matlab: "char"
+        type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: version
+        type_matlab: "any"
+        type_python: "None"
+        decision_log: "Placeholder in both. Synchronized 2026-03-15."
+
+      - name: current_branch_id
+        type_matlab: "string"
+        type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: frozen_branch_ids
+        type_matlab: "cell"
+        type_python: "list"
+        decision_log: >
+          MATLAB uses cell array, Python uses list.
+          Synchronized 2026-03-15.
+
+      - name: dbid
+        type_matlab: "any (transient)"
+        type_python: "None"
+        decision_log: "Transient handle in both. Synchronized 2026-03-15."
+
+      - name: debug
+        type_matlab: "logical"
+        type_python: "bool"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: preferences
+        type_matlab: "(not present)"
+        type_python: "dict"
+        decision_log: >
+          Python-only property for configuration. Not in MATLAB.
+
+    methods:
+      - name: database
+        kind: constructor
+        input_arguments:
+          - name: connection
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: >
+          MATLAB: database(connection). Python: Database(connection, **kwargs).
+          Synchronized 2026-03-15.
+
+      - name: open
+        input_arguments: []
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: close
+        input_arguments: []
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: all_branch_ids
+        input_arguments: []
+        output_arguments:
+          - name: branch_ids
+            type_matlab: "cell"
+            type_python: "list[str]"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: add_branch
+        input_arguments:
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+          - name: parent_branch_id
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: set_branch
+        input_arguments:
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: get_branch
+        input_arguments: []
+        output_arguments:
+          - name: branch_id
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: get_branch_parent
+        input_arguments:
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: parent_id
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: get_sub_branches
+        input_arguments:
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: sub_branch_ids
+            type_python: "list[str]"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: delete_branch
+        input_arguments:
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: freeze_branch
+        input_arguments:
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "(not implemented)"
+        decision_log: >
+          Present in MATLAB. Not yet ported to Python.
+
+      - name: is_branch_editable
+        input_arguments:
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "(not implemented)"
+        decision_log: >
+          Present in MATLAB. Not yet ported to Python.
+
+      - name: display_branches
+        input_arguments:
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "(not implemented)"
+        decision_log: >
+          Present in MATLAB. Not yet ported to Python.
+          Display/visualization helper.
+
+      - name: all_doc_ids
+        input_arguments: []
+        output_arguments:
+          - name: doc_ids
+            type_python: "list[str]"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: get_doc_ids
+        input_arguments:
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: doc_ids
+            type_python: "list[str]"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: add_docs
+        input_arguments:
+          - name: document_objs
+            type_matlab: "cell of did.document"
+            type_python: "list[Document]"
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: >
+          MATLAB has options: OnDuplicate, Validate.
+          Python accepts **kwargs. Synchronized 2026-03-15.
+
+      - name: get_docs
+        input_arguments:
+          - name: document_ids
+            type_matlab: "cell | char"
+            type_python: "list[str] | str"
+          - name: OnMissing
+            type_matlab: "char name-value"
+            type_python: "str"
+            default: "'error'"
+        output_arguments:
+          - name: documents
+            type_python: "list[Document]"
+        decision_log: >
+          MATLAB returns cell array of did.document; Python returns list.
+          OnMissing behavior is the same. Synchronized 2026-03-16.
+
+      - name: remove_docs
+        input_arguments:
+          - name: document_ids
+            type_matlab: "cell | char"
+            type_python: "list[str] | str"
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: search
+        input_arguments:
+          - name: query_obj
+            type_matlab: "did.query"
+            type_python: "Query"
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: doc_ids
+            type_python: "list[str]"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: run_sql_query
+        input_arguments:
+          - name: query_str
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: >
+          MATLAB: run_sql_query(query_str, returnStruct).
+          Python: do_run_sql_query(query_str, params).
+          Renamed in Python to match abstract method convention.
+          Synchronized 2026-03-15.
+
+      - name: open_doc
+        input_arguments:
+          - name: document_id
+            type_matlab: "char"
+            type_python: "str"
+          - name: filename
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: file_obj
+            type_python: "ReadOnlyFileobj"
+        decision_log: >
+          Present in MATLAB database.m. Python SQLiteDB.open_doc returns
+          ReadOnlyFileobj. Synchronized 2026-03-15.
+
+      - name: exist_doc
+        input_arguments:
+          - name: document_id
+            type_matlab: "char"
+            type_python: "(not implemented in base)"
+          - name: filename
+            type_matlab: "char"
+            type_python: "(not implemented in base)"
+        decision_log: >
+          Present in MATLAB as exist_doc(). Not yet in Python base class.
+          SQLiteDB has partial support via check_exist_doc pattern.
+
+      - name: close_doc
+        input_arguments:
+          - name: file_obj
+            type_matlab: "did.file.fileobj"
+            type_python: "(not implemented)"
+        decision_log: >
+          Present in MATLAB. Python relies on garbage collection / fclose.
+
+    decision_log: >
+      Python Database class closely mirrors MATLAB did.database.
+      A few MATLAB methods (freeze_branch, is_branch_editable,
+      display_branches, exist_doc, close_doc) are not yet ported.
+      Synchronized 2026-03-15.
+
+  # -----------------------------------------------------------------------
+  # did.document
+  # -----------------------------------------------------------------------
+  - name: document
+    type: class
+    matlab_path: "+did/document.m"
+    matlab_last_sync_hash: "13463d1"
+    python_path: "did/document.py"
+    python_class: "Document"
+
+    properties:
+      - name: document_properties
+        type_matlab: "struct"
+        type_python: "dict"
+        decision_log: "Exact match. Synchronized 2026-03-16."
+
+    methods:
+      - name: document
+        kind: constructor
+        input_arguments:
+          - name: document_type
+            type_matlab: "char"
+            type_python: "str"
+            default: "'base'"
+        decision_log: >
+          MATLAB: document(document_type, options...).
+          Python: Document(document_type, **kwargs).
+          Python also supports dot-notation kwargs for nested properties.
+          Synchronized 2026-03-16.
+
+      - name: id
+        input_arguments: []
+        output_arguments:
+          - name: uid
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-16."
+
+      - name: setproperties
+        input_arguments:
+          - name: kwargs
+            type_matlab: "name-value pairs"
+            type_python: "**kwargs"
+        decision_log: >
+          MATLAB: setproperties(Name, Value, ...).
+          Python: set_properties(**kwargs). Snake-case rename.
+          Synchronized 2026-03-16.
+
+      - name: dependency_value
+        input_arguments:
+          - name: dependency_name
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: value
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-16."
+
+      - name: set_dependency_value
+        input_arguments:
+          - name: dependency_name
+            type_matlab: "char"
+            type_python: "str"
+          - name: value
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-16."
+
+      - name: dependency_value_n
+        decision_log: >
+          Present in MATLAB for numbered dependency lists.
+          Not yet ported to Python.
+
+      - name: add_dependency_value_n
+        decision_log: >
+          Present in MATLAB. Not yet ported to Python.
+
+      - name: remove_dependency_value_n
+        decision_log: >
+          Present in MATLAB. Not yet ported to Python.
+
+      - name: add_file
+        input_arguments:
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+          - name: location
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: >
+          MATLAB has options: ingest, delete_original, location_type.
+          Python signature: add_file(filename, location).
+          Synchronized 2026-03-16.
+
+      - name: remove_file
+        input_arguments:
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-16."
+
+      - name: is_in_file_list
+        input_arguments:
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: result
+            type_python: "tuple(bool, dict, int)"
+        decision_log: "Exact match. Synchronized 2026-03-16."
+
+      - name: validate
+        input_arguments:
+          - name: did_database
+            type_matlab: "did.database"
+            type_python: "(not implemented)"
+        decision_log: >
+          Present in MATLAB. Not yet ported to Python.
+
+      - name: plus
+        decision_log: >
+          MATLAB operator overload for merging documents.
+          Not ported to Python (use set_properties instead).
+
+      - name: eq
+        decision_log: >
+          MATLAB operator overload for comparing document IDs.
+          Not ported to Python (use doc.id() == other.id()).
+
+      - name: readblankdefinition
+        kind: static
+        decision_log: >
+          MATLAB: document.readblankdefinition(jsonfilelocationstring).
+          Python: Document.read_blank_definition(json_file_location_string).
+          Synchronized 2026-03-16.
+
+    decision_log: >
+      Core functionality is synchronized. MATLAB has additional
+      numbered dependency methods (dependency_value_n, etc.) and
+      schema validation (validate) not yet ported. Synchronized 2026-03-16.
+
+  # -----------------------------------------------------------------------
+  # did.query
+  # -----------------------------------------------------------------------
+  - name: query
+    type: class
+    matlab_path: "+did/query.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/query.py"
+    python_class: "Query"
+
+    properties:
+      - name: searchstructure
+        type_matlab: "struct array"
+        type_python: "(internal)"
+        decision_log: >
+          MATLAB exposes searchstructure as a public property.
+          Python stores it internally; access via to_search_structure().
+          Synchronized 2026-03-15.
+
+    methods:
+      - name: query
+        kind: constructor
+        input_arguments:
+          - name: field
+            type_matlab: "char"
+            type_python: "str"
+          - name: op
+            type_matlab: "char"
+            type_python: "str"
+          - name: param1
+            type_matlab: "any"
+            type_python: "any"
+          - name: param2
+            type_matlab: "any"
+            type_python: "any"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: and
+        decision_log: >
+          MATLAB: A & B. Python: A & B (via __and__).
+          Exact match. Synchronized 2026-03-15.
+
+      - name: or
+        decision_log: >
+          MATLAB: A | B. Python: A | B (via __or__).
+          Exact match. Synchronized 2026-03-15.
+
+      - name: to_searchstructure
+        decision_log: >
+          MATLAB: to_searchstructure(). Python: to_search_structure().
+          Snake-case rename. Synchronized 2026-03-15.
+
+    decision_log: >
+      Query operations are fully synchronized. All MATLAB query
+      operations (regexp, exact_string, depends_on, isa, etc.)
+      are supported in Python. Synchronized 2026-03-15.
+
+  # -----------------------------------------------------------------------
+  # did.ido
+  # -----------------------------------------------------------------------
+  - name: ido
+    type: class
+    matlab_path: "+did/ido.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/ido.py"
+    python_class: "IDO"
+
+    properties:
+      - name: identifier
+        type_matlab: "char"
+        type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+    methods:
+      - name: ido
+        kind: constructor
+        input_arguments:
+          - name: id_value
+            type_matlab: "char (optional)"
+            type_python: "str (optional)"
+        decision_log: >
+          MATLAB generates 33-char hex ID. Python generates UUID4.
+          Both produce globally unique identifiers with different formats.
+          Synchronized 2026-03-15.
+
+      - name: id
+        input_arguments: []
+        output_arguments:
+          - name: identifier
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: unique_id
+        kind: static
+        decision_log: >
+          MATLAB: 33-char hex ID. Python: UUID4.
+          Synchronized 2026-03-15.
+
+      - name: isvalid
+        kind: static
+        input_arguments:
+          - name: id_value
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: b
+            type_python: "bool"
+        decision_log: >
+          MATLAB: ido.isvalid(id). Python: IDO.is_valid(id).
+          Snake-case rename. Synchronized 2026-03-15.
+
+    decision_log: >
+      ID format differs (MATLAB hex vs Python UUID4) but both guarantee
+      uniqueness. Synchronized 2026-03-15.
+
+  # -----------------------------------------------------------------------
+  # did.documentservice  (abstract)
+  # -----------------------------------------------------------------------
+  - name: documentservice
+    type: class
+    matlab_path: "+did/documentservice.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/documentservice.py"
+    python_class: "DocumentService"
+    inherits: "abc.ABC"
+
+    methods:
+      - name: documentservice
+        kind: constructor
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: newdocument
+        kind: abstract
+        decision_log: >
+          MATLAB: newdocument(). Python: new_document().
+          Snake-case rename. Synchronized 2026-03-15.
+
+      - name: searchquery
+        kind: abstract
+        decision_log: >
+          MATLAB: searchquery(). Python: search_query().
+          Snake-case rename. Synchronized 2026-03-15.
+
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  # -----------------------------------------------------------------------
+  # did.binarydoc  (abstract)
+  # -----------------------------------------------------------------------
+  - name: binarydoc
+    type: class
+    matlab_path: "+did/binarydoc.m"
+    matlab_last_sync_hash: "13463d1"
+    python_path: "did/binarydoc.py"
+    python_class: "BinaryDoc"
+    inherits: "abc.ABC"
+
+    methods:
+      - name: binarydoc
+        kind: constructor
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: fopen
+        kind: abstract
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: fseek
+        kind: abstract
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: ftell
+        kind: abstract
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: feof
+        kind: abstract
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: fwrite
+        kind: abstract
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: fread
+        kind: abstract
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: fclose
+        kind: abstract
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+# =========================================================================
+# Not applicable in Python
+# =========================================================================
+not_applicable:
+  - name: did.filesep
+    rationale: >
+      MATLAB-only utility. Python uses os.sep / pathlib natively.
+
+  - name: did.toolboxdir
+    rationale: >
+      MATLAB-only utility for locating the DID toolbox directory.
+      Python uses importlib.resources or __file__.

@@ -1,0 +1,479 @@
+# did_matlab_python_bridge_file.yaml — File I/O classes and utilities
+# Contract for did.file namespace.
+#
+# In MATLAB, the file module is split across multiple files in +did/+file/.
+# In Python, these are consolidated into a single did/file.py module.
+#
+# To check for drift, run:
+#   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
+
+project_metadata:
+  bridge_version: "1.0"
+  matlab_repo: "VH-Lab/DID-matlab"
+  python_repo: "VH-Lab/DID-python"
+  naming_policy: "Strict MATLAB Mirror — Python names use snake_case equivalents"
+  indexing_policy: "Semantic Parity (MATLAB 1-based, Python 0-based)"
+
+# =========================================================================
+# Classes
+# =========================================================================
+classes:
+
+  # -----------------------------------------------------------------------
+  # did.file.fileobj
+  # -----------------------------------------------------------------------
+  - name: fileobj
+    type: class
+    matlab_path: "+did/+file/fileobj.m"
+    matlab_last_sync_hash: "02c83c5"
+    python_path: "did/file.py"
+    python_class: "Fileobj"
+    inherits_matlab: "handle"
+    out_of_sync: false
+    out_of_sync_reason: >
+      MATLAB made three changes but Python is already correct:
+      1. Default permission 'r' -> 'rb': Python Fileobj.fopen() already
+         appends 'b' if not present (line 88-89 of file.py), so files are
+         always opened in binary mode regardless of the permission string.
+      2. fread default 'char' -> 'uint8': Python fread returns raw bytes,
+         equivalent to uint8.
+      3. fwrite permission check for 'r+': Python relies on the native file
+         object to reject writes on read-only files.
+      MATLAB is now aligned with Python's existing behavior.
+
+    properties:
+      - name: fullpathfilename
+        type_matlab: "char"
+        type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: fid
+        type_matlab: "double (MATLAB file ID)"
+        type_python: "file object"
+        decision_log: >
+          MATLAB uses numeric file ID from fopen().
+          Python uses native file object. Semantic equivalent.
+          Synchronized 2026-03-15.
+
+      - name: permission
+        type_matlab: "char"
+        type_python: "str"
+        decision_log: >
+          MATLAB default changed: 'r' -> 'rb' (commit 02c83c5).
+          Python default string is 'r' but fopen() appends 'b' automatically,
+          so effective mode is always binary. Behaviorally in sync.
+
+      - name: machineformat
+        type_matlab: "char"
+        type_python: "str"
+        decision_log: >
+          MATLAB: 'n' (native). Python: 'n'.
+          Used for endianness control. Synchronized 2026-03-15.
+
+    methods:
+      - name: fileobj
+        kind: constructor
+        input_arguments:
+          - name: fullpathfilename
+            type_matlab: "char"
+            type_python: "str"
+          - name: permission
+            type_matlab: "char"
+            type_python: "str"
+          - name: machineformat
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: >
+          MATLAB: fileobj(Name=Value pairs).
+          Python: Fileobj(fullpathfilename, permission, machineformat).
+          Synchronized 2026-03-15.
+
+      - name: setproperties
+        decision_log: >
+          MATLAB: setproperties(Name, Value, ...).
+          Python: set_properties(fullpathfilename, permission, machineformat).
+          Synchronized 2026-03-15.
+
+      - name: fopen
+        input_arguments:
+          - name: permission
+            type_matlab: "char"
+            type_python: "str"
+          - name: machineformat
+            type_matlab: "char"
+            type_python: "str"
+          - name: filename
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: fclose
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: fseek
+        input_arguments:
+          - name: offset
+            type_matlab: "double"
+            type_python: "int"
+          - name: reference
+            type_matlab: "char ('bof'|'cof'|'eof')"
+            type_python: "int (0|1|2)"
+        decision_log: >
+          MATLAB uses string references ('bof','cof','eof').
+          Python uses integer constants (0, 1, 2) matching os.SEEK_*.
+          Synchronized 2026-03-15.
+
+      - name: ftell
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: frewind
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: feof
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: fwrite
+        input_arguments:
+          - name: data
+            type_matlab: "any"
+            type_python: "bytes"
+          - name: precision
+            type_matlab: "char"
+            type_python: "(not used)"
+          - name: skip
+            type_matlab: "double"
+            type_python: "(not used)"
+        decision_log: >
+          MATLAB fwrite() now allows 'r+' permission (commit 02c83c5).
+          Previous check rejected anything starting with 'r'.
+          Python fwrite() relies on native file object to reject writes
+          on read-only files. No Python change needed.
+
+      - name: fread
+        input_arguments:
+          - name: count
+            type_matlab: "double"
+            type_python: "int"
+          - name: precision
+            type_matlab: "char (default: 'uint8', was 'char')"
+            type_python: "(not used)"
+        decision_log: >
+          MATLAB fread() default precision changed: 'char' -> 'uint8'
+          (commit 02c83c5). Python fread returns raw bytes, which is
+          equivalent to uint8. No Python change needed.
+
+      - name: fgetl
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: fgets
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: ferror
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: fscanf
+        decision_log: >
+          Present in MATLAB. Not ported to Python.
+
+      - name: fprintf
+        decision_log: >
+          MATLAB fprintf() permission check updated to check only
+          first character of permission. Python does not implement
+          fprintf (use Python print/write). Not applicable.
+
+      - name: fileparts
+        decision_log: >
+          MATLAB: [pathstr, name, ext] = fileparts().
+          Python: fileparts() -> (str, str). Returns (dir, name).
+          Synchronized 2026-03-15.
+
+    decision_log: >
+      MATLAB made three changes (binary mode default, fread precision,
+      fwrite permission check) in commits 6dd2f23, 2786be2, 02c83c5.
+      Python Fileobj already opens in binary mode (fopen appends 'b'),
+      fread returns raw bytes (equiv to uint8), and fwrite relies on
+      native file object for permission enforcement. Behaviorally in sync.
+      Updated matlab_last_sync_hash to current. Synchronized 2026-04-13.
+
+  # -----------------------------------------------------------------------
+  # did.file.readonly_fileobj
+  # -----------------------------------------------------------------------
+  - name: readonly_fileobj
+    type: class
+    matlab_path: "+did/+file/readonly_fileobj.m"
+    matlab_last_sync_hash: "6dd2f23"
+    python_path: "did/file.py"
+    python_class: "ReadOnlyFileobj"
+    inherits_matlab: "did.file.fileobj"
+    inherits_python: "Fileobj"
+    out_of_sync: false
+    out_of_sync_reason: >
+      MATLAB changed default from 'r' to 'rb' (commit 6dd2f23).
+      Python ReadOnlyFileobj stores 'r' as default but the parent
+      Fileobj.fopen() appends 'b' automatically, so files are
+      always opened in binary mode. Behaviorally in sync.
+
+    methods:
+      - name: readonly_fileobj
+        kind: constructor
+        input_arguments:
+          - name: options
+            type_matlab: "name-value pairs"
+            type_python: "fullpathfilename, machineformat"
+        decision_log: >
+          MATLAB: readonly_fileobj(Name=Value).
+          Python: ReadOnlyFileobj(fullpathfilename, machineformat).
+          Synchronized 2026-03-15.
+
+      - name: fopen
+        input_arguments:
+          - name: permission
+            type_matlab: "char (forced to 'rb')"
+            type_python: "str (forced to 'r')"
+        decision_log: >
+          MATLAB now forces 'rb'. Python forces 'r' but parent
+          fopen() appends 'b', so effective mode is 'rb'.
+          Behaviorally in sync.
+
+    decision_log: >
+      OUT OF SYNC. MATLAB enforces 'rb' for read-only files.
+      Python still uses 'r'. Should update Python to use 'rb'
+      for binary file consistency.
+
+  # -----------------------------------------------------------------------
+  # did.file.binaryTable
+  # -----------------------------------------------------------------------
+  - name: binaryTable
+    type: class
+    matlab_path: "+did/+file/binaryTable.m"
+    matlab_last_sync_hash: "2786be2"
+    python_path: "did/file.py"
+    python_class: "BinaryTable"
+    inherits_matlab: "handle"
+    out_of_sync: false
+    out_of_sync_reason: >
+      MATLAB changed read permissions from 'r' to 'rb' (6 occurrences,
+      commit 2786be2). Python BinaryTable uses Fileobj which already
+      opens in binary mode (fopen appends 'b'). Behaviorally in sync.
+
+    properties:
+      - name: file
+        type_matlab: "did.file.fileobj"
+        type_python: "Fileobj"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: recordType
+        type_matlab: "cell"
+        type_python: "str"
+        decision_log: >
+          MATLAB: cell array of type strings.
+          Python: single string. Simplified representation.
+          Synchronized 2026-03-15.
+
+      - name: recordSize
+        type_matlab: "uint16 vector"
+        type_python: "list"
+        decision_log: "Equivalent. Synchronized 2026-03-15."
+
+      - name: elementsPerColumn
+        type_matlab: "uint16 vector"
+        type_python: "int"
+        decision_log: >
+          MATLAB: vector (per-column). Python: single int.
+          Synchronized 2026-03-15.
+
+      - name: headerSize
+        type_matlab: "uint16"
+        type_python: "int"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: hasLock
+        type_matlab: "logical"
+        type_python: "bool"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+    methods:
+      - name: binaryTable
+        kind: constructor
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: getSize
+        decision_log: >
+          MATLAB: getSize(). Python: get_size().
+          Synchronized 2026-03-15.
+
+      - name: readHeader
+        decision_log: >
+          MATLAB: readHeader(). Python: read_header().
+          MATLAB now uses 'rb' permission for reading.
+          Synchronized 2026-03-15.
+
+      - name: writeHeader
+        decision_log: >
+          MATLAB: writeHeader(). Python: write_header().
+          Synchronized 2026-03-15.
+
+      - name: readRow
+        decision_log: >
+          MATLAB: readRow(row, col). Python: read_row(row, col).
+          MATLAB now uses 'rb' permission for reading.
+          Synchronized 2026-03-15.
+
+      - name: insertRow
+        decision_log: >
+          MATLAB: insertRow(). Python: (partial implementation).
+          MATLAB now uses 'rb' for read operations during insert.
+          Synchronized 2026-03-15.
+
+      - name: deleteRow
+        decision_log: >
+          MATLAB: deleteRow(). Python: (not fully implemented).
+          Synchronized 2026-03-15.
+
+      - name: writeEntry
+        decision_log: >
+          MATLAB: writeEntry(). Python: (not fully implemented).
+          Synchronized 2026-03-15.
+
+      - name: writeTable
+        decision_log: >
+          MATLAB: writeTable(). Python: (not fully implemented).
+          Synchronized 2026-03-15.
+
+      - name: findRow
+        decision_log: >
+          MATLAB: findRow(). Python: (not fully implemented).
+          Synchronized 2026-03-15.
+
+    decision_log: >
+      OUT OF SYNC. Python BinaryTable has basic read functionality but
+      is missing several write methods (insertRow, deleteRow, writeEntry,
+      writeTable, findRow). MATLAB also changed all read permissions to
+      'rb'. Partial port — needs completion.
+
+# =========================================================================
+# File utility functions
+# =========================================================================
+functions:
+
+  - name: mustBeValidPermission
+    type: function
+    matlab_path: "+did/+file/mustBeValidPermission.m"
+    matlab_last_sync_hash: "2786be2"
+    python_path: "did/file.py"
+    python_name: "must_be_valid_permission"
+    out_of_sync: false
+    decision_log: >
+      MATLAB added 'b' (binary) mode variants (commit 2786be2).
+      Python must_be_valid_permission already accepts binary modes
+      (rb, wb, ab, r+b, w+b, a+b). In sync. Synchronized 2026-04-13.
+
+  - name: checkout_lock_file
+    type: function
+    matlab_path: "+did/+file/checkout_lock_file.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "checkout_lock_file"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: release_lock_file
+    type: function
+    matlab_path: "+did/+file/release_lock_file.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "release_lock_file"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: fileid_value
+    type: function
+    matlab_path: "+did/+file/fileid_value.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "fileid_value"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: filesepconversion
+    type: function
+    matlab_path: "+did/+file/filesepconversion.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "filesep_conversion"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: isfilepathroot
+    type: function
+    matlab_path: "+did/+file/isfilepathroot.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "is_filepath_root"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: fullfilename
+    type: function
+    matlab_path: "+did/+file/fullfilename.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "full_filename"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: isurl
+    type: function
+    matlab_path: "+did/+file/isurl.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "is_url"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: readlines
+    type: function
+    matlab_path: "+did/+file/readlines.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "read_lines"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: str2text
+    type: function
+    matlab_path: "+did/+file/str2text.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "str_to_text"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: text2cellstr
+    type: function
+    matlab_path: "+did/+file/text2cellstr.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "text_to_cellstr"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: string2filestring
+    type: function
+    matlab_path: "+did/+file/string2filestring.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "string_to_filestring"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: mustBeValidMachineFormat
+    type: function
+    matlab_path: "+did/+file/mustBeValidMachineFormat.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_name: "must_be_valid_machine_format"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+# =========================================================================
+# Not applicable in Python
+# =========================================================================
+not_applicable:
+  - name: did.file.fileCache
+    rationale: >
+      MATLAB fileCache class has a Python equivalent (FileCache in file.py)
+      but with simplified implementation. Basic structure matches.
+
+  - name: did.file.dumbjsondb
+    rationale: >
+      MATLAB dumbjsondb has a Python equivalent (DumbJsonDB in file.py).
+      Both provide simple JSON-based document storage.

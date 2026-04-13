@@ -58,6 +58,7 @@ jobs:
           command: |
             addpath(genpath("DID-matlab/src"));
             addpath(genpath("DID-matlab/tests"));
+            addpath(genpath("DID-matlab/tests_symmetry"));
             addpath(genpath("DID-matlab/tools"));
             import matlab.unittest.TestRunner;
             import matlab.unittest.TestSuite;
@@ -81,6 +82,7 @@ jobs:
           command: |
             addpath(genpath("DID-matlab/src"));
             addpath(genpath("DID-matlab/tests"));
+            addpath(genpath("DID-matlab/tests_symmetry"));
             addpath(genpath("DID-matlab/tools"));
             import matlab.unittest.TestRunner;
             import matlab.unittest.TestSuite;

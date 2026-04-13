@@ -1,0 +1,283 @@
+# did_matlab_python_bridge_implementations.yaml — Database implementations
+# Contract for did.implementations namespace.
+#
+# To check for drift, run:
+#   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
+
+project_metadata:
+  bridge_version: "1.0"
+  matlab_repo: "VH-Lab/DID-matlab"
+  python_repo: "VH-Lab/DID-python"
+  naming_policy: "Strict MATLAB Mirror — Python names use snake_case equivalents"
+  indexing_policy: "Semantic Parity (MATLAB 1-based, Python 0-based)"
+
+# =========================================================================
+# Classes
+# =========================================================================
+classes:
+
+  # -----------------------------------------------------------------------
+  # did.implementations.sqlitedb
+  # -----------------------------------------------------------------------
+  - name: sqlitedb
+    type: class
+    matlab_path: "+did/+implementations/sqlitedb.m"
+    matlab_last_sync_hash: "205d34b"
+    matlab_current_hash: "926c430"
+    python_path: "did/implementations/sqlitedb.py"
+    python_class: "SQLiteDB"
+    inherits_matlab: "did.database"
+    inherits_python: "Database"
+    out_of_sync: true
+    out_of_sync_reason: >
+      MATLAB replaced websave() with ndi.cloud.api.files.getFile() for
+      URL file downloads (commit 926c430, 2026-03-30). This is a
+      MATLAB-specific change (uses NDI cloud API) and does not require
+      a direct Python port, but Python should have equivalent URL
+      download reliability.
+
+    properties:
+      - name: FileDir
+        type_matlab: "char"
+        type_python: "(derived from connection path)"
+        decision_log: >
+          MATLAB stores FileDir explicitly. Python derives file storage
+          paths from the database connection string. Synchronized 2026-03-15.
+
+      - name: fields_cache
+        type_matlab: "cell (protected)"
+        type_python: "dict (private)"
+        decision_log: >
+          Both cache field name-to-index mappings for performance.
+          Synchronized 2026-03-15.
+
+    methods:
+      - name: sqlitedb
+        kind: constructor
+        input_arguments:
+          - name: filename
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: >
+          MATLAB: sqlitedb(filename). Python: SQLiteDB(filename).
+          Both create/open a SQLite database file.
+          Synchronized 2026-03-15.
+
+      - name: do_run_sql_query
+        input_arguments:
+          - name: query_str
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: >
+          MATLAB: do_run_sql_query(query_str, varargin).
+          Python: do_run_sql_query(query_str, params=()).
+          Python uses parameterized queries. Synchronized 2026-03-15.
+
+      - name: do_add_doc
+        input_arguments:
+          - name: document_obj
+            type_matlab: "did.document"
+            type_python: "Document"
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: >
+          Both insert document JSON and populate field tables via doc2sql.
+          Synchronized 2026-03-15.
+
+      - name: do_get_doc
+        input_arguments:
+          - name: document_id
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: document
+            type_python: "Document"
+        decision_log: >
+          Both retrieve document JSON from docs table and reconstruct
+          did.document / Document object. Synchronized 2026-03-15.
+
+      - name: do_remove_doc
+        input_arguments:
+          - name: document_id
+            type_matlab: "char"
+            type_python: "str"
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: search
+        input_arguments:
+          - name: query_obj
+            type_matlab: "did.query"
+            type_python: "Query"
+          - name: branch_id
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: doc_ids
+            type_python: "list[str]"
+        decision_log: >
+          Both use SQL-based search with fallback to brute-force for
+          complex queries. Synchronized 2026-03-15.
+
+      - name: get_docs
+        decision_log: >
+          Python adds bulk get_docs with OnMissing parameter.
+          Synchronized 2026-03-16.
+
+      - name: get_docs_by_branch
+        decision_log: >
+          Python-only convenience method. Returns all documents in a
+          branch. Added 2026-03-16.
+
+      - name: open_doc
+        input_arguments:
+          - name: doc_id
+            type_matlab: "char"
+            type_python: "str"
+          - name: filename
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: file_obj
+            type_matlab: "did.file.readonly_fileobj"
+            type_python: "ReadOnlyFileobj"
+        decision_log: >
+          Both return a read-only file object. Synchronized 2026-03-15.
+
+      - name: open_db / close_db
+        decision_log: >
+          MATLAB opens/closes mksqlite connection per operation.
+          Python keeps sqlite3 connection open for session lifetime.
+          Behavioral difference by design. Synchronized 2026-03-15.
+
+    decision_log: >
+      Core database operations are synchronized. MATLAB recently changed
+      URL download mechanism (websave -> ndi.cloud.api.files.getFile) which
+      is MATLAB-ecosystem-specific. Python should verify its own URL download
+      path is robust. Last full sync: 2026-03-15.
+
+  # -----------------------------------------------------------------------
+  # did.implementations.doc2sql  (function module)
+  # -----------------------------------------------------------------------
+  - name: doc2sql
+    type: function
+    matlab_path: "+did/+implementations/doc2sql.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/implementations/doc2sql.py"
+    python_name: "doc_to_sql"
+
+    methods:
+      - name: doc2sql / doc_to_sql
+        input_arguments:
+          - name: doc
+            type_matlab: "did.document"
+            type_python: "Document"
+        output_arguments:
+          - name: sql_metadata
+            type_matlab: "struct array"
+            type_python: "list[dict]"
+        decision_log: >
+          Both extract document properties into SQL-compatible meta-tables.
+          Python handles both DID-python and MATLAB/NDI document formats
+          for cross-language compatibility. Synchronized 2026-03-25.
+
+    decision_log: >
+      doc2sql contains the critical MATLAB-Python bridge logic for
+      serializing documents to SQL. Python version handles both native
+      and MATLAB document_class formats. Synchronized 2026-03-25.
+
+  # -----------------------------------------------------------------------
+  # did.implementations.binarydoc_matfid
+  # -----------------------------------------------------------------------
+  - name: binarydoc_matfid
+    type: class
+    matlab_path: "+did/+implementations/binarydoc_matfid.m"
+    matlab_last_sync_hash: "2786be2"
+    python_path: "did/implementations/binarydoc_matfid.py"
+    python_class: "BinaryDocMatfid"
+    inherits_matlab: "did.binarydoc & did.file.fileobj"
+    inherits_python: "BinaryDoc, Fileobj"
+    out_of_sync: false
+    out_of_sync_reason: >
+      MATLAB changed default permission from 'r' to 'rb' (commit 2786be2).
+      Python BinaryDocMatfid inherits Fileobj which already opens in
+      binary mode (fopen appends 'b'). Behaviorally in sync.
+
+    properties:
+      - name: key
+        type_matlab: "any"
+        type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: doc_unique_id
+        type_matlab: "any"
+        type_python: "str"
+        decision_log: "Exact match. Synchronized 2026-03-15."
+
+      - name: machineformat
+        type_matlab: "char"
+        type_python: "str"
+        decision_log: >
+          MATLAB default: 'l' (little-endian).
+          Python default: 'l' (little-endian). Exact match.
+          Synchronized 2026-03-15.
+
+    methods:
+      - name: binarydoc_matfid
+        kind: constructor
+        decision_log: >
+          MATLAB: binarydoc_matfid(fileProps, matfidProps).
+          Python: BinaryDocMatfid(key, doc_unique_id, **kwargs).
+          Synchronized 2026-03-15.
+
+      - name: fclose
+        decision_log: >
+          MATLAB resets permission to 'rb' after close (changed from 'r').
+          Python closes file handle. Synchronized 2026-03-15.
+
+    decision_log: >
+      Binary mode change in MATLAB ('r' -> 'rb') aligns MATLAB with
+      Python's existing behavior. Python already opens binary files
+      correctly via Fileobj.fopen() binary-mode append.
+      Synchronized 2026-04-13.
+
+  # -----------------------------------------------------------------------
+  # did.implementations.sqldb  (abstract intermediate class)
+  # -----------------------------------------------------------------------
+  - name: sqldb
+    type: class
+    matlab_path: "+did/+implementations/sqldb.m"
+    matlab_last_sync_hash: "13463d1"
+    python_path: "(not separately implemented)"
+    python_class: "(merged into Database)"
+
+    decision_log: >
+      MATLAB has an intermediate abstract class sqldb between database
+      and sqlitedb. Python merges this layer directly into Database
+      and SQLiteDB. The alldocids() method from sqldb is available
+      as Database.all_doc_ids() in Python. Synchronized 2026-03-15.
+
+  # -----------------------------------------------------------------------
+  # did.implementations.matlabdumbjsondb
+  # -----------------------------------------------------------------------
+  - name: matlabdumbjsondb
+    type: class
+    matlab_path: "+did/+implementations/matlabdumbjsondb.m"
+    python_path: "(not applicable)"
+
+    decision_log: >
+      MATLAB-specific wrapper around dumbjsondb for MATLAB file I/O.
+      Python implements DumbJsonDB directly in file.py.
+
+# =========================================================================
+# Not applicable in Python
+# =========================================================================
+not_applicable:
+  - name: ndi.cloud.api.files.getFile
+    rationale: >
+      MATLAB uses NDI cloud API for URL file downloads (added in sqlitedb.m
+      commit 926c430). Python should use requests or urllib for equivalent
+      functionality. Not a direct port target.
