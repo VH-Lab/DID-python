@@ -1,0 +1,336 @@
+# did_matlab_python_bridge_util.yaml — Utilities, graph functions, and helpers
+# Contract for did.util, did.fun, did.datastructures, did.db, and did.common.
+#
+# To check for drift, run:
+#   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
+
+project_metadata:
+  bridge_version: "1.0"
+  matlab_repo: "VH-Lab/DID-matlab"
+  python_repo: "VH-Lab/DID-python"
+  naming_policy: "Strict MATLAB Mirror — Python names use snake_case equivalents"
+  indexing_policy: "Semantic Parity (MATLAB 1-based, Python 0-based)"
+
+# =========================================================================
+# did.util — Database summary and comparison utilities
+# =========================================================================
+functions:
+
+  # -----------------------------------------------------------------------
+  # did.util.databaseSummary
+  # -----------------------------------------------------------------------
+  - name: databaseSummary
+    type: function
+    matlab_path: "+did/+util/databaseSummary.m"
+    matlab_last_sync_hash: "1966b9d"
+    python_path: "did/util/database_summary.py"
+    python_name: "database_summary"
+
+    input_arguments:
+      - name: db
+        type_matlab: "did.database"
+        type_python: "Database"
+    output_arguments:
+      - name: summary
+        type_matlab: "struct"
+        type_python: "dict"
+
+    decision_log: >
+      Both produce deterministic JSON-serializable summaries of a DID
+      database including branch names, hierarchy, and per-branch document
+      lists. Used by symmetry tests to compare MATLAB and Python databases.
+      Synchronized 2026-03-16.
+
+  # -----------------------------------------------------------------------
+  # did.util.compareDatabaseSummary
+  # -----------------------------------------------------------------------
+  - name: compareDatabaseSummary
+    type: function
+    matlab_path: "+did/+util/compareDatabaseSummary.m"
+    matlab_last_sync_hash: "17a798b"
+    python_path: "did/util/compare_database_summary.py"
+    python_name: "compare_database_summary"
+
+    input_arguments:
+      - name: summaryA
+        type_matlab: "struct | char (filepath) | did.database"
+        type_python: "dict"
+      - name: summaryB
+        type_matlab: "struct | char (filepath) | did.database"
+        type_python: "dict"
+    output_arguments:
+      - name: report
+        type_matlab: "cell of char"
+        type_python: "list[str]"
+
+    decision_log: >
+      MATLAB accepts structs, file paths, or database objects as input
+      and converts internally. Python currently accepts only dict summaries.
+      Both compare branch names, hierarchy, document IDs, class names,
+      demo field values, and depends_on relationships.
+      Synchronized 2026-03-16.
+
+# =========================================================================
+# did.fun — Graph and dependency functions
+# =========================================================================
+
+  # -----------------------------------------------------------------------
+  # did.fun.docs2graph
+  # -----------------------------------------------------------------------
+  - name: docs2graph
+    type: function
+    matlab_path: "+did/+fun/docs2graph.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/fun.py"
+    python_name: "docs_to_graph"
+
+    input_arguments:
+      - name: document_objs
+        type_matlab: "cell of did.document"
+        type_python: "list[Document]"
+    output_arguments:
+      - name: graph
+        type_matlab: "[G, nodes, mdigraph]"
+        type_python: "nx.DiGraph"
+
+    decision_log: >
+      MATLAB returns sparse adjacency matrix + node list + digraph.
+      Python returns networkx DiGraph directly (more Pythonic).
+      Synchronized 2026-03-15.
+
+  # -----------------------------------------------------------------------
+  # did.fun.findalldependencies
+  # -----------------------------------------------------------------------
+  - name: findalldependencies
+    type: function
+    matlab_path: "+did/+fun/findalldependencies.m"
+    matlab_last_sync_hash: "13463d1"
+    python_path: "did/fun.py"
+    python_name: "find_all_dependencies"
+
+    input_arguments:
+      - name: graph
+        type_matlab: "did.database (DB)"
+        type_python: "nx.DiGraph"
+      - name: doc_ids
+        type_matlab: "repeating args (visited, docs)"
+        type_python: "list[str]"
+    output_arguments:
+      - name: dependencies
+        type_python: "list[str]"
+
+    decision_log: >
+      MATLAB traverses database directly with visited tracking.
+      Python operates on a pre-built networkx graph.
+      Different approach, same result. Synchronized 2026-03-15.
+
+  # -----------------------------------------------------------------------
+  # did.fun.finddocs_missing_dependencies
+  # -----------------------------------------------------------------------
+  - name: finddocs_missing_dependencies
+    type: function
+    matlab_path: "+did/+fun/finddocs_missing_dependencies.m"
+    matlab_last_sync_hash: "13463d1"
+    python_path: "did/fun.py"
+    python_name: "find_docs_missing_dependencies"
+
+    input_arguments:
+      - name: db
+        type_matlab: "did.database"
+        type_python: "Database"
+      - name: dependency_names
+        type_matlab: "repeating char args"
+        type_python: "*str"
+    output_arguments:
+      - name: docs
+        type_python: "list[Document]"
+
+    decision_log: >
+      Exact match in behavior. Both search for documents with
+      depends_on references to non-existent documents.
+      Synchronized 2026-03-15.
+
+  # -----------------------------------------------------------------------
+  # did.fun.plotinteractivedocgraph
+  # -----------------------------------------------------------------------
+  - name: plotinteractivedocgraph
+    type: function
+    matlab_path: "+did/+fun/plotinteractivedocgraph.m"
+    matlab_last_sync_hash: "13463d1"
+    python_path: "did/fun.py"
+    python_name: "plot_interactive_doc_graph"
+
+    decision_log: >
+      MATLAB uses MATLAB plotting. Python uses matplotlib/networkx.
+      Both provide interactive document graph visualization.
+      Synchronized 2026-03-15.
+
+# =========================================================================
+# did.datastructures — Data structure utilities
+# =========================================================================
+
+  - name: cell2str
+    type: function
+    matlab_path: "+did/+datastructures/cell2str.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "cell_to_str"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: celloritem
+    type: function
+    matlab_path: "+did/+datastructures/celloritem.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "cell_or_item"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: colvec
+    type: function
+    matlab_path: "+did/+datastructures/colvec.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "col_vec"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: emptystruct
+    type: function
+    matlab_path: "+did/+datastructures/emptystruct.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "empty_struct"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: eqemp
+    type: function
+    matlab_path: "+did/+datastructures/eqemp.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "eq_emp"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: eqlen
+    type: function
+    matlab_path: "+did/+datastructures/eqlen.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "eq_len"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: eqtot
+    type: function
+    matlab_path: "+did/+datastructures/eqtot.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "eq_tot"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: equnique
+    type: function
+    matlab_path: "+did/+datastructures/equnique.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "eq_unique"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: fieldsearch
+    type: function
+    matlab_path: "+did/+datastructures/fieldsearch.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "field_search"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: findclosest
+    type: function
+    matlab_path: "+did/+datastructures/findclosest.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "find_closest"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: isfullfield
+    type: function
+    matlab_path: "+did/+datastructures/isfullfield.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "is_full_field"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: jsonencodenan
+    type: function
+    matlab_path: "+did/+datastructures/jsonencodenan.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "json_encode_nan"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: sizeeq
+    type: function
+    matlab_path: "+did/+datastructures/sizeeq.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "size_eq"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: structmerge
+    type: function
+    matlab_path: "+did/+datastructures/structmerge.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/datastructures.py"
+    python_name: "struct_merge"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+# =========================================================================
+# did.db — Database search utilities
+# =========================================================================
+
+  - name: struct_name_value_search
+    type: function
+    matlab_path: "+did/+db/struct_name_value_search.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/db.py"
+    python_name: "struct_name_value_search"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+  - name: tableCrossJoin
+    type: function
+    matlab_path: "+did/+db/tableCrossJoin.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/db.py"
+    python_name: "table_cross_join"
+    decision_log: >
+      MATLAB: tableCrossJoin(t1, t2).
+      Python: table_cross_join(table1, table2, rename_conflicting_columns).
+      Python uses pandas DataFrame. Synchronized 2026-03-15.
+
+# =========================================================================
+# did.common — Path constants and cache
+# =========================================================================
+
+  - name: PathConstants
+    type: class
+    matlab_path: "+did/+common/PathConstants.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/common.py"
+    python_class: "PathConstants"
+    decision_log: >
+      Both provide global path configuration for the DID toolkit.
+      Synchronized 2026-03-15.
+
+  - name: getCache
+    type: function
+    matlab_path: "+did/+common/getCache.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/common.py"
+    python_name: "get_cache"
+    decision_log: "Exact match. Synchronized 2026-03-15."
+
+# =========================================================================
+# Not applicable in Python
+# =========================================================================
+not_applicable:
+  - name: did.datastructures.table_cross_join (duplicate)
+    rationale: >
+      Also available in did.db.table_cross_join via pandas.
+      Both MATLAB locations (datastructures and db) are covered.
