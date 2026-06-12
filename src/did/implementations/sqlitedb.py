@@ -62,9 +62,7 @@ class SQLiteDB(Database):
         already covered by UNIQUE constraints.)
         """
         cursor = self.dbid.cursor()
-        cursor.execute(
-            'CREATE INDEX IF NOT EXISTS "doc_data_value" ON doc_data(value)'
-        )
+        cursor.execute('CREATE INDEX IF NOT EXISTS "doc_data_value" ON doc_data(value)')
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS "doc_data_field_value" '
             "ON doc_data(field_idx, value)"
@@ -458,6 +456,15 @@ class SQLiteDB(Database):
         if op.startswith("~"):
             op = op[1:]
         op_lower = op.lower()
+
+        # The query field name is interpolated into the SQL text below (e.g.
+        # fields.field_name = '<field>'); it cannot be a bound '?' parameter
+        # because it also appears in LIKE patterns. Restrict it to the
+        # dotted-identifier charset so a crafted field name cannot break out of
+        # the quoting. An out-of-charset field returns None here and the caller
+        # falls back to the (injection-free) brute-force search.
+        if field and not _re.fullmatch(r"[A-Za-z0-9_.]+", field):
+            return None
 
         if op_lower == "exact_string":
             return f"fields.field_name = '{field}' AND doc_data.value = '{_sql_escape(param1)}'"
