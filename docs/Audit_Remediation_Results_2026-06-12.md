@@ -1,5 +1,11 @@
 # DID-python Audit Remediation — Results (2026-06-12)
 
+> **Context for a reviewer / next agent.** One of **9 coordinated PRs** in the 2026-06 NDI
+> ecosystem audit; **none are merged.** This repo's PR: **VH-Lab/DID-python#23** — **merge
+> together with the DID-matlab PR VH-Lab/DID-matlab#146** (same audit item §6.1; isa +
+> SQL hardening land in lockstep). The one deferral is the **`timestamp` format DECISION**
+> (see "DECISION required" below).
+
 Branch `audit/did-python-2026-06`, off `origin/main` (`1b1491f`). This is the
 Python half of the **DID lockstep** (DID-python + DID-matlab change together so a
 cross-language symmetry run stays consistent); the MATLAB half is
