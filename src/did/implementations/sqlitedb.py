@@ -39,6 +39,38 @@ class SQLiteDB(Database):
 
         if is_new:
             self._create_db_tables()
+        # Always ensure the search-critical indexes exist — including on
+        # databases created before this fix (idempotent).
+        self._ensure_indexes()
+
+    def _ensure_indexes(self):
+        """Create the indexes the document search depends on, if missing.
+
+        The search is a 4-table join over docs/branch_docs/doc_data/fields
+        that filters on ``doc_data.field_idx`` + ``doc_data.value`` and joins
+        on ``doc_data.doc_idx``. ``doc_data`` (one row per field per doc — by
+        far the largest table) had NO index, so every search did a full-scan
+        nested-loop join — pathologically slow on large datasets (a single
+        ``getprobes`` took ~70 s on a 115 MB cloud dataset).
+
+        This restores the indexing the DID-MATLAB reference already has
+        (sqlitedb.m creates ``doc_data(value)``) — the Python port dropped
+        it — and adds ``doc_data(field_idx, value)`` (more targeted for the
+        actual field+value search) and ``doc_data(doc_idx)`` (the doc join).
+        Run on every open (``IF NOT EXISTS``) so databases downloaded before
+        this fix benefit on next use. (docs.doc_id and fields.field_name are
+        already covered by UNIQUE constraints.)
+        """
+        cursor = self.dbid.cursor()
+        cursor.execute('CREATE INDEX IF NOT EXISTS "doc_data_value" ON doc_data(value)')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS "doc_data_field_value" '
+            "ON doc_data(field_idx, value)"
+        )
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS "doc_data_doc_idx" ON doc_data(doc_idx)'
+        )
+        self.dbid.commit()
 
     def _close_db(self):
         if self.dbid:
@@ -425,6 +457,15 @@ class SQLiteDB(Database):
             op = op[1:]
         op_lower = op.lower()
 
+        # The query field name is interpolated into the SQL text below (e.g.
+        # fields.field_name = '<field>'); it cannot be a bound '?' parameter
+        # because it also appears in LIKE patterns. Restrict it to the
+        # dotted-identifier charset so a crafted field name cannot break out of
+        # the quoting. An out-of-charset field returns None here and the caller
+        # falls back to the (injection-free) brute-force search.
+        if field and not _re.fullmatch(r"[A-Za-z0-9_.]+", field):
+            return None
+
         if op_lower == "exact_string":
             return f"fields.field_name = '{field}' AND doc_data.value = '{_sql_escape(param1)}'"
 
@@ -549,30 +590,32 @@ class SQLiteDB(Database):
         if not document_ids:
             return [] if not is_single else None
 
-        # Filter by branch if requested
-        if branch_id is not None:
-            branch_doc_ids = set(self.get_doc_ids(branch_id))
-            requested = []
-            for doc_id in document_ids:
-                if doc_id in branch_doc_ids:
-                    requested.append(doc_id)
-                elif OnMissing == "error":
-                    raise ValueError(
-                        f"Document {doc_id} not found in branch {branch_id}"
-                    )
-                elif OnMissing == "warn":
-                    print(f"Warning: Document {doc_id} not found in branch {branch_id}")
-            document_ids = requested
-
-        if not document_ids:
-            return [] if not is_single else None
-
-        # Single SELECT ... WHERE doc_id IN (?, ?, ...)
+        # Fetch the requested docs in ONE indexed query, restricting to the
+        # branch via a JOIN.
+        #
+        # PERF: the previous code fetched ALL of the branch's doc_ids
+        # (``set(self.get_doc_ids(branch_id))``, O(total_docs)) and filtered
+        # the small ``document_ids`` list in Python. NDI's ``epochtable``
+        # calls ``get_docs`` once per epoch, so that was O(epochs x
+        # total_docs) — a single ``getprobes`` took minutes on a large cloud
+        # dataset (the live NDI spike-sort hung here). The branch JOIN +
+        # ``doc_id IN (...)`` is O(len(document_ids)) using the branch_docs
+        # and docs indexes. Branch membership is enforced by the JOIN; docs
+        # not in the branch simply aren't returned and are handled by the
+        # OnMissing pass below (same behaviour as before).
         placeholders = ",".join("?" for _ in document_ids)
-        rows = self.do_run_sql_query(
-            f"SELECT doc_id, json_code FROM docs WHERE doc_id IN ({placeholders})",
-            tuple(document_ids),
-        )
+        if branch_id is not None:
+            rows = self.do_run_sql_query(
+                f"SELECT d.doc_id, d.json_code FROM docs d "
+                f"JOIN branch_docs bd ON d.doc_idx = bd.doc_idx "
+                f"WHERE bd.branch_id = ? AND d.doc_id IN ({placeholders})",
+                (branch_id, *document_ids),
+            )
+        else:
+            rows = self.do_run_sql_query(
+                f"SELECT doc_id, json_code FROM docs WHERE doc_id IN ({placeholders})",
+                tuple(document_ids),
+            )
 
         # Build lookup dict
         doc_map = {}

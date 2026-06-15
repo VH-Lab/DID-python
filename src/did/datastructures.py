@@ -277,11 +277,23 @@ def field_search(a, search_struct):
                         b = True
                         break
     elif op_lower == "isa":
-        # param1 = class name
-        if param1 in a:
-            b = True
-        elif "document_class" in a and a["document_class"].get("class_name") == param1:
-            b = True
+        # isa(param1): true if param1 is the document's class OR one of its
+        # superclasses. Mirror did.implementations.doc2sql -- the same
+        # derivation the SQL isa path matches via meta.class / meta.superclass --
+        # so the brute-force and SQL paths agree and both follow MATLAB's
+        # semantics. The class is document_class.class_name (or the DID-python
+        # 'classname'); the superclasses are the bare names of
+        # document_class.superclasses[].definition (path + extension stripped).
+        # The previous "param1 in a" heuristic missed superclass membership
+        # (e.g. a probe document did not match isa('element')).
+        from .implementations.doc2sql import _get_class_name, _get_superclass_str
+
+        class_name = _get_class_name(a)
+        superclass_str = _get_superclass_str(a)
+        superclasses = (
+            [s for s in superclass_str.split(", ") if s] if superclass_str else []
+        )
+        b = (param1 == class_name) or (param1 in superclasses)
     else:
         raise ValueError(f"Unknown search operation: {operation}")
 
