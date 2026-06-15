@@ -11,6 +11,13 @@ jobs:
   symmetry:
     name: MATLAB <-> Python symmetry tests
     runs-on: ubuntu-latest
+    # matbox.installRequirements() (and the MATLAB test steps) call the GitHub
+    # API to resolve dependency commit ids. Without a token those calls are
+    # unauthenticated (60 req/hr per runner IP) and intermittently fail with
+    # "GitHub API rate limit exceeded". Expose the auto-provided token so the
+    # calls are authenticated (5000 req/hr).
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Check out DID-python
         uses: actions/checkout@v4
