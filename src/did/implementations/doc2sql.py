@@ -49,6 +49,14 @@ def _get_superclass_str(doc_props):
     MATLAB produces comma-space separated, sorted unique superclass names.
     For MATLAB-style definitions like "$PATH/base.json", strip path and extension.
     For DID-python style ["base", "demoA"], use directly.
+
+    Schema-v2 (DID-schema V_delta / V_epsilon) names a superclass directly with a
+    bare ``{"class_name": ...}`` object. Read ``class_name`` first but UNION in the
+    ``definition``-derived name rather than short-circuiting, so a mixed-shape entry
+    never silently narrows the superclass set. This mirrors the reference contract
+    in ndi-cloud-node ``api/src/dal/class_lineage.ts`` (``computeClassLineage``) and
+    NDI-python ``ndi.document.doc_superclass``, keeping the SQL ``meta.superclass``
+    column (and both isa paths that read it) consistent across all three stacks.
     """
     # DID-python schema format: top-level 'superclasses' list of strings
     if "superclasses" in doc_props and isinstance(
@@ -65,12 +73,16 @@ def _get_superclass_str(doc_props):
         for sc in superclasses:
             if isinstance(sc, str):
                 names.append(sc)
-            elif isinstance(sc, dict) and "definition" in sc:
-                # MATLAB-style: extract name from definition path
-                defn = sc["definition"]
-                name = re.sub(r".+/", "", defn)
-                name = re.sub(r"\..+$", "", name)
-                names.append(name)
+            elif isinstance(sc, dict):
+                # class_name-first, UNION with the definition-derived name.
+                if sc.get("class_name"):
+                    names.append(sc["class_name"])
+                if sc.get("definition"):
+                    # MATLAB-style: extract name from definition path
+                    defn = sc["definition"]
+                    name = re.sub(r".+/", "", defn)
+                    name = re.sub(r"\..+$", "", name)
+                    names.append(name)
         names = sorted(set(names))
         return ", ".join(names)
 
@@ -82,11 +94,15 @@ def _get_superclass_str(doc_props):
     if isinstance(superclasses, list):
         names = []
         for sc in superclasses:
-            if isinstance(sc, dict) and "definition" in sc:
-                defn = sc["definition"]
-                name = re.sub(r".+/", "", defn)
-                name = re.sub(r"\..+$", "", name)
-                names.append(name)
+            if isinstance(sc, dict):
+                # class_name-first, UNION with the definition-derived name.
+                if sc.get("class_name"):
+                    names.append(sc["class_name"])
+                if sc.get("definition"):
+                    defn = sc["definition"]
+                    name = re.sub(r".+/", "", defn)
+                    name = re.sub(r"\..+$", "", name)
+                    names.append(name)
             elif isinstance(sc, str):
                 names.append(sc)
         names = sorted(set(names))
