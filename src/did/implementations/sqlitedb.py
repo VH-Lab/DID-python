@@ -666,19 +666,32 @@ class SQLiteDB(Database):
         # and docs indexes. Branch membership is enforced by the JOIN; docs
         # not in the branch simply aren't returned and are handled by the
         # OnMissing pass below (same behaviour as before).
-        placeholders = ",".join("?" for _ in document_ids)
-        if branch_id is not None:
-            rows = self.do_run_sql_query(
-                f"SELECT d.doc_id, d.json_code FROM docs d "
-                f"JOIN branch_docs bd ON d.doc_idx = bd.doc_idx "
-                f"WHERE bd.branch_id = ? AND d.doc_id IN ({placeholders})",
-                (branch_id, *document_ids),
-            )
-        else:
-            rows = self.do_run_sql_query(
-                f"SELECT doc_id, json_code FROM docs WHERE doc_id IN ({placeholders})",
-                tuple(document_ids),
-            )
+        # Chunk the IN-list: SQLite caps host parameters per statement
+        # (SQLITE_MAX_VARIABLE_NUMBER — 999 on older builds), so a get_docs
+        # over thousands of ids (e.g. a cross-document query on a large cloud
+        # dataset) would raise "too many SQL variables". Batch under the limit
+        # and accumulate; order is restored from doc_map below.
+        _CHUNK = 900
+        rows = []
+        for _i in range(0, len(document_ids), _CHUNK):
+            chunk = document_ids[_i : _i + _CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            if branch_id is not None:
+                rows.extend(
+                    self.do_run_sql_query(
+                        f"SELECT d.doc_id, d.json_code FROM docs d "
+                        f"JOIN branch_docs bd ON d.doc_idx = bd.doc_idx "
+                        f"WHERE bd.branch_id = ? AND d.doc_id IN ({placeholders})",
+                        (branch_id, *chunk),
+                    )
+                )
+            else:
+                rows.extend(
+                    self.do_run_sql_query(
+                        f"SELECT doc_id, json_code FROM docs WHERE doc_id IN ({placeholders})",
+                        tuple(chunk),
+                    )
+                )
 
         # Build lookup dict
         doc_map = {}
