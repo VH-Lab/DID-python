@@ -24,6 +24,29 @@ def _sql_escape(value):
     return str(value).replace("'", "''")
 
 
+# Escape character used in LIKE patterns (see _sql_like_escape / ESCAPE clauses).
+_LIKE_ESCAPE_CHAR = "\\"
+
+
+def _sql_like_escape(value):
+    """Escape LIKE wildcards in a literal operand of a LIKE pattern.
+
+    '%' and '_' are LIKE wildcards; without escaping, a field name containing
+    '_' would match any single character (e.g. 'a_b' would also match 'axb'),
+    producing false-positive matches. Callers that embed the result inside a
+    LIKE pattern must also append "ESCAPE '\\'" so the backslash is treated as
+    the escape character. The single-quote escaping for the surrounding SQL
+    string literal is applied on top of this by _sql_escape.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    text = text.replace(_LIKE_ESCAPE_CHAR, _LIKE_ESCAPE_CHAR * 2)
+    text = text.replace("%", _LIKE_ESCAPE_CHAR + "%")
+    text = text.replace("_", _LIKE_ESCAPE_CHAR + "_")
+    return text
+
+
 class SQLiteDB(Database):
     def __init__(self, filename):
         super().__init__(connection=filename)
@@ -478,7 +501,13 @@ class SQLiteDB(Database):
             return result
 
         # Leaf query: build SQL and execute
-        sql_clause = self._query_struct_to_sql_str(search_struct)
+        try:
+            sql_clause = self._query_struct_to_sql_str(search_struct)
+        except (ValueError, TypeError):
+            # A numeric operation (exact_number/lessthan/greaterthan/...) was
+            # given a non-numeric param1, so the float() conversion failed.
+            # Fall back to brute force rather than aborting the whole search.
+            return self._brute_force_search(search_struct, branch_id)
         if sql_clause is None:
             # Fallback to brute-force for unsupported operations
             return self._brute_force_search(search_struct, branch_id)
@@ -558,17 +587,33 @@ class SQLiteDB(Database):
             return f"fields.field_name = '{field}' AND CAST(doc_data.value AS REAL) >= {float(param1)}"
 
         elif op_lower == "hasfield":
+            # 'field' is charset-restricted above, but it may legitimately
+            # contain '_', which is a LIKE wildcard. Escape LIKE wildcards in
+            # the literal prefix and add an ESCAPE clause so a field name like
+            # 'a_b' matches 'a_b[.subfield]' exactly, not 'axb'. The trailing
+            # '.%' is a real wildcard and is left unescaped.
+            field_like = _sql_like_escape(field)
             return (
-                f"(fields.field_name = '{field}' OR fields.field_name LIKE '{field}.%')"
+                f"(fields.field_name = '{field}' "
+                f"OR fields.field_name LIKE '{field_like}.%' ESCAPE '{_LIKE_ESCAPE_CHAR}')"
             )
 
         elif op_lower == "isa":
-            # isa: match on meta.class (exact) OR meta.superclass (contains)
+            # isa: match on meta.class (exact) OR meta.superclass (contains).
+            # The meta.class branch is an exact string compare, so it only
+            # needs SQL-literal escaping. The meta.superclass branch embeds the
+            # class name inside a regexp() pattern; regex metacharacters in the
+            # class name (e.g. '.') must be regex-escaped first, otherwise a
+            # name like 'foo.bar' would also match 'fooxbar'. Anchor it as an
+            # exact list-element match between the '(^|, )' / '(,|$)' delimiters.
             classname = _sql_escape(param1)
+            classname_re = _sql_escape(
+                _re.escape("" if param1 is None else str(param1))
+            )
             return (
                 f"((fields.field_name = 'meta.class' AND doc_data.value = '{classname}') "
                 f"OR (fields.field_name = 'meta.superclass' AND "
-                f"regexp('(^|, ){classname}(,|$)', doc_data.value) IS NOT NULL))"
+                f"regexp('(^|, ){classname_re}(,|$)', doc_data.value) IS NOT NULL))"
             )
 
         elif op_lower == "depends_on":
