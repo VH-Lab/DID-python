@@ -108,6 +108,49 @@ class TestQueryCorrectness(unittest.TestCase):
 
         self.assertEqual(ids, [])
 
+    # --- contains_string: '_'/'%' must not behave as LIKE wildcards -----------
+
+    def test_contains_string_underscore_is_not_a_wildcard(self):
+        # Two docs whose base.name differs only at the position of the '_'.
+        # With an unescaped LIKE pattern ('%spike_sort%'), '_' matches the 'X'
+        # here and the decoy would be a false positive, diverging from the
+        # brute-force ``param1 in value`` path.
+        match_id = self._add(_make_doc("1" * 32, fields={"base.name": "spike_sort"}))
+        self._add(_make_doc("2" * 32, fields={"base.name": "spikeXsort"}))
+
+        ids = self.db.search(
+            Query("base.name", "contains_string", "spike_sort"), branch_id="a"
+        )
+
+        # SQL result must agree with the brute-force path: exactly one match.
+        self.assertEqual(ids, [match_id])
+
+    def test_contains_string_percent_is_not_a_wildcard(self):
+        # '%' in the search term must match a literal '%', not "any run".
+        match_id = self._add(_make_doc("3" * 32, fields={"base.name": "50%done"}))
+        self._add(_make_doc("4" * 32, fields={"base.name": "50something_elsedone"}))
+
+        ids = self.db.search(
+            Query("base.name", "contains_string", "50%done"), branch_id="a"
+        )
+
+        self.assertEqual(ids, [match_id])
+
+    def test_depends_on_like_pattern_escapes_wildcards(self):
+        # The (currently unreachable) SQL depends_on branch must LIKE-escape the
+        # dependency name so a '_' in it cannot act as a single-char wildcard.
+        struct = {
+            "field": "",
+            "operation": "depends_on",
+            "param1": "a_b",
+            "param2": "val",
+        }
+        sql = self.db._query_struct_to_sql_str(struct)
+
+        # The underscore is escaped and an ESCAPE clause is emitted.
+        self.assertIn("a\\_b", sql)
+        self.assertIn("ESCAPE", sql)
+
     # --- numeric op with a non-numeric param1: graceful fallback --------------
 
     def test_numeric_op_nonnumeric_param_does_not_raise(self):
