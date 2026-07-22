@@ -341,42 +341,93 @@ class SQLiteDB(Database):
 
         return props
 
-    def _do_add_doc(self, document_obj, branch_id, **kwargs):
+    def _do_add_doc(self, document_obj, branch_id, OnDuplicate="error", **kwargs):
         import json
         import time
+        import warnings
+
+        on_dup = str(OnDuplicate).lower()
+        if on_dup not in self._ON_DUPLICATE_CHOICES:
+            raise ValueError(
+                "OnDuplicate must be one of "
+                f"{self._ON_DUPLICATE_CHOICES}; got {OnDuplicate!r}."
+            )
 
         doc_id = document_obj.id()
         cursor = self.dbid.cursor()
 
-        cursor.execute("SELECT doc_idx FROM docs WHERE doc_id = ?", (doc_id,))
-        row = cursor.fetchone()
+        # Validate branch existence BEFORE any INSERT. Previously the docs and
+        # doc_data rows were inserted first and the missing branch was only
+        # discovered by the branch_docs FOREIGN KEY check, which raised without
+        # rolling back — leaving orphan rows in the open transaction that the
+        # next successful add committed (a document belonging to no branch was
+        # then reported present). Checking first means a bad branch never
+        # inserts anything.
+        cursor.execute("SELECT 1 FROM branches WHERE branch_id = ?", (branch_id,))
+        if not cursor.fetchone():
+            raise ValueError(f"Branch '{branch_id}' does not exist.")
 
-        if row:
-            doc_idx = row["doc_idx"]
-        else:
-            json_code = json.dumps(
-                self._matlab_compatible_props(document_obj.document_properties)
-            )
-            cursor.execute(
-                "INSERT INTO docs (doc_id, json_code, timestamp) VALUES (?, ?, ?)",
-                (doc_id, json_code, time.time()),
-            )
-            doc_idx = cursor.lastrowid
-
-            # Populate fields and doc_data tables (matching MATLAB's doc2sql behavior)
-            self._populate_doc_data(cursor, doc_idx, document_obj)
+        # Snapshot the fields cache so a rollback also unwinds any field_idx
+        # entries _populate_doc_data added for fields whose INSERTs get rolled
+        # back with the transaction (otherwise the cache would point at
+        # non-existent field rows).
+        cache_before = dict(self._fields_cache)
 
         try:
+            cursor.execute("SELECT doc_idx FROM docs WHERE doc_id = ?", (doc_id,))
+            row = cursor.fetchone()
+
+            if row:
+                doc_idx = row["doc_idx"]
+            else:
+                json_code = json.dumps(
+                    self._matlab_compatible_props(document_obj.document_properties)
+                )
+                cursor.execute(
+                    "INSERT INTO docs (doc_id, json_code, timestamp) VALUES (?, ?, ?)",
+                    (doc_id, json_code, time.time()),
+                )
+                doc_idx = cursor.lastrowid
+
+                # Populate fields and doc_data tables (matching MATLAB's doc2sql behavior)
+                self._populate_doc_data(cursor, doc_idx, document_obj)
+
+            # Is this document already on this branch? If so it is a duplicate.
+            # DID-matlab's add_docs errors by default (OnDuplicate='error');
+            # the previous Python code swallowed the branch_docs duplicate with
+            # a bare ``pass``, silently keeping stale content. Honor OnDuplicate.
+            cursor.execute(
+                "SELECT 1 FROM branch_docs WHERE branch_id = ? AND doc_idx = ?",
+                (branch_id, doc_idx),
+            )
+            if cursor.fetchone():
+                if on_dup == "error":
+                    raise ValueError(
+                        f"Document '{doc_id}' is already in branch '{branch_id}'."
+                    )
+                if on_dup == "warn":
+                    warnings.warn(
+                        f"Document '{doc_id}' is already in branch '{branch_id}'; "
+                        "leaving the existing entry unchanged.",
+                        stacklevel=2,
+                    )
+                # 'ignore'/'warn': no-op (do not rewrite content). Commit so any
+                # docs/doc_data rows inserted above for a brand-new doc_id are
+                # persisted, then return.
+                self.dbid.commit()
+                return
+
             cursor.execute(
                 "INSERT INTO branch_docs (branch_id, doc_idx, timestamp) VALUES (?, ?, ?)",
                 (branch_id, doc_idx, time.time()),
             )
             self.dbid.commit()
-        except sqlite3.IntegrityError as e:
-            if "FOREIGN KEY" in str(e):
-                raise ValueError(f"Branch '{branch_id}' does not exist.")
-            # Ignore other integrity errors (duplicates)
-            pass
+        except Exception:
+            # Every failure path rolls back so no partial rows survive into the
+            # next transaction, and the fields cache is restored to match.
+            self.dbid.rollback()
+            self._fields_cache = cache_before
+            raise
 
     # --- SQL-based search (matching MATLAB's database.m) ---
 

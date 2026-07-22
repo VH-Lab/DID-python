@@ -28,13 +28,20 @@ class TestInvalidModification(unittest.TestCase):
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
 
-    def test_add_doc_twice(self):
-        # Adding the same document twice should not raise an error
+    def test_add_doc_twice_raises_by_default(self):
+        # DID-matlab parity: re-adding a document already on the branch errors
+        # by default (OnDuplicate='error'), rather than silently keeping the
+        # existing content. Under OnDuplicate='ignore' it is a no-op.
         doc = self.docs[0]
-        try:
+        with self.assertRaises(ValueError):
             self.db._do_add_doc(doc, "a")
+
+        # 'ignore' must not raise and must leave the document present.
+        try:
+            self.db._do_add_doc(doc, "a", OnDuplicate="ignore")
         except Exception as e:
-            self.fail(f"Adding the same document twice raised an exception: {e}")
+            self.fail(f"Adding a duplicate with OnDuplicate='ignore' raised: {e}")
+        self.assertIsNotNone(self.db.get_docs(doc.id(), OnMissing="ignore"))
 
     def test_add_doc_to_nonexistent_branch(self):
         doc = self.docs[0]
