@@ -145,9 +145,7 @@ class Document:
                 if "base" not in data:
                     data["base"] = {}
                 elif isinstance(data["base"], list):
-                    data["base"] = Document._field_descriptors_to_defaults(
-                        data["base"]
-                    )
+                    data["base"] = Document._field_descriptors_to_defaults(data["base"])
                 # Convert flat classname/superclasses to document_class format
                 data = Document._normalize_to_document_class(data)
                 return data
