@@ -502,7 +502,17 @@ class SQLiteDB(Database):
             return f"fields.field_name = '{field}' AND LOWER(doc_data.value) = LOWER('{_sql_escape(param1)}')"
 
         elif op_lower == "contains_string":
-            return f"fields.field_name = '{field}' AND doc_data.value LIKE '%{_sql_escape(param1)}%'"
+            # param1 is arbitrary user text: '%' and '_' in it must NOT act as
+            # LIKE wildcards (otherwise 'spike_sort' would also match
+            # 'spikeXsort'), which would diverge from the brute-force
+            # ``param1 in value`` path. Escape the LIKE wildcards, add an ESCAPE
+            # clause, and SQL-escape the surrounding literal. The bracketing
+            # '%' are the real "contains" wildcards and stay unescaped.
+            param_like = _sql_escape(_sql_like_escape(param1))
+            return (
+                f"fields.field_name = '{field}' AND doc_data.value "
+                f"LIKE '%{param_like}%' ESCAPE '{_LIKE_ESCAPE_CHAR}'"
+            )
 
         elif op_lower == "regexp":
             return f"fields.field_name = '{field}' AND regexp('{_sql_escape(param1)}', doc_data.value) IS NOT NULL"
@@ -553,15 +563,30 @@ class SQLiteDB(Database):
             )
 
         elif op_lower == "depends_on":
-            # depends_on: search meta.depends_on using LIKE '%name,value;%'
-            name = _sql_escape(param1)
-            value = _sql_escape(param2)
-            if name == "*":
-                return f"fields.field_name = 'meta.depends_on' AND doc_data.value LIKE '%,{value};%'"
-            return f"fields.field_name = 'meta.depends_on' AND doc_data.value LIKE '%{name},{value};%'"
+            # depends_on: search meta.depends_on using LIKE '%name,value;%'.
+            # NOTE: this branch is currently unreachable — Query._resolve_single
+            # rewrites every 'depends_on' into 'hasanysubfield_exact_string'
+            # before it reaches here, so depends_on always brute-forces. The
+            # LIKE-wildcard escaping below is applied defensively so that if the
+            # resolution is ever changed to let this branch run, '_'/'%' in the
+            # dependency name/value can't silently act as wildcards. The ','/';'
+            # delimiters and the bracketing '%' are the real pattern structure
+            # and stay unescaped.
+            name = _sql_escape(_sql_like_escape(param1))
+            value = _sql_escape(_sql_like_escape(param2))
+            if param1 == "*":
+                return (
+                    "fields.field_name = 'meta.depends_on' AND doc_data.value "
+                    f"LIKE '%,{value};%' ESCAPE '{_LIKE_ESCAPE_CHAR}'"
+                )
+            return (
+                "fields.field_name = 'meta.depends_on' AND doc_data.value "
+                f"LIKE '%{name},{value};%' ESCAPE '{_LIKE_ESCAPE_CHAR}'"
+            )
 
         elif op_lower == "hasanysubfield_exact_string":
-            # Used by resolved depends_on - fall back to brute force
+            # unreachable — see Query._resolve_single (resolved depends_on);
+            # falls back to brute force
             return None
 
         elif op_lower == "hasanysubfield_contains_string":
