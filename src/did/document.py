@@ -133,9 +133,21 @@ class Document:
         if os.path.exists(filepath):
             with open(filepath, "r") as f:
                 data = json.load(f)
-                # Ensure the 'base' key exists
+                # Ensure the 'base' key is a dict the constructor can stamp
+                # base.id / base.datestamp onto. base.schema.json stores 'base'
+                # as a LIST of field descriptors (unlike demoA.schema.json,
+                # which has no top-level 'base'), so Document('base') /
+                # Document() used to raise "TypeError: list indices must be
+                # integers". Convert that descriptor list to a {name:
+                # default_value} defaults dict. (This is the narrow constructor
+                # fix only; the broader build-from-database_documents rework is
+                # tracked separately.)
                 if "base" not in data:
                     data["base"] = {}
+                elif isinstance(data["base"], list):
+                    data["base"] = Document._field_descriptors_to_defaults(
+                        data["base"]
+                    )
                 # Convert flat classname/superclasses to document_class format
                 data = Document._normalize_to_document_class(data)
                 return data
@@ -155,6 +167,20 @@ class Document:
         raise FileNotFoundError(
             f"Could not find definition for {json_file_location_string}"
         )
+
+    @staticmethod
+    def _field_descriptors_to_defaults(descriptors):
+        """Convert a schema field-descriptor list to a {name: default_value} dict.
+
+        Each descriptor is a dict with at least a 'name' and (usually) a
+        'default_value'. Used to turn base.schema.json's 'base' list into a
+        blank base group the constructor can stamp id/datestamp onto.
+        """
+        defaults = {}
+        for field in descriptors:
+            if isinstance(field, dict) and "name" in field:
+                defaults[field["name"]] = field.get("default_value", "")
+        return defaults
 
     @staticmethod
     def _normalize_to_document_class(data):

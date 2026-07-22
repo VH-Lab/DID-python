@@ -47,6 +47,15 @@ class TestDocument(unittest.TestCase):
             "Failed to update an existing dependency value.",
         )
 
+    def test_default_document_constructs(self):
+        # Document() (default type 'base') and Document('base') used to raise
+        # "TypeError: list indices must be integers" because base.schema.json
+        # stores 'base' as a list of field descriptors. Both must now construct
+        # and produce a non-empty id.
+        for doc in (Document(), Document("base")):
+            self.assertIsInstance(doc.id(), str)
+            self.assertTrue(doc.id())
+
     def test_datestamp_is_iso8601_utc(self):
         # base.datestamp must be ISO-8601 millis + 'Z' (not the old
         # space-separated tz-less str(datetime.utcnow()) form).
