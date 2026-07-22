@@ -1,3 +1,4 @@
+import json
 import re
 
 
@@ -131,15 +132,39 @@ def _serialize_depends_on(doc_props):
 
 
 def _flatten_dict(d, prefix=""):
-    """Flatten a nested dict using ___ separator for nested keys (matching MATLAB's getMetaTableFrom)."""
+    """Flatten a nested dict using ___ separator for nested keys.
+
+    Matches DID-matlab getMetaTableFrom/recurseFields:
+
+    * nested dicts recurse with a ``___`` separator;
+    * a list of dicts (a struct array) expands into one column per element,
+      each element's flattened column suffixed ``_<1-based idx>`` — but ONLY
+      when the list has more than one element (a single-element list is
+      unsuffixed, mirroring doc2sql.m's ``numElements > 1`` rule);
+    * any residual scalar/mixed list is JSON-encoded (not ``str()``-repr'd) so
+      the stored value is valid JSON parseable by MATLAB/JS consumers instead
+      of a Python repr with single quotes.
+
+    Previously every list was ``str(value)``'d into one column, so per-element
+    fields were unsearchable and the stored string disagreed with what
+    DID-matlab writes for the same document.
+    """
     items = []
     for key, value in d.items():
         col_name = f"{prefix}___{key}" if prefix else key
         if isinstance(value, dict):
             items.extend(_flatten_dict(value, col_name))
         elif isinstance(value, list):
-            # Convert lists to string representation
-            items.append((col_name, str(value)))
+            if value and all(isinstance(el, dict) for el in value):
+                # Struct array: expand per element.
+                multi = len(value) > 1
+                for idx, el in enumerate(value, start=1):
+                    for sub_name, sub_val in _flatten_dict(el, col_name):
+                        name = f"{sub_name}_{idx}" if multi else sub_name
+                        items.append((name, sub_val))
+            else:
+                # Scalar / empty / mixed list: JSON-encode.
+                items.append((col_name, json.dumps(value)))
         else:
             items.append((col_name, value))
     return items
