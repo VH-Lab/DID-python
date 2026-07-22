@@ -15,6 +15,8 @@ meta.superclass); this test pins both paths to the same, correct answer.
 import os
 import unittest
 
+import pytest
+
 from did.document import Document
 from did.implementations.sqlitedb import SQLiteDB
 from did.query import Query
@@ -252,6 +254,105 @@ class TestVEpsilonDiamondIsa(unittest.TestCase):
             self.assertEqual(
                 self._sql(c), self._brute(c), f"isa({c}) SQL vs brute-force mismatch"
             )
+
+
+class TestDirectOnlySuperclassIsa:
+    """DIRECT-ONLY (unflattened) diamond: leaf carries only its immediate
+    parent, the way a real producer stamps a class file (DID-schema class
+    files declare direct parents only; NDI-python's read_blank_definition does
+    not flatten). The existing V_epsilon fixture pre-flattens its ancestor list
+    ('scalar_observation','scalar_mass','base'), so it passes by construction
+    and cannot catch the direct-only reality it claims to protect.
+
+    Hierarchy (synthetic, no DID-schema dependency): root <- mid <- leaf, where
+    leaf.superclasses == ['mid'] ONLY.
+
+    * A leaf isa its DIRECT parent 'mid' -- works today, pinned green below.
+    * A leaf isa its GRANDPARENT 'root' -- SHOULD hold, but isa currently
+      resolves only the direct meta.superclass column and does NOT walk the
+      hierarchy transitively, so it does not. Pinned as a strict-xfail so the
+      gap is visible and CI flips to XPASS->red the moment isa becomes
+      transitive (or the fixture is accidentally flattened, the exact GATE the
+      audit calls for). Transitive isa / all_ancestors resolution is deferred
+      to the schema-migration work.
+    """
+
+    DB = "test_isa_direct_only.sqlite"
+
+    @staticmethod
+    def _v2doc(class_name, superclasses):
+        return Document(
+            {
+                "document_class": {
+                    "definition": f"$NDIDOCUMENTPATH/{class_name}.json",
+                    "class_name": class_name,
+                    "class_version": 1,
+                    "property_list_name": class_name,
+                    "superclasses": [{"class_name": s} for s in superclasses],
+                },
+                "base": {
+                    "id": f"id_{class_name}",
+                    "name": class_name,
+                    "datestamp": "2026-07-01T00:00:00",
+                },
+            }
+        )
+
+    @classmethod
+    def setup_class(cls):
+        if os.path.exists(cls.DB):
+            os.remove(cls.DB)
+        cls.db = SQLiteDB(cls.DB)
+        cls.db.add_branch("a")
+        # DIRECT-ONLY: leaf lists 'mid' only, NOT the flattened ['mid','root'].
+        specs = [
+            ("root", []),
+            ("mid", ["root"]),
+            ("leaf", ["mid"]),
+        ]
+        cls.by_class = {}
+        cls.docs = []
+        for class_name, supers in specs:
+            d = cls._v2doc(class_name, supers)
+            cls.by_class[class_name] = d
+            cls.docs.append(d)
+            cls.db._do_add_doc(d, "a")
+
+    @classmethod
+    def teardown_class(cls):
+        cls.db._close_db()
+        if os.path.exists(cls.DB):
+            os.remove(cls.DB)
+
+    def _sql(self, class_name):
+        return sorted(self.db.search(Query("", "isa", class_name), branch_id="a"))
+
+    def _brute(self, class_name):
+        ss = Query("", "isa", class_name).to_search_structure()
+        return sorted(
+            d.id() for d in self.docs if field_search(d.document_properties, ss)
+        )
+
+    def test_leaf_isa_direct_parent(self):
+        # 'mid' is the leaf's direct superclass: both paths must match today.
+        leaf = "id_leaf"
+        assert leaf in self._sql("mid")
+        assert leaf in self._brute("mid")
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "isa is not transitive: a direct-only leaf (superclasses=['mid']) "
+            "does not match isa('root'). Transitive/all-ancestors resolution is "
+            "deferred to schema-migration work. Strict xfail: if this XPASSes "
+            "the fixture is flattening ancestors and must be re-examined."
+        ),
+    )
+    def test_leaf_isa_transitive_grandparent(self):
+        # root is the leaf's GRANDPARENT via mid, not a direct superclass.
+        leaf = "id_leaf"
+        assert leaf in self._sql("root")
+        assert leaf in self._brute("root")
 
 
 if __name__ == "__main__":
