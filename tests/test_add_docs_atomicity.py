@@ -13,8 +13,8 @@ Two closely-coupled correctness fixes that both restructure ``_do_add_doc``:
 """
 
 import os
-import warnings
 import unittest
+import warnings
 
 from did.document import Document
 from did.implementations.sqlitedb import SQLiteDB

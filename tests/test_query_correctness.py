@@ -16,8 +16,8 @@ import os
 import unittest
 
 from did.document import Document
-from did.query import Query
 from did.implementations.sqlitedb import SQLiteDB
+from did.query import Query
 
 
 def _make_doc(idhex, *, fields=None, class_name=None, superclasses=None):

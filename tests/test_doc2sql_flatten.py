@@ -6,8 +6,8 @@ str()-repr'd any list into a single column, so per-element fields were
 unsearchable and the stored string disagreed with DID-matlab.
 """
 
-from did.implementations.doc2sql import _flatten_dict, doc_to_sql
 from did.document import Document
+from did.implementations.doc2sql import _flatten_dict, doc_to_sql
 
 
 def _cols(items):
