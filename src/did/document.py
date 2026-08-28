@@ -6,9 +6,21 @@ from . import ido
 from .common import PathConstants
 
 
-def _utcnow():
-    """Naive UTC timestamp, identical to the deprecated datetime.utcnow()."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _utc_timestamp():
+    """Return the current UTC time as an ISO-8601 millisecond string with 'Z'.
+
+    Ported from NDI-python (ndi.fun.timestamp) with the leap-second guard.
+    ``str(datetime.utcnow())`` previously emitted a space-separated,
+    timezone-less string ('2026-07-20 22:36:19.611068') that diverges from the
+    DID-matlab UTCLeapSeconds ISO-8601 output and from base.schema.json's own
+    default ('2018-12-05T18:36:47.241Z'); a JS ``new Date()`` parses the
+    tz-less form as LOCAL time. Emit '%Y-%m-%dT%H:%M:%S.%fZ' truncated to
+    milliseconds, clamping the (theoretical) leap-second :60 to :59.999.
+    """
+    now = datetime.now(timezone.utc)
+    ts = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+    ts = ts.replace(":60.", ":59.999")
+    return ts + "Z"
 
 
 class Document:
@@ -18,7 +30,7 @@ class Document:
         else:
             self.document_properties = self.read_blank_definition(document_type)
             self.document_properties["base"]["id"] = ido.IDO.unique_id()
-            self.document_properties["base"]["datestamp"] = str(_utcnow())
+            self.document_properties["base"]["datestamp"] = _utc_timestamp()
 
             for key, value in kwargs.items():
                 path = key.split(".")
@@ -165,9 +177,22 @@ class Document:
         if os.path.exists(filepath):
             with open(filepath, "r") as f:
                 data = json.load(f)
+                # Ensure the 'base' key is a dict the constructor can stamp
+                # base.id / base.datestamp onto. base.schema.json stores 'base'
+                # as a LIST of field descriptors (unlike demoA.schema.json,
+                # which has no top-level 'base'), so Document('base') /
+                # Document() used to raise "TypeError: list indices must be
+                # integers". Convert that descriptor list to a {name:
+                # default_value} defaults dict. (This is the narrow constructor
+                # fix only; the broader build-from-database_documents rework is
+                # tracked separately.)
                 if "base" not in data:
                     data["base"] = {}
-                return Document._normalize_to_document_class(data)
+                elif isinstance(data["base"], list):
+                    data["base"] = Document._field_descriptors_to_defaults(data["base"])
+                # Convert flat classname/superclasses to document_class format
+                data = Document._normalize_to_document_class(data)
+                return data
 
         # Fallback for base
         if json_file_location_string == "base":
@@ -262,6 +287,20 @@ class Document:
         class_props["superclasses"] = unique_superclasses
         data["document_class"] = class_props
         return data
+
+    @staticmethod
+    def _field_descriptors_to_defaults(descriptors):
+        """Convert a schema field-descriptor list to a {name: default_value} dict.
+
+        Each descriptor is a dict with at least a 'name' and (usually) a
+        'default_value'. Used to turn base.schema.json's 'base' list into a
+        blank base group the constructor can stamp id/datestamp onto.
+        """
+        defaults = {}
+        for field in descriptors:
+            if isinstance(field, dict) and "name" in field:
+                defaults[field["name"]] = field.get("default_value", "")
+        return defaults
 
     @staticmethod
     def _normalize_to_document_class(data):

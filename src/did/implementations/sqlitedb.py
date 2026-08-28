@@ -22,6 +22,29 @@ def _sql_escape(value):
     return str(value).replace("'", "''")
 
 
+# Escape character used in LIKE patterns (see _sql_like_escape / ESCAPE clauses).
+_LIKE_ESCAPE_CHAR = "\\"
+
+
+def _sql_like_escape(value):
+    """Escape LIKE wildcards in a literal operand of a LIKE pattern.
+
+    '%' and '_' are LIKE wildcards; without escaping, a field name containing
+    '_' would match any single character (e.g. 'a_b' would also match 'axb'),
+    producing false-positive matches. Callers that embed the result inside a
+    LIKE pattern must also append "ESCAPE '\\'" so the backslash is treated as
+    the escape character. The single-quote escaping for the surrounding SQL
+    string literal is applied on top of this by _sql_escape.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    text = text.replace(_LIKE_ESCAPE_CHAR, _LIKE_ESCAPE_CHAR * 2)
+    text = text.replace("%", _LIKE_ESCAPE_CHAR + "%")
+    text = text.replace("_", _LIKE_ESCAPE_CHAR + "_")
+    return text
+
+
 class SQLiteDB(Database):
     def __init__(self, filename):
         super().__init__(connection=filename)
@@ -318,41 +341,93 @@ class SQLiteDB(Database):
 
         return props
 
-    def _do_add_doc(self, document_obj, branch_id, **kwargs):
+    def _do_add_doc(self, document_obj, branch_id, OnDuplicate="error", **kwargs):
         import json
         import time
+        import warnings
+
+        on_dup = str(OnDuplicate).lower()
+        if on_dup not in self._ON_DUPLICATE_CHOICES:
+            raise ValueError(
+                "OnDuplicate must be one of "
+                f"{self._ON_DUPLICATE_CHOICES}; got {OnDuplicate!r}."
+            )
 
         doc_id = document_obj.id()
         cursor = self.dbid.cursor()
 
-        cursor.execute("SELECT doc_idx FROM docs WHERE doc_id = ?", (doc_id,))
-        row = cursor.fetchone()
+        # Validate branch existence BEFORE any INSERT. Previously the docs and
+        # doc_data rows were inserted first and the missing branch was only
+        # discovered by the branch_docs FOREIGN KEY check, which raised without
+        # rolling back — leaving orphan rows in the open transaction that the
+        # next successful add committed (a document belonging to no branch was
+        # then reported present). Checking first means a bad branch never
+        # inserts anything.
+        cursor.execute("SELECT 1 FROM branches WHERE branch_id = ?", (branch_id,))
+        if not cursor.fetchone():
+            raise ValueError(f"Branch '{branch_id}' does not exist.")
 
-        if row:
-            doc_idx = row["doc_idx"]
-        else:
-            json_code = json.dumps(
-                self._matlab_compatible_props(document_obj.document_properties)
-            )
-            cursor.execute(
-                "INSERT INTO docs (doc_id, json_code, timestamp) VALUES (?, ?, ?)",
-                (doc_id, json_code, time.time()),
-            )
-            doc_idx = cursor.lastrowid
-
-            # Populate fields and doc_data tables (matching MATLAB's doc2sql behavior)
-            self._populate_doc_data(cursor, doc_idx, document_obj)
+        # Snapshot the fields cache so a rollback also unwinds any field_idx
+        # entries _populate_doc_data added for fields whose INSERTs get rolled
+        # back with the transaction (otherwise the cache would point at
+        # non-existent field rows).
+        cache_before = dict(self._fields_cache)
 
         try:
+            cursor.execute("SELECT doc_idx FROM docs WHERE doc_id = ?", (doc_id,))
+            row = cursor.fetchone()
+
+            if row:
+                doc_idx = row["doc_idx"]
+            else:
+                json_code = json.dumps(
+                    self._matlab_compatible_props(document_obj.document_properties)
+                )
+                cursor.execute(
+                    "INSERT INTO docs (doc_id, json_code, timestamp) VALUES (?, ?, ?)",
+                    (doc_id, json_code, time.time()),
+                )
+                doc_idx = cursor.lastrowid
+
+                # Populate fields and doc_data tables (matching MATLAB's doc2sql behavior)
+                self._populate_doc_data(cursor, doc_idx, document_obj)
+
+            # Is this document already on this branch? If so it is a duplicate.
+            # DID-matlab's add_docs errors by default (OnDuplicate='error');
+            # the previous Python code swallowed the branch_docs duplicate with
+            # a bare ``pass``, silently keeping stale content. Honor OnDuplicate.
+            cursor.execute(
+                "SELECT 1 FROM branch_docs WHERE branch_id = ? AND doc_idx = ?",
+                (branch_id, doc_idx),
+            )
+            if cursor.fetchone():
+                if on_dup == "error":
+                    raise ValueError(
+                        f"Document '{doc_id}' is already in branch '{branch_id}'."
+                    )
+                if on_dup == "warn":
+                    warnings.warn(
+                        f"Document '{doc_id}' is already in branch '{branch_id}'; "
+                        "leaving the existing entry unchanged.",
+                        stacklevel=2,
+                    )
+                # 'ignore'/'warn': no-op (do not rewrite content). Commit so any
+                # docs/doc_data rows inserted above for a brand-new doc_id are
+                # persisted, then return.
+                self.dbid.commit()
+                return
+
             cursor.execute(
                 "INSERT INTO branch_docs (branch_id, doc_idx, timestamp) VALUES (?, ?, ?)",
                 (branch_id, doc_idx, time.time()),
             )
             self.dbid.commit()
-        except sqlite3.IntegrityError as e:
-            if "FOREIGN KEY" in str(e):
-                raise ValueError(f"Branch '{branch_id}' does not exist.")
-            # Ignore other integrity errors (duplicates)
+        except Exception:
+            # Every failure path rolls back so no partial rows survive into the
+            # next transaction, and the fields cache is restored to match.
+            self.dbid.rollback()
+            self._fields_cache = cache_before
+            raise
 
     # --- SQL-based search (matching MATLAB's database.m) ---
 
@@ -412,7 +487,13 @@ class SQLiteDB(Database):
             return result
 
         # Leaf query: build SQL and execute
-        sql_clause = self._query_struct_to_sql_str(search_struct)
+        try:
+            sql_clause = self._query_struct_to_sql_str(search_struct)
+        except (ValueError, TypeError):
+            # A numeric operation (exact_number/lessthan/greaterthan/...) was
+            # given a non-numeric param1, so the float() conversion failed.
+            # Fall back to brute force rather than aborting the whole search.
+            return self._brute_force_search(search_struct, branch_id)
         if sql_clause is None:
             # Fallback to brute-force for unsupported operations
             return self._brute_force_search(search_struct, branch_id)
@@ -471,7 +552,17 @@ class SQLiteDB(Database):
             return f"fields.field_name = '{field}' AND LOWER(doc_data.value) = LOWER('{_sql_escape(param1)}')"
 
         elif op_lower == "contains_string":
-            return f"fields.field_name = '{field}' AND doc_data.value LIKE '%{_sql_escape(param1)}%'"
+            # param1 is arbitrary user text: '%' and '_' in it must NOT act as
+            # LIKE wildcards (otherwise 'spike_sort' would also match
+            # 'spikeXsort'), which would diverge from the brute-force
+            # ``param1 in value`` path. Escape the LIKE wildcards, add an ESCAPE
+            # clause, and SQL-escape the surrounding literal. The bracketing
+            # '%' are the real "contains" wildcards and stay unescaped.
+            param_like = _sql_escape(_sql_like_escape(param1))
+            return (
+                f"fields.field_name = '{field}' AND doc_data.value "
+                f"LIKE '%{param_like}%' ESCAPE '{_LIKE_ESCAPE_CHAR}'"
+            )
 
         elif op_lower == "regexp":
             return f"fields.field_name = '{field}' AND regexp('{_sql_escape(param1)}', doc_data.value) IS NOT NULL"
@@ -492,29 +583,60 @@ class SQLiteDB(Database):
             return f"fields.field_name = '{field}' AND CAST(doc_data.value AS REAL) >= {float(param1)}"
 
         elif op_lower == "hasfield":
+            # 'field' is charset-restricted above, but it may legitimately
+            # contain '_', which is a LIKE wildcard. Escape LIKE wildcards in
+            # the literal prefix and add an ESCAPE clause so a field name like
+            # 'a_b' matches 'a_b[.subfield]' exactly, not 'axb'. The trailing
+            # '.%' is a real wildcard and is left unescaped.
+            field_like = _sql_like_escape(field)
             return (
-                f"(fields.field_name = '{field}' OR fields.field_name LIKE '{field}.%')"
+                f"(fields.field_name = '{field}' "
+                f"OR fields.field_name LIKE '{field_like}.%' ESCAPE '{_LIKE_ESCAPE_CHAR}')"
             )
 
         elif op_lower == "isa":
-            # isa: match on meta.class (exact) OR meta.superclass (contains)
+            # isa: match on meta.class (exact) OR meta.superclass (contains).
+            # The meta.class branch is an exact string compare, so it only
+            # needs SQL-literal escaping. The meta.superclass branch embeds the
+            # class name inside a regexp() pattern; regex metacharacters in the
+            # class name (e.g. '.') must be regex-escaped first, otherwise a
+            # name like 'foo.bar' would also match 'fooxbar'. Anchor it as an
+            # exact list-element match between the '(^|, )' / '(,|$)' delimiters.
             classname = _sql_escape(param1)
+            classname_re = _sql_escape(
+                _re.escape("" if param1 is None else str(param1))
+            )
             return (
                 f"((fields.field_name = 'meta.class' AND doc_data.value = '{classname}') "
                 f"OR (fields.field_name = 'meta.superclass' AND "
-                f"regexp('(^|, ){classname}(,|$)', doc_data.value) IS NOT NULL))"
+                f"regexp('(^|, ){classname_re}(,|$)', doc_data.value) IS NOT NULL))"
             )
 
         elif op_lower == "depends_on":
-            # depends_on: search meta.depends_on using LIKE '%name,value;%'
-            name = _sql_escape(param1)
-            value = _sql_escape(param2)
-            if name == "*":
-                return f"fields.field_name = 'meta.depends_on' AND doc_data.value LIKE '%,{value};%'"
-            return f"fields.field_name = 'meta.depends_on' AND doc_data.value LIKE '%{name},{value};%'"
+            # depends_on: search meta.depends_on using LIKE '%name,value;%'.
+            # NOTE: this branch is currently unreachable — Query._resolve_single
+            # rewrites every 'depends_on' into 'hasanysubfield_exact_string'
+            # before it reaches here, so depends_on always brute-forces. The
+            # LIKE-wildcard escaping below is applied defensively so that if the
+            # resolution is ever changed to let this branch run, '_'/'%' in the
+            # dependency name/value can't silently act as wildcards. The ','/';'
+            # delimiters and the bracketing '%' are the real pattern structure
+            # and stay unescaped.
+            name = _sql_escape(_sql_like_escape(param1))
+            value = _sql_escape(_sql_like_escape(param2))
+            if param1 == "*":
+                return (
+                    "fields.field_name = 'meta.depends_on' AND doc_data.value "
+                    f"LIKE '%,{value};%' ESCAPE '{_LIKE_ESCAPE_CHAR}'"
+                )
+            return (
+                "fields.field_name = 'meta.depends_on' AND doc_data.value "
+                f"LIKE '%{name},{value};%' ESCAPE '{_LIKE_ESCAPE_CHAR}'"
+            )
 
         elif op_lower == "hasanysubfield_exact_string":
-            # Used by resolved depends_on - fall back to brute force
+            # unreachable — see Query._resolve_single (resolved depends_on);
+            # falls back to brute force
             return None
 
         elif op_lower == "hasanysubfield_contains_string":
@@ -600,19 +722,32 @@ class SQLiteDB(Database):
         # and docs indexes. Branch membership is enforced by the JOIN; docs
         # not in the branch simply aren't returned and are handled by the
         # OnMissing pass below (same behaviour as before).
-        placeholders = ",".join("?" for _ in document_ids)
-        if branch_id is not None:
-            rows = self.do_run_sql_query(
-                f"SELECT d.doc_id, d.json_code FROM docs d "
-                f"JOIN branch_docs bd ON d.doc_idx = bd.doc_idx "
-                f"WHERE bd.branch_id = ? AND d.doc_id IN ({placeholders})",
-                (branch_id, *document_ids),
-            )
-        else:
-            rows = self.do_run_sql_query(
-                f"SELECT doc_id, json_code FROM docs WHERE doc_id IN ({placeholders})",
-                tuple(document_ids),
-            )
+        # Chunk the IN-list: SQLite caps host parameters per statement
+        # (SQLITE_MAX_VARIABLE_NUMBER — 999 on older builds), so a get_docs
+        # over thousands of ids (e.g. a cross-document query on a large cloud
+        # dataset) would raise "too many SQL variables". Batch under the limit
+        # and accumulate; order is restored from doc_map below.
+        _CHUNK = 900
+        rows = []
+        for _i in range(0, len(document_ids), _CHUNK):
+            chunk = document_ids[_i : _i + _CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            if branch_id is not None:
+                rows.extend(
+                    self.do_run_sql_query(
+                        f"SELECT d.doc_id, d.json_code FROM docs d "
+                        f"JOIN branch_docs bd ON d.doc_idx = bd.doc_idx "
+                        f"WHERE bd.branch_id = ? AND d.doc_id IN ({placeholders})",
+                        (branch_id, *chunk),
+                    )
+                )
+            else:
+                rows.extend(
+                    self.do_run_sql_query(
+                        f"SELECT doc_id, json_code FROM docs WHERE doc_id IN ({placeholders})",
+                        tuple(chunk),
+                    )
+                )
 
         # Build lookup dict
         doc_map = {}

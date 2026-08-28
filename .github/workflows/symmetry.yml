@@ -80,6 +80,14 @@ jobs:
         run: pytest -m make_artifacts -v
 
       - name: "Step 2: Python readArtifact tests"
+        # Artifacts are produced by earlier steps in THIS job (MATLAB
+        # makeArtifacts in Step 1, Python makeArtifacts above), so a missing
+        # artifact dir/file here is a real failure, not a reason to skip green.
+        # This env var makes the readArtifact test fail hard on absence instead
+        # of skipping (skips exit 0 and let the badge go green having compared
+        # nothing across languages).
+        env:
+          DID_SYMMETRY_REQUIRE_ARTIFACTS: "1"
         run: pytest -m read_artifacts -v
 
       # --- Step 3: MATLAB readArtifacts ---
