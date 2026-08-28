@@ -284,29 +284,51 @@ class Document:
         if isinstance(dep, dict):
             self.document_properties["depends_on"] = [dep]
 
-    def dependency_value(self, dependency_name, error_if_not_found=True):
+    def _dependency_index(self, dependency_name):
+        """Index of the first depends_on entry named ``dependency_name``.
+
+        Matching is case-insensitive, mirroring MATLAB's ``strcmpi``. Returns
+        None when there is no such entry.
+        """
         self._ensure_depends_on_list()
-        if "depends_on" in self.document_properties:
-            for dep in self.document_properties["depends_on"]:
-                if dep.get("name") == dependency_name:
-                    return dep.get("value")
+        wanted = str(dependency_name).lower()
+        for index, dep in enumerate(self.document_properties.get("depends_on", [])):
+            if str(dep.get("name", "")).lower() == wanted:
+                return index
+        return None
+
+    def dependency_value(self, dependency_name, error_if_not_found=True):
+        index = self._dependency_index(dependency_name)
+        if index is not None:
+            return self.document_properties["depends_on"][index].get("value")
 
         if error_if_not_found:
             raise ValueError(f"Dependency '{dependency_name}' not found.")
         return None
 
     def set_dependency_value(self, dependency_name, value, error_if_not_found=True):
-        self._ensure_depends_on_list()
-        if "depends_on" in self.document_properties:
-            for dep in self.document_properties["depends_on"]:
-                if dep.get("name") == dependency_name:
-                    dep["value"] = value
-                    return self
+        index = self._dependency_index(dependency_name)
+        if index is not None:
+            self.document_properties["depends_on"][index]["value"] = value
+            return self
 
         if error_if_not_found:
             raise ValueError(f"Dependency '{dependency_name}' not found.")
 
-        # If not found and not erroring, add it
+        # Adding a bare `item` to a document that already holds `item_1`,
+        # `item_2`, ... is the enumerated-list mistake: the schema declares the
+        # un-enumerated stem, so both validators accept the result, but MATLAB's
+        # dependency_value_n stops at the first gap and never sees the new
+        # entry. Refuse it rather than corrupt the list silently. This is a
+        # deliberate divergence -- MATLAB appends without complaint.
+        if self._enumerated_count(dependency_name) > 0:
+            raise ValueError(
+                f"Cannot add a dependency named '{dependency_name}': the "
+                f"document already has an enumerated list "
+                f"'{dependency_name}_1'... Use add_dependency_value_n"
+                f"('{dependency_name}', value) to append to it."
+            )
+
         if "depends_on" not in self.document_properties:
             self.document_properties["depends_on"] = []
         self.document_properties["depends_on"].append(
@@ -314,4 +336,87 @@ class Document:
         )
         return self
 
-    # ... other methods like validate, plus, etc. would be implemented here ...
+    # ------------------------------------------------------------------
+    # Enumerated dependency lists: `name_1`, `name_2`, ...
+    #
+    # `n` is the suffix in `name_n`, so it stays 1-based in Python as it is in
+    # MATLAB -- it names the entry rather than indexing a list.
+    # ------------------------------------------------------------------
+
+    def _enumerated_count(self, dependency_name):
+        """How many contiguous ``name_1``, ``name_2``, ... entries exist.
+
+        Counting stops at the first gap, which is what makes the numbering
+        matter: MATLAB's dependency_value_n does the same, so an entry above a
+        gap is invisible to it.
+        """
+        count = 0
+        while self._dependency_index(f"{dependency_name}_{count + 1}") is not None:
+            count += 1
+        return count
+
+    def dependency_value_n(self, dependency_name, error_if_not_found=True):
+        """Values of the enumerated dependencies ``name_1``, ``name_2``, ...
+
+        Returns the values in order, stopping at the first missing suffix.
+        Mirrors MATLAB ``did.document/dependency_value_n``.
+        """
+        values = []
+        index = self._dependency_index(f"{dependency_name}_{len(values) + 1}")
+        while index is not None:
+            values.append(self.document_properties["depends_on"][index].get("value"))
+            index = self._dependency_index(f"{dependency_name}_{len(values) + 1}")
+
+        if not values and error_if_not_found:
+            raise ValueError(f"Dependency name {dependency_name} not found.")
+        return values
+
+    def add_dependency_value_n(self, dependency_name, value, error_if_not_found=True):
+        """Append ``name_(n+1)`` to an enumerated dependency list.
+
+        Mirrors MATLAB ``did.document/add_dependency_value_n``.
+        """
+        count = self._enumerated_count(dependency_name)
+        if "depends_on" not in self.document_properties and error_if_not_found:
+            raise ValueError("This document does not have any dependencies.")
+
+        if "depends_on" not in self.document_properties:
+            self.document_properties["depends_on"] = []
+        self.document_properties["depends_on"].append(
+            {"name": f"{dependency_name}_{count + 1}", "value": value}
+        )
+        return self
+
+    def remove_dependency_value_n(
+        self, dependency_name, value, n, error_if_not_found=True
+    ):
+        """Remove ``name_n`` and renumber the entries above it.
+
+        Renumbering is what keeps the list gap-free, and a gap would truncate
+        every later read. Mirrors MATLAB
+        ``did.document/remove_dependency_value_n``, including its unused
+        ``value`` argument, which is kept for signature parity.
+        """
+        count = self._enumerated_count(dependency_name)
+        if "depends_on" not in self.document_properties and error_if_not_found:
+            raise ValueError("This document does not have any dependencies.")
+
+        if n > count and error_if_not_found:
+            raise ValueError(
+                f"Number to be removed {n} is greater than total number of "
+                f"entries {count}."
+            )
+
+        index = self._dependency_index(f"{dependency_name}_{n}")
+        if index is None:
+            raise ValueError(f"Could not locate entry {dependency_name}_{n}")
+        del self.document_properties["depends_on"][index]
+
+        for i in range(n + 1, count + 1):
+            above = self._dependency_index(f"{dependency_name}_{i}")
+            if above is None:
+                raise ValueError(f"Could not locate entry {dependency_name}_{i}")
+            self.document_properties["depends_on"][above][
+                "name"
+            ] = f"{dependency_name}_{i - 1}"
+        return self

@@ -579,7 +579,10 @@ classes:
         output_arguments:
           - name: value
             type_python: "str"
-        decision_log: "Exact match. Synchronized 2026-03-16."
+        decision_log: >
+          Exact match. Synchronized 2026-03-16. Matching was made
+          case-insensitive on 2026-08-28 to mirror MATLAB's strcmpi; it had
+          been case-sensitive.
 
       - name: set_dependency_value
         python_name: set_dependency_value
@@ -591,50 +594,55 @@ classes:
             type_matlab: "char"
             type_python: "str"
         decision_log: >
-          Matches MATLAB for the exact-name case, but NOT for enumerated
-          dependency lists. With ErrorIfNotFound/error_if_not_found false and
-          a document already holding item_1..item_3, MATLAB callers reach for
-          add_dependency_value_n and get item_4; Python has no such method, so
-          set_dependency_value appends an entry named literally "item". See
-          dependency_value_n below -- this is the write half of that gap.
-          Synchronized 2026-03-16; deviation recorded 2026-08-28.
+          Synchronized 2026-03-16, with two changes on 2026-08-28.
+
+          Matching is now case-insensitive, mirroring MATLAB's strcmpi. It had
+          been case-sensitive, so a MATLAB-written dependency named Item_1 was
+          unreachable from Python by item_1.
+
+          Deliberate divergence: Python refuses to append an entry named for
+          the bare stem when the document already holds an enumerated list
+          (item_1, item_2, ...), directing the caller to
+          add_dependency_value_n instead. MATLAB appends without complaint,
+          which is how the silent corruption described under
+          dependency_value_n was produced. The guard fires only on the append
+          path -- updating an existing entry, enumerated or not, is unchanged.
 
       - name: dependency_value_n
-        python_name: ~   # not ported
+        python_name: dependency_value_n
         decision_log: >
-          MATLAB walks name_1, name_2, ... until one is missing and returns the
-          values. Python has only exact-name dependency_value, which raises on
-          the stem, so a caller must guess suffixes and probe until one misses
-          and cannot ask how many entries exist.
+          Ported 2026-08-28. Both walk name_1, name_2, ... and stop at the
+          first missing suffix, so an entry above a gap is invisible to both.
 
-          Reprioritized to High on 2026-08-28 (was Low). The severity is in the
-          write half: Python's set_dependency_value appends a stem-named entry
-          instead of name_(n+1); the schema declares un-enumerated stems and
-          _strip_enumeration_suffix maps the malformed name to that same stem,
-          so BOTH validators accept it; and MATLAB's dependency_value_n then
-          stops at the first gap, making the entry Python wrote invisible.
-          Silent cross-language data loss that neither language errors on.
-          Verified by validating both documents -- both pass.
-
-          Nothing inside DID uses the convention today (the demo schema's
-          item1/item2/item3 have no underscore, and the _n methods have no
-          MATLAB tests), so exposure is downstream, in schemas that do use
-          name_n. See PORTING_INSTRUCTIONS.md for the suggested order of work.
+          Ported because the gap was worse than the Low priority it carried.
+          The severity was in the write half: with no add_dependency_value_n,
+          the only way to append was set_dependency_value(stem, ...,
+          error_if_not_found=False), which wrote an entry named for the bare
+          stem. The schema declares un-enumerated stems and
+          _strip_enumeration_suffix maps that name onto the same stem, so both
+          validators accepted it, while MATLAB's reader stopped at the gap and
+          never saw it -- silent cross-language data loss on an ordinary call.
 
       - name: add_dependency_value_n
-        python_name: ~   # not ported
+        python_name: add_dependency_value_n
         decision_log: >
-          MATLAB appends name_(n+1), computing n from dependency_value_n. Not
-          ported; Python has no way to append to an enumerated list correctly.
-          See dependency_value_n. Reprioritized to High 2026-08-28.
+          Ported 2026-08-28. Both append name_(n+1), taking n from the
+          contiguous count rather than the highest suffix present, so an append
+          alongside a gap fills the gap exactly as MATLAB's numel(d)+1 does.
+          Both raise on a document with no depends_on field unless
+          ErrorIfNotFound/error_if_not_found is false.
 
       - name: remove_dependency_value_n
-        python_name: ~   # not ported
+        python_name: remove_dependency_value_n
         decision_log: >
-          MATLAB deletes name_n and renumbers the entries above it so the list
-          stays gap-free -- which matters because dependency_value_n stops at
-          the first gap. Not ported. See dependency_value_n. Reprioritized to
-          High 2026-08-28.
+          Ported 2026-08-28. Both delete name_n and renumber the entries above
+          it, which is what keeps the list gap-free -- a gap would truncate
+          every later read. MATLAB's "Could not locate entry" check is
+          unconditional, firing even when ErrorIfNotFound is false, and Python
+          mirrors that. n is the suffix in name_n, so it stays 1-based in
+          Python as in MATLAB: it names the entry rather than indexing a list,
+          which is the one place the repo's 0-based indexing policy does not
+          apply. MATLAB's unused `value` argument is kept for signature parity.
 
       - name: add_file
         python_name: add_file
