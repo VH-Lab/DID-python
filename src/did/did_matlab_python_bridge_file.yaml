@@ -351,6 +351,155 @@ classes:
       writeTable, findRow). MATLAB also changed all read permissions to
       'rb'. Partial port — needs completion.
 
+  # -----------------------------------------------------------------------
+  # did.file.fileCache
+  # -----------------------------------------------------------------------
+  - name: fileCache
+    type: class
+    matlab_path: "+did/+file/fileCache.m"
+    matlab_last_sync_hash: "3aa892d"
+    python_path: "did/file.py"
+    python_class: "FileCache"
+    inherits_matlab: "handle"
+    out_of_sync: true
+    out_of_sync_reason: >
+      Not a MATLAB-side divergence -- MATLAB has not touched fileCache.m
+      since 3aa892d. Flagged because the Python side is a stub, and
+      because there are TWO unrelated classes named FileCache:
+
+        1. did/file.py:FileCache -- the one this entry maps. Implements
+           construction and .fileCacheInfo read/write only. Every cache
+           operation (addFile, removeFile, isFile, fileList,
+           resizeAndAdd, touch, clear) is missing, so nothing can be put
+           in the cache and nothing is ever evicted: maxSize and
+           reduceSize are stored but never enforced.
+
+        2. did/common.py:FileCache -- a three-line placeholder holding
+           only (path, size), commented "Placeholder for fileCache
+           class".
+
+      did.common.get_cache() returns the common.py placeholder, not the
+      file.py class, so the object DID-python actually hands callers is
+      the emptier of the two. MATLAB's did.common.getCache() returns a
+      real did.file.fileCache. See the getCache entry in
+      did_matlab_python_bridge_util.yaml.
+
+      Resolving this means collapsing the two classes into one and
+      implementing the cache operations. Tracked in the "Not Yet Ported"
+      table in PORTING_INSTRUCTIONS.md.
+
+    properties:
+      - name: directoryName
+        type_matlab: "char"
+        type_python: "str"
+        python_name: "directory_name"
+        decision_log: "Exact match."
+
+      - name: fileNameCharacters
+        type_matlab: "uint16"
+        type_python: "int"
+        python_name: "file_name_characters"
+        decision_log: >
+          Both default to 32. MATLAB enforces >= 32 via a property
+          validator; Python does not validate.
+
+      - name: maxSize
+        type_matlab: "uint64"
+        type_python: "float"
+        python_name: "max_size"
+        decision_log: >
+          Both default to 100e9. MATLAB enforces >= 1000 via a property
+          validator; Python does not validate.
+
+      - name: reduceSize
+        type_matlab: "uint64"
+        type_python: "float"
+        python_name: "reduce_size"
+        decision_log: >
+          Both default to 80e9. MATLAB enforces >= 800 via a property
+          validator; Python checks only reduce_size < max_size in
+          set_properties().
+
+      - name: currentSize
+        type_matlab: "uint64"
+        type_python: "float"
+        python_name: "current_size"
+        decision_log: "Exact match."
+
+      - name: binaryTable
+        type_matlab: "did.file.binaryTable"
+        type_python: "(not implemented)"
+        decision_log: >
+          MATLAB backs the cache catalog with a binaryTable. Python
+          stores the catalog in the same JSON info file instead, under
+          a 'files' key. Deviation by design.
+
+      - name: cacheInfoFileName
+        type_matlab: "constant char"
+        type_python: "class constant str"
+        python_name: "CACHE_INFO_FILE_NAME"
+        decision_log: "Both are '.fileCacheInfo'."
+
+    methods:
+      - name: fileCache
+        kind: constructor
+        decision_log: >
+          MATLAB: fileCache(directoryName, fileNameCharacters, maxSize,
+          reduceSize). Python: FileCache(directory_name,
+          file_name_characters=32, max_size=100e9, reduce_size=80e9).
+          Both load an existing .fileCacheInfo if present, otherwise
+          initialize one.
+
+      - name: setProperties
+        python_name: "set_properties"
+        decision_log: "Equivalent; both write the info file."
+
+      - name: getProperties
+        python_name: "_load_properties"
+        decision_log: >
+          MATLAB returns a struct of cache info. Python's counterpart
+          loads the info file into instance attributes rather than
+          returning it.
+
+      - name: addFile
+        decision_log: "Present in MATLAB. Not implemented in Python."
+
+      - name: removeFile
+        decision_log: "Present in MATLAB. Not implemented in Python."
+
+      - name: clear
+        decision_log: "Present in MATLAB. Not implemented in Python."
+
+      - name: isFile
+        decision_log: "Present in MATLAB. Not implemented in Python."
+
+      - name: fileList
+        decision_log: "Present in MATLAB. Not implemented in Python."
+
+      - name: resizeAndAdd
+        decision_log: >
+          Present in MATLAB -- evicts by ascending last-access time
+          until the cache is under reduceSize, then adds. Not
+          implemented in Python, so the Python cache never evicts.
+
+      - name: touch
+        decision_log: "Present in MATLAB. Not implemented in Python."
+
+      - name: infoFileName
+        python_name: "_info_file_name"
+        decision_log: "Exact match."
+
+    decision_log: >
+      STUB. Promoted from not_applicable to a tracked entry on
+      2026-08-28: a FileCache class does exist in Python, so
+      classifying it "not applicable" both overstated the port and left
+      MATLAB changes to fileCache.m invisible to the drift check. What
+      exists is construction plus info-file read/write and nothing else,
+      split across two same-named classes (see out_of_sync_reason). Sync
+      hash set to 3aa892d, the commit the original bulk port (97ba45c)
+      was taken from -- MATLAB has not changed this file since, so the
+      gap is in the port, not in drift.
+
 # =========================================================================
 # File utility functions
 # =========================================================================
@@ -468,12 +617,21 @@ functions:
 # Not applicable in Python
 # =========================================================================
 not_applicable:
-  - name: did.file.fileCache
-    rationale: >
-      MATLAB fileCache class has a Python equivalent (FileCache in file.py)
-      but with simplified implementation. Basic structure matches.
-
+  # did.file.fileCache was listed here until 2026-08-28. It has a real (if
+  # stub-level) Python counterpart, so it is now tracked as a class entry
+  # above and is covered by the drift check.
   - name: did.file.dumbjsondb
     rationale: >
-      MATLAB dumbjsondb has a Python equivalent (DumbJsonDB in file.py).
-      Both provide simple JSON-based document storage.
+      Deliberately not ported. DID-python's storage backend is SQLiteDB;
+      there is no plan to carry the JSON-file document store across.
+      NOTE (2026-08-28): the previous rationale here read "MATLAB
+      dumbjsondb has a Python equivalent (DumbJsonDB in file.py)", which
+      overstated the situation. A DumbJsonDB class does exist in file.py,
+      but it arrived with the initial bulk port commit (97ba45c) and is
+      dead code: nothing in src/ or tests/ imports, instantiates or
+      exercises it, and it implements only the parameter file, versioned
+      read/add and version listing -- no binary files, search, remove,
+      clear, alldocids or document metadata. It is a vestigial stub, not
+      a port. Either delete it or, if a JSON backend is ever wanted,
+      promote this to a tracked class entry and port it properly; until
+      then it stays out of the drift check by design.

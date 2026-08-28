@@ -196,10 +196,17 @@ functions:
   - name: emptystruct
     type: function
     matlab_path: "+did/+datastructures/emptystruct.m"
-    matlab_last_sync_hash: "3aa892d"
+    matlab_last_sync_hash: "13463d1"
     python_path: "did/datastructures.py"
     python_name: "empty_struct"
-    decision_log: "Exact match. Synchronized 2026-03-15."
+    decision_log: >
+      Exact match. Synchronized 2026-03-15. Re-verified 2026-08-28 against
+      MATLAB 13463d1 ("Refactor varargin to arguments blocks"), which added an
+      `arguments (Repeating)` block and changed `fields'` to `fields(:)` in the
+      cell2struct call. Both are MATLAB-language details (input validation
+      syntax and row/column orientation of a cellstr). Python's empty_struct()
+      takes *field_names and returns an empty dict, so neither has a Python
+      counterpart. No change needed.
 
   - name: eqemp
     type: function
@@ -324,7 +331,16 @@ functions:
     matlab_last_sync_hash: "3aa892d"
     python_path: "did/common.py"
     python_name: "get_cache"
-    decision_log: "Exact match. Synchronized 2026-03-15."
+    decision_log: >
+      Function shape matches -- both memoize a single cache object for the
+      process (MATLAB via a persistent variable, Python via a module-level
+      global) and construct it with (filecachepath, 33). The object returned
+      does NOT match: MATLAB returns a working did.file.fileCache, while
+      Python returns the three-line placeholder FileCache defined in
+      common.py, which stores only (path, size) and can cache nothing.
+      Corrected 2026-08-28 -- this entry previously read "Exact match",
+      which was wrong. See the fileCache entry in
+      did_matlab_python_bridge_file.yaml.
 
 # =========================================================================
 # Not applicable in Python
@@ -332,5 +348,9 @@ functions:
 not_applicable:
   - name: did.datastructures.table_cross_join (duplicate)
     rationale: >
-      Also available in did.db.table_cross_join via pandas.
-      Both MATLAB locations (datastructures and db) are covered.
+      Stale entry, corrected 2026-08-28: MATLAB has no
+      +did/+datastructures/tableCrossJoin.m -- tableCrossJoin lives only
+      in +did/+db/, which is covered by the tableCrossJoin function entry
+      above (python: did.db.table_cross_join, via pandas). There is no
+      duplicate to reconcile. Kept as a note so the claim is not
+      reintroduced.

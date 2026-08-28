@@ -32,9 +32,27 @@ classes:
     type: class
     matlab_path: "+did/database.m"
     matlab_last_sync_hash: "26ad723"
+    matlab_current_hash: "0142532"
     python_path: "did/database.py"
     python_class: "Database"
     inherits: "abc.ABC"
+    out_of_sync: true
+    out_of_sync_reason: >
+      MATLAB commits c561c13..0142532 (PR #153, 2026-07-25) changed
+      validate_doc_vs_schema(): a schema-declared depends_on entry is now
+      required to be present only when the schema marks it
+      mustbenotempty; optional dependencies may be omitted from a document,
+      and a missing one is reported through the opt-in
+      DID:Database:MissingOptionalDependency warning (emitted only when the
+      DID_FORCE_VALIDATION_WARNINGS environment variable is set to a
+      non-zero value). Python cannot mirror this yet: it has no
+      document-vs-schema validation at all. Database.add_docs() adds
+      documents without validating them, so there is no required-dependency
+      check to relax and no code path in which the change is observable.
+      This is a pre-existing capability gap that PR #153 widens, not a
+      regression introduced by it -- see validate_docs /
+      validate_doc_vs_schema below and the "Not Yet Ported" table in
+      PORTING_INSTRUCTIONS.md.
 
     properties:
       - name: connection
@@ -292,11 +310,52 @@ classes:
         decision_log: >
           Present in MATLAB. Python relies on garbage collection / fclose.
 
+      - name: validate_docs
+        input_arguments:
+          - name: document_objs
+            type_matlab: "cell of did.document"
+            type_python: "(not implemented)"
+        decision_log: >
+          Present in MATLAB (called from add_docs when the Validate option
+          is on). It checks that each document has document_class /
+          class_name / property_list_name / class_version, loads the
+          class's validation schema, and hands off to
+          validate_doc_vs_schema. Python's Database.add_docs() performs no
+          validation. Not yet ported.
+
+      - name: validate_doc_vs_schema
+        input_arguments:
+          - name: docProps
+            type_matlab: "struct"
+            type_python: "(not implemented)"
+          - name: schemaStruct
+            type_matlab: "struct"
+            type_python: "(not implemented)"
+          - name: all_ids
+            type_matlab: "cell"
+            type_python: "(not implemented)"
+        decision_log: >
+          Present in MATLAB. Validates classname, superclasses (recursively),
+          and depends_on for one document against one schema. As of MATLAB
+          PR #153 (2026-07-25) only depends_on entries marked
+          mustbenotempty are required to be present; optional ones may be
+          missing, and a missing optional dependency raises the opt-in
+          DID:Database:MissingOptionalDependency warning gated on the
+          DID_FORCE_VALIDATION_WARNINGS environment variable. Python has no
+          equivalent. Porting it requires the schema-loading and
+          superclass-recursion machinery that Python's Document also lacks
+          (document.validate), so the two should be ported together.
+          Not yet ported.
+
     decision_log: >
       Python Database class closely mirrors MATLAB did.database.
       A few MATLAB methods (freeze_branch, is_branch_editable,
       display_branches, exist_doc, close_doc) are not yet ported.
-      Synchronized 2026-03-15.
+      Synchronized 2026-03-15. Re-checked 2026-08-28 against MATLAB
+      0142532: the schema-validation methods (validate_docs,
+      validate_doc_vs_schema) have no Python counterpart, so the
+      optional-depends_on change in MATLAB PR #153 has nothing to port
+      into; recorded in out_of_sync_reason above.
 
   # -----------------------------------------------------------------------
   # did.document
@@ -636,6 +695,13 @@ not_applicable:
   - name: did.filesep
     rationale: >
       MATLAB-only utility. Python uses os.sep / pathlib natively.
+
+  - name: Contents.m
+    rationale: >
+      MATLAB toolbox contents/version listing (a comment-only .m file read
+      by MATLAB's `ver`/`help`). Not code, and Python carries its version in
+      pyproject.toml. Recorded 2026-08-28 so the bridge-coverage audit has
+      no unexplained MATLAB files.
 
   - name: did.toolboxdir
     rationale: >
