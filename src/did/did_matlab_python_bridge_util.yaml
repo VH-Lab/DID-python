@@ -361,8 +361,22 @@ functions:
       - name: filecachepath
         python_name: filecachepath
         decision_log: >
-          Same @property-vs-validator deviation as temppath. Added to the
-          bridge 2026-08-28.
+          Same @property-vs-validator deviation as temppath, AND the values
+          themselves differ -- corrected 2026-08-28, having first been recorded
+          as though only the validation style differed.
+
+          MATLAB: fullfile(userpath, 'Documents', 'DID', 'fileCache'). Python:
+          os.path.join(Path.home(), 'Documents', 'DID', 'fileCache'). MATLAB's
+          userpath is not the home directory -- it is typically
+          <home>/Documents/MATLAB -- so the two resolve to different
+          directories. (Stated from userpath's documented default; worth
+          confirming on a real MATLAB install, which this audit could not run.)
+
+          Do not "fix" this by aligning the paths. The two languages write
+          incompatible formats to the same .fileCacheInfo filename, so the
+          divergent paths are the only thing preventing mutual corruption. See
+          the fileCache entry in did_matlab_python_bridge_file.yaml for the
+          required order of work.
 
       - name: preferences
         python_name: preferences

@@ -414,7 +414,7 @@ document entry in `bridge.yaml`.)
 | `database.exist_doc` | bridge.yaml | Medium |
 | `database.get_preference` / `set_preference` / `get_preference_names` — Python has the `preferences` dict but no accessors for it | bridge.yaml | Medium |
 | `binaryTable` write methods | bridge_file.yaml | Medium |
-| `fileCache` cache operations (`addFile`, `removeFile`, `isFile`, `fileList`, `resizeAndAdd`, `touch`, `clear`) — and collapsing the duplicate `FileCache` in `common.py` and `file.py` so `get_cache()` returns a working cache | bridge_file.yaml | Medium |
+| `fileCache` — cache operations, the duplicate `FileCache` in `common.py` vs `file.py`, **and an incompatible on-disk format**; see "The file cache" below | bridge_file.yaml | **Medium-High** |
 | Remote (URL) file locations in `open_doc` — MATLAB uses `ndi.cloud.api.files.getFile`; Python would need `requests`/`urllib` | bridge_implementations.yaml | Low |
 | `database.freeze_branch` | bridge.yaml | Low |
 | `database.is_branch_editable` | bridge.yaml | Low |
@@ -501,9 +501,10 @@ of one column and does neither. And `Document.set_properties` describes itself
 as "a simplified way to set properties" under a parity claim; treat it as
 unverified.
 
-Nothing in `src/` or `tests/` constructs a `BinaryTable`, a `FileCache` or a
-`DumbJsonDB`. All three are dead code, which is why a stubbed `read_row` could
-sit under a "Synchronized" note unnoticed.
+Nothing in **DID-python's** `src/` or `tests/` constructs a `BinaryTable`, a
+`FileCache` or a `DumbJsonDB`, which is why a stubbed `read_row` could sit
+under a "Synchronized" note unnoticed. That is a fact about the Python side
+only — in DID-matlab two of the three are live. See below.
 
 ### Cross-cutting: the error identifier asymmetry
 
@@ -522,3 +523,48 @@ stubbed methods, raising an identifier-carrying error as the validation port
 does. That closes the one genuinely silent failure (`delete_branch`), converts
 three constraint errors into MATLAB-matching identifiers, and makes
 `set_branch` fail fast — in one change with one set of tests.
+
+## The file cache — corrected 2026-08-28
+
+An earlier note in this document said `BinaryTable`, `FileCache` and
+`DumbJsonDB` were "dead code". That is true of **DID-python only**. Checking
+DID-matlab shows two of the three are live there, which changes the
+assessment:
+
+- **`binaryTable` is the storage engine behind `fileCache`.** `fileCache.m`
+  constructs one over the cache index and calls `readHeader`, `writeHeader`,
+  `getLock`, `findRow` and `releaseLock` — several of which were among the
+  untracked methods this audit added.
+- **`fileCache` is on the document-open path.** `sqlitedb.do_open_doc`
+  consults `filecachepath` when opening a document's binary file and calls
+  `didCache.touch()` on a hit. It is not a side feature.
+- **`dumbjsondb`** backs `matlabdumbjsondb`, an alternative database backend
+  that DID-python deliberately does not implement. That one really is out of
+  scope on both sides.
+
+### The part that is a trap
+
+Both languages call the cache index `.fileCacheInfo`. They write different
+things into it:
+
+| | MATLAB | Python |
+|---|---|---|
+| Format | binary, via `binaryTable` | JSON |
+| Header | 26 bytes: `fileNameCharacters` (uint16), then `maxSize`, `reduceSize`, `currentSize` (uint64) | JSON keys |
+| Rows | fixed-width `{char[n], double, uint64}` — filename, last-accessed, size | a `files` object |
+
+Neither can read the other's file. They do not collide today only because
+`PathConstants.filecachepath` resolves differently: MATLAB uses
+`fullfile(userpath, ...)`, and `userpath` is not the home directory (typically
+`<home>/Documents/MATLAB`), while Python uses `Path.home()`. That divergence
+was itself mis-recorded in the bridge as a mere validation-style difference
+until 2026-08-28. (The `userpath` default is quoted from its documentation;
+this audit could not run MATLAB to confirm it.)
+
+**So the order of work matters.** Aligning the paths looks like a one-line fix
+and is the obvious first move — and it is the wrong one. It would point both
+languages at a single directory in which each corrupts the other's index.
+Align the format first, then the path.
+
+The Python-side cache is dead code today, so nothing is broken right now. The
+risk is entirely in what a reasonable next change would do.

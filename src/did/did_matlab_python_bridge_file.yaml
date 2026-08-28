@@ -265,10 +265,16 @@ classes:
   # -----------------------------------------------------------------------
   # did.file.binaryTable
   # -----------------------------------------------------------------------
-  # NOTE (2026-08-28): nothing in src/ or tests/ constructs a BinaryTable, so
-  # none of the entries below are exercised by either test suite. That is why
-  # a stubbed read_row could sit under a "Synchronized" note unnoticed. Treat
-  # the whole class as unverified against MATLAB until something uses it.
+  # NOTE (2026-08-28, corrected): nothing in DID-PYTHON's src/ or tests/
+  # constructs a BinaryTable, which is why a stubbed read_row could sit under a
+  # "Synchronized" note unnoticed. That is a statement about the Python side
+  # only. In DID-matlab binaryTable is live: it is the storage engine behind
+  # did.file.fileCache, which builds one over the cache's .fileCacheInfo file
+  # and calls readHeader, writeHeader, getLock, findRow and releaseLock -- and
+  # fileCache is on the document-open path, since sqlitedb.do_open_doc consults
+  # the cache and calls touch() on a hit. So these entries describe a live
+  # MATLAB subsystem with an unexercised Python counterpart, not a subsystem
+  # that is dead in both languages.
   - name: binaryTable
     type: class
     matlab_path: "+did/+file/binaryTable.m"
@@ -399,8 +405,12 @@ classes:
           ("Simplified implementation", "Placeholder for reading data"). The
           two return different things for the same call.
 
-          Impact is low today only because nothing uses BinaryTable -- see the
-          class-level note.
+          Impact on Python callers is low only because nothing in DID-python
+          constructs a BinaryTable. It is not low in the abstract: MATLAB uses
+          binaryTable to read and write the file cache's on-disk format, so a
+          Python reader that returns undecoded bytes could not read a
+          MATLAB-written table. See the class-level note and the fileCache
+          entry.
 
       - name: insertRow
         python_name: ~   # not ported
@@ -453,30 +463,45 @@ classes:
     inherits_matlab: "handle"
     out_of_sync: true
     out_of_sync_reason: >
-      Not a MATLAB-side divergence -- MATLAB has not touched fileCache.m
-      since 3aa892d. Flagged because the Python side is a stub, and
-      because there are TWO unrelated classes named FileCache:
+      Not a MATLAB-side divergence -- MATLAB has not touched fileCache.m since
+      3aa892d. Three separate problems on the Python side, the third found
+      2026-08-28 and the most serious.
 
-        1. did/file.py:FileCache -- the one this entry maps. Implements
-           construction and .fileCacheInfo read/write only. Every cache
-           operation (addFile, removeFile, isFile, fileList,
-           resizeAndAdd, touch, clear) is missing, so nothing can be put
-           in the cache and nothing is ever evicted: maxSize and
-           reduceSize are stored but never enforced.
+      1. The Python class is a stub. It implements construction and
+         .fileCacheInfo read/write and nothing else: no addFile, removeFile,
+         isFile, fileList, resizeAndAdd, touch or clear. Nothing can be cached,
+         and maxSize/reduceSize are stored but never enforced.
 
-        2. did/common.py:FileCache -- a three-line placeholder holding
-           only (path, size), commented "Placeholder for fileCache
-           class".
+      2. It is duplicated. There are two unrelated classes named FileCache --
+         did/file.py:FileCache (the stub above) and did/common.py:FileCache (a
+         three-line placeholder holding only path and size). did.common.
+         get_cache() returns the common.py placeholder, so the object
+         DID-python hands callers is the emptier of the two, where MATLAB's
+         getCache() returns a working did.file.fileCache.
 
-      did.common.get_cache() returns the common.py placeholder, not the
-      file.py class, so the object DID-python actually hands callers is
-      the emptier of the two. MATLAB's did.common.getCache() returns a
-      real did.file.fileCache. See the getCache entry in
-      did_matlab_python_bridge_util.yaml.
+      3. THE ON-DISK FORMATS ARE INCOMPATIBLE UNDER THE SAME FILENAME. Both
+         languages call the cache index ".fileCacheInfo". MATLAB writes it
+         through binaryTable as a fixed binary layout: a 26-byte header
+         (fileNameCharacters as uint16, then maxSize, reduceSize and
+         currentSize as uint64) followed by fixed-width rows of
+         {char[fileNameCharacters], double, uint64} -- filename, last-accessed
+         time, size. Python writes JSON. Neither can read the other's file:
+         Python's _load_properties would raise on MATLAB's binary, and MATLAB's
+         readHeader would misparse Python's JSON.
 
-      Resolving this means collapsing the two classes into one and
-      implementing the cache operations. Tracked in the "Not Yet Ported"
-      table in PORTING_INSTRUCTIONS.md.
+      This matters because MATLAB's cache is not a side feature: sqlitedb.
+      do_open_doc consults filecachepath when opening a document's binary file
+      and calls touch() on a hit.
+
+      The two languages do not collide today only because their filecachepath
+      values differ -- see the PathConstants.filecachepath entry in
+      did_matlab_python_bridge_util.yaml. That is the accident keeping this
+      latent, not a design.
+
+      ORDER OF WORK: align the format BEFORE aligning the path. Making the
+      paths agree first -- which looks like a one-line fix and which the bridge
+      previously implied was already true -- would point both languages at one
+      directory in which each corrupts the other's index.
 
     properties:
       - name: directoryName
