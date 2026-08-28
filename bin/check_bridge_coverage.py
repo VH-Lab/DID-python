@@ -387,8 +387,11 @@ def check_file_coverage(report, repo, matlab_repo, tracked, not_applicable):
     for path in sorted(matlab_files):
         if path in covered:
             continue
-        stem = os.path.basename(path)[:-2]
-        if any(stem == n or n.endswith("." + stem) for n in excused):
+        base = os.path.basename(path)
+        stem = base[:-2]
+        # not_applicable entries name a file either bare (`Contents.m`), by
+        # stem, or dotted (`did.file.dumbjsondb`).
+        if any(n in (base, stem) or n.endswith("." + stem) for n in excused):
             continue
         report.add("file", f"MATLAB file has no bridge entry: {path}")
 

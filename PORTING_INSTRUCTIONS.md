@@ -248,8 +248,9 @@ in prose but was not *checkable*, and had several blind spots.
   found in `dumbjsondb` and `fileCache` last time, missed because that audit
   checked the `not_applicable` lists but not tracked entries with a missing
   hash. It is tracked now; unported does not have to mean unwatched.
-- **`Contents.m`** is now an explicit `not_applicable` entry rather than simply
-  unmentioned, so "out of scope" is distinguishable from "not yet looked at".
+- **`Contents.m`** was already excused but the coverage check did not recognize
+  the entry: `not_applicable` names appear bare (`Contents.m`), by stem, and
+  dotted (`did.file.dumbjsondb`), and the matcher handled only the last two.
 
 **Ported but untracked.** Real ported code no bridge entry mentioned, so a
 MATLAB change to any of it would have gone unnoticed:

@@ -981,15 +981,6 @@ classes:
 # Not applicable in Python
 # =========================================================================
 not_applicable:
-  - name: Contents
-    rationale: >
-      src/did/Contents.m is a MATLAB toolbox contents/version listing that
-      `ver` reads -- a manifest, not code, and Python packaging carries the
-      same information in pyproject.toml. Recorded 2026-08-28 so the coverage
-      check can tell "deliberately out of scope" from "nobody has looked at
-      this yet".
-
-
   - name: did.filesep
     rationale: >
       MATLAB-only utility. Python uses os.sep / pathlib natively.
