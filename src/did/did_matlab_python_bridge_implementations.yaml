@@ -22,7 +22,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "d635555"
+    matlab_last_sync_hash: "49e4523"
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
     inherits_matlab: "did.database"
@@ -92,6 +92,48 @@ classes:
 
       - name: do_add_doc
         python_name: _do_add_doc
+        out_of_sync: true
+        out_of_sync_reason: >
+          FOUND 2026-08-28, NOT YET FIXED. Python never populates the `files`
+          table, so a document's files are invisible to MATLAB.
+
+          MATLAB's do_add_doc walks doc_props.files.file_info and, for every
+          location, inserts a row into `files` (doc_idx, filename, uid,
+          orig_location, cached_location, type, parameters). Python's
+          _do_add_doc writes only docs.json_code and the branch_docs link. It
+          CREATES the files table, with matching columns, and never inserts a
+          row into it.
+
+          The break is one-directional, which is why nothing has caught it:
+
+          - MATLAB -> Python works. MATLAB writes both docs.json_code and the
+            files table, and Python's open_doc reads locations out of the
+            document JSON via Document.is_in_file_list.
+          - Python -> MATLAB is broken. MATLAB's do_open_doc selects
+            cached_location, orig_location, uid and type FROM docs, files. On a
+            Python-written database that join returns nothing, so EVERY file in
+            the document is unreachable from MATLAB -- including a plain local
+            file that exists on disk. It fails as DID:SQLITEDB:open, "The file
+            ... cannot be accessed".
+
+          Verified 2026-08-28 by adding a demoFile document with two local
+          files through Python: docs has 1 row, files has 0, Python's own
+          open_doc succeeds, and MATLAB's join returns no rows.
+
+          The symmetry suite does not cover file documents, only buildDatabase,
+          which is why this survived. Any fix should add that coverage.
+
+          The fix is mechanical -- mirror MATLAB's insert, one row per location
+          -- with one judgement call: Python does not ingest, so
+          cached_location would always be empty. That appears harmless, since
+          MATLAB builds its candidate paths from the uid and falls back to
+          orig_location for retrieval, but it should be confirmed against a
+          real MATLAB run.
+
+          Separately, Python has no ingestion at all: MATLAB copies or
+          retrieves a location marked ingest into FileDir and can delete the
+          original. Python does neither, so `ingest` and `delete_original` are
+          inert on the Python side.
         input_arguments:
           - name: document_obj
             type_matlab: "did.document"

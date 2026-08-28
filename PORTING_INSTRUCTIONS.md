@@ -850,3 +850,43 @@ destination is now cleared before the handler is invoked. Covered by
 
 Coverage: `tests/test_open_doc_locations.py`, 23 tests. MATLAB has none for
 this path.
+
+## Files added by Python are invisible to MATLAB (found 2026-08-28, NOT fixed)
+
+The most serious symmetry break found in this audit, and it is one-directional,
+which is why nothing caught it.
+
+MATLAB's `do_add_doc` walks `doc_props.files.file_info` and inserts a row into
+the **`files` table** for every location: `doc_idx, filename, uid,
+orig_location, cached_location, type, parameters`. Python's `_do_add_doc`
+writes only `docs.json_code` and the `branch_docs` link. It *creates* the
+`files` table, with matching columns, and never inserts a row.
+
+- **MATLAB → Python works.** MATLAB writes both `docs.json_code` and `files`;
+  Python's `open_doc` reads locations out of the document JSON.
+- **Python → MATLAB is broken.** MATLAB's `do_open_doc` selects from
+  `docs, files`. On a Python-written database that join returns nothing, so
+  **every file in the document is unreachable from MATLAB** — including a
+  plain local file sitting on disk. It surfaces as `DID:SQLITEDB:open`, "The
+  file … cannot be accessed".
+
+Verified by adding a `demoFile` document with two local files through Python:
+`docs` has 1 row, `files` has 0, Python's own `open_doc` succeeds, and
+MATLAB's join returns nothing.
+
+**Why the symmetry tests miss it**: the suite covers `buildDatabase` only, with
+no file-bearing documents. Any fix should add that coverage — it is the case
+the tests exist to catch.
+
+**The fix is mechanical** — mirror MATLAB's insert, one row per location — with
+one judgement call. Python does not ingest, so `cached_location` would always
+be empty. That appears harmless, since MATLAB builds its candidate paths from
+the `uid` and falls back to `orig_location` for retrieval, but it wants
+confirming against a real MATLAB run.
+
+**Related, and larger**: Python has no ingestion at all. MATLAB copies or
+retrieves a location marked `ingest` into `FileDir`, and can delete the
+original afterwards. Python does neither, so `ingest` and `delete_original`
+are inert on the Python side. `add_docs(**kwargs)` already forwards
+`custom_file_handler` through to `_do_add_doc`, so the parameter arrives — but
+there is nothing there to use it yet.
