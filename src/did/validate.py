@@ -541,10 +541,19 @@ def is_filename_match(expected_name, actual_name):
 def can_find_one_file(locations):
     """Can at least one location for a file be found?
 
-    A local path must exist. An http(s) URL is not pre-checked here (MATLAB
-    issues a HEAD request; Python has no URL download path, so a URL counts as
-    findable and is resolved when actually read). Anything else is likewise not
-    pre-checked. Mirrors MATLAB ``database.canfindonefile``.
+    A local path must exist. An http(s) URL counts as NOT findable: Python has
+    no URL download path, so it could not resolve one later either. Any other
+    location is not pre-checked and counts as findable, being resolved when
+    actually read.
+
+    This matches what MATLAB's ``database.canfindonefile`` does, though not
+    what it intends. MATLAB means to HEAD-check a URL and accept a reachable
+    one, but its request line reads ``req.send(url)`` where ``url`` is never
+    assigned -- the resulting error is swallowed by a bare ``catch``, so the
+    URL branch can never report found. Both languages therefore reject a
+    document whose only location for a file is a URL. If that MATLAB bug is
+    ever fixed, this function has to grow a real reachability check or the two
+    will disagree.
     """
     for location in _as_list(locations):
         if isinstance(location, dict):

@@ -482,11 +482,27 @@ classes:
         python_name: can_find_one_file
         python_path: "did/validate.py"
         decision_log: >
-          Deviation: MATLAB issues an HTTP HEAD request to pre-check a URL
-          location; Python has no URL download path (see the sqlitedb entry),
-          so a URL counts as findable and is resolved when actually read --
-          which is also MATLAB's behavior for any non-file, non-http
-          location. Ported 2026-08-28.
+          Corrected 2026-08-28 -- the previous note had this backwards, and the
+          Python docstring did too. It claimed Python treats a URL as findable.
+          It does not: can_find_one_file returns False for an http(s) location,
+          so a document whose only location for a file is a URL fails
+          validation with DID:Database:ValidationFiles ("Missing file").
+          Verified by running it.
+
+          The two languages nonetheless AGREE, for different reasons. MATLAB
+          intends to HEAD-check the URL and accept a reachable one, but the
+          request line reads req.send(url) where url is never assigned
+          anywhere in database.m -- the error is swallowed by a bare catch, so
+          MATLAB's URL branch can never set found=true either. Agreement by
+          accident, not by design.
+
+          Consequence: fixing the MATLAB bug would immediately split the two.
+          Python would need a real reachability check, and a URL download path
+          to back it up. Tracked in "Not Yet Ported"; see also the
+          ndi.cloud.api.files.getFile not_applicable entry.
+
+          Non-file, non-http locations are not pre-checked in either language
+          and count as findable. Ported 2026-08-28.
 
       - name: findfilematch
         kind: static

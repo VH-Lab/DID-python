@@ -568,3 +568,54 @@ Align the format first, then the path.
 
 The Python-side cache is dead code today, so nothing is broken right now. The
 risk is entirely in what a reasonable next change would do.
+
+## What actually happens across languages on the same dataset
+
+Traced 2026-08-28, prompted by the question "if MATLAB caches files for a
+dataset and Python then opens it, do the caches conflict?". Short answer: no,
+not today — but for a worse reason than compatibility.
+
+**Python has no cache on the read path at all.** `SQLiteDB.open_doc` resolves
+the location directly (absolute, or relative to the database directory) and
+returns a `ReadOnlyFileobj`. It never calls `get_cache()` and never looks at
+`filecachepath`. MATLAB's `do_open_doc` consults the cache and calls `touch()`
+on a hit. So the two never meet: MATLAB maintains a cache Python does not read
+or write, and Python re-resolves every file.
+
+That means the practical consequence is lost caching, not corruption. The
+corruption scenario needs the two to share a directory, which today they do
+not — and which is exactly why the paths must not be "fixed" first. See "The
+file cache" above.
+
+One caveat: MATLAB's `filecachepath` is `fullfile(userpath, ...)`, and
+`userpath` is user-configurable. If it were ever set to the home directory —
+or left empty, which makes MATLAB's path *relative* and resolved against the
+current working directory — the two could land in the same place without
+anyone intending it.
+
+### Remote (URL) file locations: both languages reject them
+
+Worth stating plainly, since it is the case that matters most for a
+cloud-hosted dataset. A document whose only location for a file is an
+`http(s)` URL **fails validation in both languages**:
+
+- Python's `can_find_one_file` returns False for a URL by design — there is no
+  URL download path, so it could not resolve one later either.
+- MATLAB *intends* to HEAD-check the URL and accept a reachable one, but
+  `canfindonefile` calls `req.send(url)` where `url` is never assigned
+  anywhere in `database.m`. The error is swallowed by a bare `catch`, so the
+  branch can never report found.
+
+They agree by accident, not by design. **This is a live bug in DID-matlab**
+(`src/did/+did/database.m`, in `canfindonefile`): the argument should be
+`fileLocation`. It has presumably masked itself, because the symptom is a
+remote file being reported "missing" rather than an error.
+
+Fixing it would immediately split the two languages: MATLAB would start
+accepting reachable URLs that Python still rejects. So the Python side needs a
+real reachability check, and a URL download path behind it, at the same time.
+Both halves are in "Not Yet Ported"; the MATLAB fix should not land alone.
+
+Note also that the earlier bridge entry and the `can_find_one_file` docstring
+both described the opposite behavior — that Python treats a URL as findable —
+until this was actually run. Corrected 2026-08-28.
