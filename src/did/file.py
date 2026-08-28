@@ -1,11 +1,17 @@
+import json
 import os
+import re
 import time
 import uuid
-import json
-import re
-from datetime import datetime, timedelta
-import portalocker
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
+
+import portalocker
+
+
+def _utcnow():
+    """Naive UTC timestamp, identical to the deprecated datetime.utcnow()."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def must_be_valid_permission(value):
@@ -88,8 +94,10 @@ class Fileobj:
             if "b" not in mode:
                 mode += "b"  # Default to binary for this class
 
-            self.fid = open(self.fullpathfilename, mode)
-        except IOError:
+            # Not a context manager: the handle is owned by this object and
+            # stays open until fclose(), mirroring MATLAB's fopen/fclose.
+            self.fid = open(self.fullpathfilename, mode)  # noqa: SIM115
+        except OSError:
             self.fid = None
         return self
 
@@ -160,20 +168,22 @@ def checkout_lock_file(filename, check_loops=30, throw_error=True, expiration=36
 
     This function mimics the behavior of the Matlab `checkout_lock_file` function.
     """
-    key = f"{datetime.utcnow().isoformat()}_{uuid.uuid4()}"
+    key = f"{_utcnow().isoformat()}_{uuid.uuid4()}"
     lock_filename = f"{filename}.lock"
 
     for _ in range(check_loops):
         try:
-            lock_file = open(lock_filename, "x")
+            # Not a context manager: the handle is returned to the caller,
+            # which holds the lock until release_lock_file().
+            lock_file = open(lock_filename, "x")  # noqa: SIM115
             # Use portalocker for an exclusive lock
             portalocker.lock(lock_file, portalocker.LOCK_EX | portalocker.LOCK_NB)
 
-            expiration_time = datetime.utcnow() + timedelta(seconds=expiration)
+            expiration_time = _utcnow() + timedelta(seconds=expiration)
             lock_file.write(f"{expiration_time.isoformat()}\n{key}")
             lock_file.close()  # Close the file handle, but the lock is associated with the file path
             return lock_file, key
-        except (IOError, portalocker.exceptions.LockException):
+        except (OSError, portalocker.exceptions.LockException):
             # File exists or is locked, check for expiration
             try:
                 with open(lock_filename, "r") as f:
@@ -181,19 +191,19 @@ def checkout_lock_file(filename, check_loops=30, throw_error=True, expiration=36
                     if len(lines) >= 1:
                         expiration_time_str = lines[0].strip()
                         expiration_time = datetime.fromisoformat(expiration_time_str)
-                        if datetime.utcnow() > expiration_time:
+                        if _utcnow() > expiration_time:
                             # Lock expired, try to remove it
                             release_lock_file(
                                 filename, lines[1].strip() if len(lines) > 1 else ""
                             )
                             continue  # Retry immediately
-            except (IOError, ValueError):
+            except (OSError, ValueError):
                 # Could not read lock file or parse time, wait and retry
                 pass
             time.sleep(1)
 
     if throw_error:
-        raise IOError(f"Unable to obtain lock with file {filename}.")
+        raise OSError(f"Unable to obtain lock with file {filename}.")
     return None, None
 
 
@@ -221,7 +231,7 @@ def release_lock_file(filename, key):
                 # Key doesn't match, don't release
                 portalocker.unlock(f)
                 return False
-    except (IOError, portalocker.exceptions.LockException):
+    except (OSError, portalocker.exceptions.LockException):
         # Could not get a lock, or file was removed by another process
         return not os.path.exists(lock_filename)
 
@@ -435,7 +445,7 @@ class DumbJsonDB:
 
         if file_exists:
             if overwrite == 0:
-                raise IOError(
+                raise OSError(
                     f"Document with id {doc_unique_id} and version {doc_version} already exists."
                 )
             elif overwrite == 2:

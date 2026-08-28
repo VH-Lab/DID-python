@@ -1,6 +1,8 @@
 import random
-import numpy as np
+
 import networkx as nx
+import numpy as np
+
 from did.document import Document
 
 
@@ -37,8 +39,7 @@ def make_doc_tree(rates):
         g.add_node(doc.id())
         counter += 1
 
-    c_count = 0
-    for _ in range(num_c):
+    for c_count in range(num_c):
         doc = Document("demoC", **{"demoC.value": counter})
         docs.append(doc)
         node_names.append(str(counter))
@@ -63,7 +64,6 @@ def make_doc_tree(rates):
             doc.document_properties["depends_on"] = []
 
         counter += 1
-        c_count += 1
 
     return g, node_names, docs
 

@@ -1,13 +1,14 @@
-import unittest
 import os
+import unittest
+
 from did.implementations.sqlitedb import SQLiteDB
 from tests.helpers import (
+    add_branch_nodes,
+    delete_random_branch,
     make_tree,
     name_tree,
-    add_branch_nodes,
-    verify_branch_nodes,
     verify_branch_node_structure,
-    delete_random_branch,
+    verify_branch_nodes,
 )
 
 

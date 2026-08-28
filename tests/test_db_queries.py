@@ -1,12 +1,13 @@
-import unittest
 import os
 import random
+import unittest
+
 from did.implementations.sqlitedb import SQLiteDB
 from did.query import Query
 from tests.helpers import (
-    make_doc_tree,
-    get_demo_type,
     apply_did_query,
+    get_demo_type,
+    make_doc_tree,
 )
 
 
@@ -119,10 +120,7 @@ class TestDbQueries(unittest.TestCase):
         # Find a doc with a dependency
         doc_with_dep = None
         for doc in self.docs:
-            if (
-                "depends_on" in doc.document_properties
-                and doc.document_properties["depends_on"]
-            ):
+            if doc.document_properties.get("depends_on"):
                 doc_with_dep = doc
                 break
 

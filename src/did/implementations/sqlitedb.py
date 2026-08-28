@@ -1,6 +1,7 @@
-import sqlite3
 import os
 import re as _re
+import sqlite3
+
 from ..database import Database
 
 
@@ -287,9 +288,8 @@ class SQLiteDB(Database):
         files = props.get("files")
         if isinstance(files, dict):
             fi = files.get("file_info")
-            if isinstance(fi, list):
-                if len(fi) == 1:
-                    files["file_info"] = fi[0]
+            if isinstance(fi, list) and len(fi) == 1:
+                files["file_info"] = fi[0]
 
         return props
 
@@ -353,7 +353,6 @@ class SQLiteDB(Database):
             if "FOREIGN KEY" in str(e):
                 raise ValueError(f"Branch '{branch_id}' does not exist.")
             # Ignore other integrity errors (duplicates)
-            pass
 
     # --- SQL-based search (matching MATLAB's database.m) ---
 
@@ -453,8 +452,7 @@ class SQLiteDB(Database):
 
         # Strip negation prefix (handled by caller)
         op = operation
-        if op.startswith("~"):
-            op = op[1:]
+        op = op.removeprefix("~")
         op_lower = op.lower()
 
         # The query field name is interpolated into the SQL text below (e.g.
@@ -527,10 +525,7 @@ class SQLiteDB(Database):
             # hasmember on a stored value - fall back to brute force
             return None
 
-        elif op_lower == "hassize":
-            return None
-
-        elif op_lower == "partial_struct":
+        elif op_lower == "hassize" or op_lower == "partial_struct":
             return None
 
         return None
@@ -553,8 +548,9 @@ class SQLiteDB(Database):
         return matched
 
     def _do_get_doc(self, document_id, OnMissing="error", **kwargs):
-        from ..document import Document
         import json
+
+        from ..document import Document
 
         row = self.do_run_sql_query(
             "SELECT json_code FROM docs WHERE doc_id = ?", (document_id,)
@@ -580,8 +576,9 @@ class SQLiteDB(Database):
 
         Overrides the base class one-at-a-time loop for efficiency.
         """
-        from ..document import Document
         import json
+
+        from ..document import Document
 
         is_single = isinstance(document_ids, str)
         if is_single:

@@ -12,9 +12,11 @@ class Database(abc.ABC):
         self.debug = kwargs.get("debug", False)
 
     def __del__(self):
+        # A destructor must never raise: the object may be only partially
+        # constructed, and the interpreter may already be shutting down.
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - see above
             pass
 
     def open(self):
@@ -131,20 +133,17 @@ class Database(abc.ABC):
 
         docs = []
         for doc_id in document_ids:
-            if branch_id is not None:
-                if doc_id not in branch_doc_ids:
-                    # Document not in branch
-                    if OnMissing == "error":
-                        raise ValueError(
-                            f"Document {doc_id} not found in branch {branch_id}"
-                        )
-                    elif OnMissing == "warn":
-                        print(
-                            f"Warning: Document {doc_id} not found in branch {branch_id}"
-                        )
-                        continue
-                    else:
-                        continue
+            if branch_id is not None and doc_id not in branch_doc_ids:
+                # Document not in branch
+                if OnMissing == "error":
+                    raise ValueError(
+                        f"Document {doc_id} not found in branch {branch_id}"
+                    )
+                elif OnMissing == "warn":
+                    print(f"Warning: Document {doc_id} not found in branch {branch_id}")
+                    continue
+                else:
+                    continue
 
             docs.append(self._do_get_doc(doc_id, OnMissing=OnMissing, **kwargs))
 

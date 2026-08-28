@@ -1,4 +1,5 @@
 import unittest
+
 from did.datastructures import table_cross_join
 
 

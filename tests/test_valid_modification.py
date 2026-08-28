@@ -1,5 +1,6 @@
-import unittest
 import os
+import unittest
+
 from did.implementations.sqlitedb import SQLiteDB
 from tests.helpers import make_doc_tree
 

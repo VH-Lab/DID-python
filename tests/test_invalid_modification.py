@@ -1,5 +1,6 @@
-import unittest
 import os
+import unittest
+
 from did.implementations.sqlitedb import SQLiteDB
 from tests.helpers import make_doc_tree
 
@@ -33,7 +34,7 @@ class TestInvalidModification(unittest.TestCase):
         doc = self.docs[0]
         try:
             self.db._do_add_doc(doc, "a")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any exception fails the test
             self.fail(f"Adding the same document twice raised an exception: {e}")
 
     def test_add_doc_to_nonexistent_branch(self):

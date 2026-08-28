@@ -1,4 +1,5 @@
 import unittest
+
 from did.datastructures import (
     cell_or_item,
     cell_to_str,

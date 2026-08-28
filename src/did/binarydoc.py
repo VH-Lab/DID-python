@@ -6,9 +6,11 @@ class BinaryDoc(abc.ABC):
         pass
 
     def __del__(self):
+        # A destructor must never raise: the object may be only partially
+        # constructed, and the interpreter may already be shutting down.
         try:
             self.fclose()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - see above
             pass
 
     @abc.abstractmethod

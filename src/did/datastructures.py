@@ -1,6 +1,7 @@
 import json
-import numpy as np
 import re
+
+import numpy as np
 
 
 def cell_to_str(the_list):
@@ -188,9 +189,8 @@ def field_search(a, search_struct):
     op_lower = operation.lower()
 
     if op_lower == "regexp":
-        if is_there and isinstance(value, str):
-            if re.search(param1, value):
-                b = True
+        if is_there and isinstance(value, str) and re.search(param1, value):
+            b = True
     elif op_lower == "exact_string":
         if is_there:
             b = value == param1
@@ -242,7 +242,7 @@ def field_search(a, search_struct):
         if is_there:
             b = struct_partial_match(value, param1)
     elif op_lower in ("hasanysubfield_contains_string", "hasanysubfield_exact_string"):
-        if is_there and (isinstance(value, list) or isinstance(value, dict)):
+        if is_there and isinstance(value, (list, dict)):
             items_to_check = value if isinstance(value, list) else [value]
             param1_list = param1 if isinstance(param1, list) else [param1]
             param2_list = param2 if isinstance(param2, list) else [param2]
@@ -255,14 +255,15 @@ def field_search(a, search_struct):
                         if not sub_is_there:
                             match = False
                             break
+                        # The enclosing branch already restricts op_lower to
+                        # these two operations.
                         if op_lower == "hasanysubfield_contains_string":
-                            if not (isinstance(sub_value, str) and p2 in sub_value):
-                                match = False
-                                break
-                        elif op_lower == "hasanysubfield_exact_string":
-                            if not (isinstance(sub_value, str) and sub_value == p2):
-                                match = False
-                                break
+                            sub_matches = isinstance(sub_value, str) and p2 in sub_value
+                        else:
+                            sub_matches = isinstance(sub_value, str) and sub_value == p2
+                        if not sub_matches:
+                            match = False
+                            break
                     if match:
                         b = True
                         break
@@ -272,10 +273,9 @@ def field_search(a, search_struct):
         # param1 = dependency name, param2 = dependency value
         if "depends_on" in a:
             for dep in a["depends_on"]:
-                if dep.get("name") == param1:
-                    if dep.get("value") == param2:
-                        b = True
-                        break
+                if dep.get("name") == param1 and dep.get("value") == param2:
+                    b = True
+                    break
     elif op_lower == "isa":
         # isa(param1): true if param1 is the document's class OR one of its
         # superclasses. Mirror did.implementations.doc2sql -- the same

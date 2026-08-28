@@ -1,6 +1,7 @@
-import unittest
 import os
 import shutil
+import unittest
+
 from did.document import Document
 from did.file import ReadOnlyFileobj
 from did.implementations.sqlitedb import SQLiteDB

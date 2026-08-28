@@ -1,8 +1,14 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
+
 from . import ido
 from .common import PathConstants
+
+
+def _utcnow():
+    """Naive UTC timestamp, identical to the deprecated datetime.utcnow()."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Document:
@@ -12,7 +18,7 @@ class Document:
         else:
             self.document_properties = self.read_blank_definition(document_type)
             self.document_properties["base"]["id"] = ido.IDO.unique_id()
-            self.document_properties["base"]["datestamp"] = str(datetime.utcnow())
+            self.document_properties["base"]["datestamp"] = str(_utcnow())
 
             for key, value in kwargs.items():
                 path = key.split(".")

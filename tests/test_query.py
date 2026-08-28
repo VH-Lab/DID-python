@@ -1,4 +1,5 @@
 import unittest
+
 from did.query import Query
 
 
