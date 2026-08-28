@@ -420,8 +420,50 @@ document entry in `bridge.yaml`.)
 | `database.is_branch_editable` | bridge.yaml | Low |
 | `database.display_branches` | bridge.yaml | Low |
 | `database.close_doc` | bridge.yaml | Low |
-| `document.dependency_value_n` | bridge.yaml | Low |
-| `document.add_dependency_value_n` | bridge.yaml | Low |
-| `document.remove_dependency_value_n` | bridge.yaml | Low |
+| `document.dependency_value_n` / `add_dependency_value_n` / `remove_dependency_value_n` — enumerated dependency lists; see below | bridge.yaml | **High** |
 | `binaryTable.compare` (only needed by `findRow`, also unported) | bridge_file.yaml | Low |
 | `query.searchcellarray2searchstructure` handles only numbers and strings; MATLAB also handles cells, structs and logicals | bridge.yaml | Low |
+
+### Enumerated dependency lists (`name_1`, `name_2`, ...)
+
+MATLAB's three `_n` document methods implement variable-length dependency
+lists: `dependency_value_n` walks `name_1`, `name_2`, ... until one is missing
+and returns the values; `add_dependency_value_n` appends `name_(n+1)`;
+`remove_dependency_value_n` deletes `name_n` and renumbers the rest. These were
+listed as Low priority. That was wrong -- retested 2026-08-28 and raised to
+High, because the missing half is the *write* side and it fails silently.
+
+Python has only exact-name `dependency_value` / `set_dependency_value`, and:
+
+1. **Reading**: `dependency_value('item')` raises `ValueError` on a document
+   holding `item_1`, `item_2`, `item_3`. A caller must guess the suffixes and
+   probe until one misses; there is no way to ask how many there are.
+2. **Writing**: the only way to add another dependency of an existing kind is
+   `set_dependency_value(name, value, error_if_not_found=False)`, which
+   appends an entry named literally `item` -- not `item_4`.
+3. **Neither validator catches it.** The schema declares the un-enumerated
+   stem, and `_strip_enumeration_suffix('item')` returns `'item'`, so the
+   malformed entry matches the stem and validates clean in both languages.
+4. **MATLAB then cannot see it.** `dependency_value_n('item')` enumerates
+   `item_1`..`item_3` and stops at the first gap, so the entry Python wrote is
+   invisible -- silent data loss across the bridge, with no error on either
+   side.
+
+Confirmed by building both documents and running `validate_docs`: the
+well-formed list and the one Python's own API produces are *both* accepted.
+
+Exposure is limited today -- nothing inside DID uses the convention (the demo
+schema's `item1`/`item2`/`item3` have no underscore, so they are plain names,
+and the `_n` methods have no MATLAB tests either) -- but it is public API for
+downstream consumers that do use `name_n` schemas. Severity is what makes this
+High: the trigger is an ordinary Python call and the failure is silent.
+
+Two things worth doing, in order:
+
+- **Cheap mitigation, independent of the port**: make `set_dependency_value`
+  refuse to create a stem-named entry when enumerated siblings already exist,
+  so the corruption becomes an error instead of silent.
+- **The port itself**: add `dependency_value_n`, `add_dependency_value_n` and
+  `remove_dependency_value_n`, mirroring MATLAB's enumerate-until-gap
+  semantics and its renumbering on removal. Worth adding symmetry-test
+  coverage at the same time, since MATLAB has none.

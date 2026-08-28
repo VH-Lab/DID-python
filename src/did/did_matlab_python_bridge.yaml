@@ -590,23 +590,51 @@ classes:
           - name: value
             type_matlab: "char"
             type_python: "str"
-        decision_log: "Exact match. Synchronized 2026-03-16."
+        decision_log: >
+          Matches MATLAB for the exact-name case, but NOT for enumerated
+          dependency lists. With ErrorIfNotFound/error_if_not_found false and
+          a document already holding item_1..item_3, MATLAB callers reach for
+          add_dependency_value_n and get item_4; Python has no such method, so
+          set_dependency_value appends an entry named literally "item". See
+          dependency_value_n below -- this is the write half of that gap.
+          Synchronized 2026-03-16; deviation recorded 2026-08-28.
 
       - name: dependency_value_n
         python_name: ~   # not ported
         decision_log: >
-          Present in MATLAB for numbered dependency lists.
-          Not yet ported to Python.
+          MATLAB walks name_1, name_2, ... until one is missing and returns the
+          values. Python has only exact-name dependency_value, which raises on
+          the stem, so a caller must guess suffixes and probe until one misses
+          and cannot ask how many entries exist.
+
+          Reprioritized to High on 2026-08-28 (was Low). The severity is in the
+          write half: Python's set_dependency_value appends a stem-named entry
+          instead of name_(n+1); the schema declares un-enumerated stems and
+          _strip_enumeration_suffix maps the malformed name to that same stem,
+          so BOTH validators accept it; and MATLAB's dependency_value_n then
+          stops at the first gap, making the entry Python wrote invisible.
+          Silent cross-language data loss that neither language errors on.
+          Verified by validating both documents -- both pass.
+
+          Nothing inside DID uses the convention today (the demo schema's
+          item1/item2/item3 have no underscore, and the _n methods have no
+          MATLAB tests), so exposure is downstream, in schemas that do use
+          name_n. See PORTING_INSTRUCTIONS.md for the suggested order of work.
 
       - name: add_dependency_value_n
         python_name: ~   # not ported
         decision_log: >
-          Present in MATLAB. Not yet ported to Python.
+          MATLAB appends name_(n+1), computing n from dependency_value_n. Not
+          ported; Python has no way to append to an enumerated list correctly.
+          See dependency_value_n. Reprioritized to High 2026-08-28.
 
       - name: remove_dependency_value_n
         python_name: ~   # not ported
         decision_log: >
-          Present in MATLAB. Not yet ported to Python.
+          MATLAB deletes name_n and renumbers the entries above it so the list
+          stays gap-free -- which matters because dependency_value_n stops at
+          the first gap. Not ported. See dependency_value_n. Reprioritized to
+          High 2026-08-28.
 
       - name: add_file
         python_name: add_file
