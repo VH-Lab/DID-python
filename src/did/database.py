@@ -12,9 +12,11 @@ class Database(abc.ABC):
         self.debug = kwargs.get("debug", False)
 
     def __del__(self):
+        # A destructor must never raise: the object may be only partially
+        # constructed, and the interpreter may already be shutting down.
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - see above
             pass
 
     def open(self):
@@ -71,10 +73,34 @@ class Database(abc.ABC):
         # Validation logic would go here
         return self._do_get_doc_ids(branch_id)
 
-    def add_docs(self, document_objs, branch_id=None, **kwargs):
+    def validate_docs(self, document_objs):
+        """Validate documents against their schemas before they are added.
+
+        Mirrors MATLAB did.database.validate_docs: dependency values are
+        checked against the superset of document ids already in the database
+        and those in this batch, so a batch may depend on itself.
+        """
+        from .validate import validate_docs as _validate_docs
+
+        all_ids = [str(i).lower() for i in (self.all_doc_ids() or [])]
+        for doc in document_objs:
+            doc_props = getattr(doc, "document_properties", doc)
+            try:
+                all_ids.append(str(doc_props["base"]["id"]).lower())
+            except (KeyError, TypeError):
+                pass  # ignore this document
+        all_ids = sorted(set(all_ids))
+
+        _validate_docs(document_objs, all_ids, debug=self.debug)
+
+    def add_docs(self, document_objs, branch_id=None, validate=True, **kwargs):
         if branch_id is None:
             branch_id = self.current_branch_id
-        # Validation and other logic from the Matlab code would be ported here
+
+        # Ensure all input docs pass schema validation (unless requested not to)
+        if validate:
+            self.validate_docs(document_objs)
+
         for doc in document_objs:
             self._do_add_doc(doc, branch_id, **kwargs)
 
@@ -107,20 +133,17 @@ class Database(abc.ABC):
 
         docs = []
         for doc_id in document_ids:
-            if branch_id is not None:
-                if doc_id not in branch_doc_ids:
-                    # Document not in branch
-                    if OnMissing == "error":
-                        raise ValueError(
-                            f"Document {doc_id} not found in branch {branch_id}"
-                        )
-                    elif OnMissing == "warn":
-                        print(
-                            f"Warning: Document {doc_id} not found in branch {branch_id}"
-                        )
-                        continue
-                    else:
-                        continue
+            if branch_id is not None and doc_id not in branch_doc_ids:
+                # Document not in branch
+                if OnMissing == "error":
+                    raise ValueError(
+                        f"Document {doc_id} not found in branch {branch_id}"
+                    )
+                elif OnMissing == "warn":
+                    print(f"Warning: Document {doc_id} not found in branch {branch_id}")
+                    continue
+                else:
+                    continue
 
             docs.append(self._do_get_doc(doc_id, OnMissing=OnMissing, **kwargs))
 

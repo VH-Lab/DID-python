@@ -1,7 +1,8 @@
 import os
 import tempfile
-from pathlib import Path
 import uuid
+from pathlib import Path
+from typing import ClassVar
 
 
 def toolboxdir():
@@ -29,8 +30,8 @@ def must_be_writable(folder_path):
     try:
         with open(test_file, "w") as f:
             f.write("test")
-    except IOError:
-        raise IOError(f"We do not have write access to the folder at {folder_path}")
+    except OSError:
+        raise OSError(f"We do not have write access to the folder at {folder_path}")
     finally:
         if os.path.exists(test_file):
             os.remove(test_file)
@@ -44,7 +45,7 @@ class PathConstants:
     PATH = toolboxdir()
     DEFPATH = os.path.join(PATH, "example_schema", "demo_schema1")
 
-    DEFINITIONS = {
+    DEFINITIONS: ClassVar[dict[str, str]] = {
         "$DIDDOCUMENT_EX1": os.path.join(DEFPATH, "database_documents"),
         "$DIDSCHEMA_EX1": os.path.join(DEFPATH, "database_schema"),
         "$DIDCONTROLLEDVOCAB_EX1": os.path.join(DEFPATH, "controlled_vocabulary"),

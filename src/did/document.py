@@ -1,9 +1,14 @@
 import json
 import os
-from datetime import datetime
-from . import datastructures
+from datetime import datetime, timezone
+
 from . import ido
 from .common import PathConstants
+
+
+def _utcnow():
+    """Naive UTC timestamp, identical to the deprecated datetime.utcnow()."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Document:
@@ -13,7 +18,7 @@ class Document:
         else:
             self.document_properties = self.read_blank_definition(document_type)
             self.document_properties["base"]["id"] = ido.IDO.unique_id()
-            self.document_properties["base"]["datestamp"] = str(datetime.utcnow())
+            self.document_properties["base"]["datestamp"] = str(_utcnow())
 
             for key, value in kwargs.items():
                 path = key.split(".")
@@ -46,12 +51,16 @@ class Document:
         return self
 
     def _reset_file_info(self):
+        """Clear the file info of a newly created document.
+
+        A class definition may ship template file_info entries (demoFile.json
+        does); a new document starts with none of them. MATLAB's
+        reset_file_info clears the field unconditionally whenever `files`
+        exists -- its emptystruct('name','locations') is an empty struct
+        *array*, i.e. an empty list of records, not an empty record.
+        """
         if "files" in self.document_properties:
-            # Only reset if file_info is missing or we are initializing a new document
-            if "file_info" not in self.document_properties["files"]:
-                self.document_properties["files"]["file_info"] = (
-                    datastructures.empty_struct("name", "locations")
-                )
+            self.document_properties["files"]["file_info"] = []
 
     @staticmethod
     def _normalize_file_info(file_info):
@@ -107,21 +116,58 @@ class Document:
         PathConstants.DEFPATH = path
 
     @staticmethod
-    def read_blank_definition(json_file_location_string):
-        # This is a simplified version of the Matlab function.
-        # It reads a JSON file from a predefined location.
+    def read_json_file_location(json_file_location_string):
+        """Read the JSON at a document-definition location string.
 
+        Accepts a full path, a ``$PATH``-relative reference such as
+        ``$DIDDOCUMENT_EX1/demoA.json``, or a bare class name looked up under
+        the configured definition directories. Mirrors MATLAB
+        ``did.document.readjsonfilelocation`` (minus the URL case, which
+        DID-python has no download path for).
+        """
+        from .validate import resolve_definition_path
+
+        path = resolve_definition_path(json_file_location_string)
+        if path is None:
+            return None
+        with open(path, "r") as f:
+            return json.load(f)
+
+    @staticmethod
+    def read_blank_definition(json_file_location_string):
+        """Build a blank document from its class definition.
+
+        Reads the definition (``database_documents/<class>.json``), then reads
+        each superclass definition recursively and merges it in, so a demoB
+        document carries the base, demoA and demoB property lists and the union
+        of their dependencies -- and, importantly, carries
+        ``document_class.validation``, the pointer add_docs needs to validate
+        it. Mirrors MATLAB ``did.document.readblankdefinition``.
+
+        Falls back to reading ``database_schema/<class>.schema.json`` when no
+        definition exists, preserving the older DID-python behavior for callers
+        that only ship a schema.
+        """
+        data = Document.read_json_file_location(json_file_location_string)
+
+        if data is not None and "document_class" in data:
+            return Document._merge_superclasses(data)
+
+        if data is not None:
+            # A flat schema-style file: normalize it the way DID-python used to.
+            if "base" not in data:
+                data["base"] = {}
+            return Document._normalize_to_document_class(data)
+
+        # Legacy path: look for the validation schema directly.
         schema_path = os.path.join(PathConstants.DEFPATH, "database_schema")
         filepath = os.path.join(schema_path, f"{json_file_location_string}.schema.json")
         if os.path.exists(filepath):
             with open(filepath, "r") as f:
                 data = json.load(f)
-                # Ensure the 'base' key exists
                 if "base" not in data:
                     data["base"] = {}
-                # Convert flat classname/superclasses to document_class format
-                data = Document._normalize_to_document_class(data)
-                return data
+                return Document._normalize_to_document_class(data)
 
         # Fallback for base
         if json_file_location_string == "base":
@@ -138,6 +184,84 @@ class Document:
         raise FileNotFoundError(
             f"Could not find definition for {json_file_location_string}"
         )
+
+    @staticmethod
+    def _merge_superclasses(data):
+        """Merge each superclass definition into a document definition.
+
+        Superclass lists are unioned by definition string, dependencies by
+        name, and every other property list is merged in without overwriting
+        what the subclass already defines.
+        """
+        class_props = data.get("document_class") or {}
+        raw_superclasses = class_props.get("superclasses")
+        if isinstance(raw_superclasses, dict):
+            raw_superclasses = [raw_superclasses]
+        if not raw_superclasses:
+            return data
+
+        merged_superclasses = []
+        for item in raw_superclasses:
+            definition = item.get("definition") if isinstance(item, dict) else item
+            if not definition:
+                continue
+
+            parent = Document.read_json_file_location(definition)
+            if parent is None:
+                merged_superclasses.append(
+                    item if isinstance(item, dict) else {"definition": definition}
+                )
+                continue
+            parent = Document._merge_superclasses(parent)
+
+            entry = dict(item) if isinstance(item, dict) else {"definition": definition}
+            parent_class = parent.get("document_class") or {}
+            if "property_list_name" in parent_class:
+                entry["property_list_name"] = parent_class["property_list_name"]
+            if "class_version" in parent_class:
+                entry["class_version"] = parent_class["class_version"]
+            merged_superclasses.append(entry)
+
+            # The parent's own superclasses join ours.
+            for inherited in parent_class.get("superclasses") or []:
+                if isinstance(inherited, dict) and "definition" in inherited:
+                    merged_superclasses.append(dict(inherited))
+
+            parent = {k: v for k, v in parent.items() if k != "document_class"}
+
+            # Dependencies are unioned by name, subclass entries winning.
+            if "depends_on" in data and "depends_on" in parent:
+                combined = list(data["depends_on"]) + list(parent.pop("depends_on"))
+                seen = set()
+                unique = []
+                for dependency in combined:
+                    name = (
+                        dependency.get("name")
+                        if isinstance(dependency, dict)
+                        else dependency
+                    )
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                    unique.append(dependency)
+                data["depends_on"] = unique
+
+            for key, value in parent.items():
+                if key not in data:
+                    data[key] = value
+
+        # Unique by definition, preserving order.
+        seen = set()
+        unique_superclasses = []
+        for entry in merged_superclasses:
+            definition = entry.get("definition")
+            if definition in seen:
+                continue
+            seen.add(definition)
+            unique_superclasses.append(entry)
+        class_props["superclasses"] = unique_superclasses
+        data["document_class"] = class_props
+        return data
 
     @staticmethod
     def _normalize_to_document_class(data):

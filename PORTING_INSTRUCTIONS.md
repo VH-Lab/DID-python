@@ -145,9 +145,109 @@ When a new file is added to DID-matlab that needs a Python counterpart:
 
 ## Current Sync Status
 
-As of 2026-04-13, the repositories are **in sync** for all core functionality.
+Last drift check: **2026-08-28**, against DID-matlab `83646a7` (2026-07-25).
 
-### Recently resolved (no Python changes needed)
+Three bridge entries showed drift; each was investigated and resolved as
+described below. All other entries are clean.
+
+### `emptystruct` — no Python change needed (bridge hash bumped to `13463d1`)
+
+MATLAB `13463d1` ("Refactor varargin to arguments blocks") added an
+`arguments (Repeating)` block and changed `cell2struct(..., fields')` to
+`cell2struct(..., fields(:))`. Both are MATLAB-language details — argument
+validation syntax and the row/column orientation of a cellstr. Python's
+`empty_struct(*field_names)` returns an empty `dict` and has neither concept.
+**Behaviorally in sync.**
+
+### `sqlitedb` — already in sync (bridge hash bumped to `14439fb`, `out_of_sync` cleared)
+
+MATLAB `14439fb` (audit 6.1-3) added a private `escapeSqlLiteral()` helper and
+applied it at the 14 sites where `sqlitedb.m` interpolates `branch_id` /
+`doc_id` / `document_id` / `filename` into double-quoted SQL literals. Its
+commit message states it was authored in lockstep with the DID-python half of
+the same audit item, which is already in this repo:
+
+- `SQLiteDB` binds every branch/doc/file identifier as a `?` parameter, so
+  `sqlite3` does the escaping.
+- The one place that must build SQL text — the search-condition builder, where
+  the operator and field name vary — routes its values through `_sql_escape()`
+  and validates field names.
+- Re-verified 2026-08-28: no unparameterized identifier interpolation remains.
+  The only f-string SQL in `sqlitedb.py` builds a list of `?` placeholders.
+
+**No port needed.** The older `websave` → `ndi.cloud.api.files.getFile` change
+(`926c430`) also needs no port; see *Not Yet Ported* below.
+
+### `database` — ported: Python now has schema validation
+
+MATLAB PR #153 (`c561c13`..`0142532`, 2026-07-25) changed
+`validate_doc_vs_schema()`:
+
+- A schema-declared `depends_on` entry is required to be **present** only when
+  the schema marks it `mustbenotempty`. Optional dependencies may be omitted
+  without raising `DID:Database:ValidationDependsOn`.
+- A missing optional dependency is reported through a new
+  `DID:Database:MissingOptionalDependency` warning, **opt-in**: emitted only
+  when `DID_FORCE_VALIDATION_WARNINGS` is set to a non-zero value, and then
+  forced through a caller's global `warning('off')`.
+
+Python had **no document-vs-schema validation at all**, so there was nothing to
+port the change into. Rather than record a permanent gap, the validation
+subsystem was ported (2026-08-28). See *Validation* below.
+
+### Bridge coverage gaps found and fixed
+
+A drift check only covers files that have a bridge entry with a sync hash, so
+coverage was audited in both directions on 2026-08-28.
+
+**Python side: complete.** Every module under `src/did/` is referenced by some
+bridge entry's `python_path`, except the three `__init__.py` package markers
+(two empty, one re-exporting `did.util`).
+
+**MATLAB side: two files were invisible to the drift check.** `dumbjsondb.m`
+and `fileCache.m` sat in `not_applicable` in `bridge_file.yaml`, which means no
+`matlab_last_sync_hash` and therefore no drift detection — while their own
+rationales asserted that Python equivalents exist. Both rationales were wrong,
+in opposite directions:
+
+- **`dumbjsondb`** — stays `not_applicable`, rationale corrected. DID-python's
+  backend is SQLiteDB and there is no plan to port the JSON-file document
+  store. The `DumbJsonDB` class in `file.py` arrived with the initial bulk port
+  commit (`97ba45c`) and is dead code: nothing in `src/` or `tests/` imports or
+  exercises it, and it has no binary-file, search, remove, clear, `alldocids`,
+  or metadata support. It is a vestigial stub, not a port, and the old
+  rationale ("has a Python equivalent") overstated it. Either delete the class
+  or, if a JSON backend is ever wanted, promote it to a tracked entry and port
+  it properly.
+- **`fileCache`** — promoted to a tracked class entry, `out_of_sync: true`.
+  Not a MATLAB divergence (`fileCache.m` is unchanged since `3aa892d`); the
+  Python side is a stub, and it is duplicated. There are two unrelated classes
+  named `FileCache`: `file.py:FileCache` implements construction plus
+  `.fileCacheInfo` read/write and nothing else — no `addFile`, `removeFile`,
+  `isFile`, `fileList`, `resizeAndAdd`, `touch`, or `clear`, so nothing can be
+  cached and `maxSize`/`reduceSize` are stored but never enforced — while
+  `common.py:FileCache` is a three-line placeholder holding only
+  `(path, size)`. **`did.common.get_cache()` returns the `common.py`
+  placeholder**, so the object DID-python hands callers is the emptier of the
+  two, where MATLAB's `getCache()` returns a working `did.file.fileCache`.
+  Fixing this means collapsing the two classes and implementing the cache
+  operations.
+
+Two further entries were making claims that did not hold and were corrected:
+
+- `getCache` in `bridge_util.yaml` read "Exact match"; the function shape
+  matches but the returned object does not (see above).
+- The `did.datastructures.table_cross_join (duplicate)` entry in
+  `bridge_util.yaml` claimed MATLAB has `tableCrossJoin` in both
+  `+did/+datastructures/` and `+did/+db/`. It exists only in `+did/+db/`;
+  there is no duplicate.
+
+The remaining unbridged MATLAB files are correctly out of scope: `filesep.m`
+and `toolboxdir.m` (`not_applicable` entries, MATLAB-only utilities) and
+`Contents.m` (a MATLAB toolbox version listing, not code).
+
+### Previously resolved (no Python changes needed)
+
 The following MATLAB changes (March 29-31, 2026) were verified to already be
 handled correctly by Python:
 
@@ -165,23 +265,105 @@ handled correctly by Python:
 - **mustBeValidPermission**: MATLAB added binary-mode variants. Python's
   `must_be_valid_permission()` already accepts `rb`, `wb`, `ab`, etc.
   **Already in sync.**
-- **sqlitedb**: MATLAB replaced `websave` with `ndi.cloud.api.files.getFile`
-  for URL downloads. This is MATLAB-ecosystem-specific; Python uses its own
-  download mechanism. **Not applicable to Python.**
+
+## Validation
+
+`src/did/validate.py` is the Python counterpart of the validation MATLAB
+performs in `did.database`. The live entry point is the same in both languages:
+`database.add_docs`, which validates by default (`validate=True` in Python,
+`'Validate', true` in MATLAB) and can be turned off per call.
+
+| MATLAB | Python |
+|---|---|
+| `database.validate_docs` | `Database.validate_docs` → `validate.validate_docs` |
+| `database.get_document_schema` | `validate.get_document_schema` (+ `resolve_definition_path`) |
+| `database.validate_doc_vs_schema` | `validate.validate_doc_vs_schema` |
+| `database.validate_field_type_and_value` | `validate.validate_field_type_and_value` |
+| `database.checkfiles` | `validate.check_files` |
+| `database.isfilenamematch` | `validate.is_filename_match` |
+| `database.canfindonefile` | `validate.can_find_one_file` |
+
+What it checks, per document: `document_class` exists and carries a non-empty
+`class_name`, `property_list_name` and `class_version`; a document whose
+`document_class` has no `validation` field is skipped (that is how a class opts
+out); otherwise the schema is loaded and the document is checked for classname,
+superclasses (recursing into each superclass schema), `depends_on`, `file`, and
+each class-specific property list, with every field checked against its declared
+type — `integer`, `double`, `matrix`, `timestamp`, `char`/`string`, `did_uid`,
+`structure`, `cell`.
+
+Failures raise `ValidationError`, which carries MATLAB's error identifier as
+`.identifier` (e.g. `'DID:Database:ValidationDependsOn'`), so both languages can
+be branched on with the same strings. PR #153's semantics are included:
+optional dependencies may be absent, and
+`MissingOptionalDependencyWarning` is raised only under
+`DID_FORCE_VALIDATION_WARNINGS`. MATLAB forces that warning past a global
+`warning('off')` by switching the identifier on for the duration; Python's
+equivalent is a `catch_warnings` block with an `always` filter.
+
+Deviations, all recorded in the bridge YAML:
+
+- **Timestamps** — MATLAB parses via `java.time.LocalDateTime`, Python via
+  `datetime.fromisoformat` with `strptime` fallbacks.
+- **`can_find_one_file`** — MATLAB pre-checks an `http` location with a HEAD
+  request. Python has no URL download path, so a URL counts as findable and is
+  resolved when actually read (which is MATLAB's own behavior for any other
+  non-file location).
+- **Journalling** — MATLAB's `add_docs` disables SQLite journalling when
+  validation is off. Python does not; its `sqlite3` connection is managed
+  differently.
+
+### Two bugs validation exposed immediately
+
+Turning validation on surfaced two divergences that had been invisible:
+
+**1. Document IDs were the wrong format.** `base.schema.json` types `base.id` as
+`did_uid`, which requires MATLAB's `did.ido` format: 16 hex digits, an
+underscore, 16 more. Python's `IDO.unique_id()` returned a **UUID4**, so *every*
+Python-generated document was schema-invalid and would have been rejected by
+MATLAB's `add_docs`. UUID4 is also not sortable by creation time, which
+`did.ido` guarantees. `ido.py` now generates
+`num2hex(serial_date_number) + '_' + num2hex(rand)` like MATLAB, and `is_valid`
+enforces MATLAB's rule. (The `ido` bridge entry had recorded this divergence as
+acceptable because "both guarantee uniqueness" — it was not.) Deviation: MATLAB
+takes the serial date number from `clock`, which is local time; Python uses UTC,
+as `did.ido`'s own documentation specifies. IDs are only ever compared for
+equality across languages, never parsed back into a time.
+
+**2. Documents were built from the wrong file.**
+`Document.read_blank_definition` read `database_schema/<class>.schema.json` —
+the *validation schema* — as though it were the class definition. A new document
+therefore carried the schema's field-descriptor list as its property list,
+superclasses as bare strings, and no `document_class.validation` at all, so
+there was no pointer to validate against. It now reads
+`database_documents/<class>.json` and merges superclass definitions recursively
+like MATLAB's `readblankdefinition`, so a `demoB` document carries the `base`,
+`demoA` and `demoB` property lists. Fixing that in turn exposed
+`_reset_file_info`, which only cleared `files.file_info` when it was *absent*
+and so let a definition's template file entries (`demoFile.json` ships two) leak
+into every new document; it now clears unconditionally, as MATLAB does.
+
+Coverage is in `tests/test_validation.py` (34 tests), mirroring MATLAB's
+`TestOptionalDependencyWarning` and the reclassified `depends_on` rows of
+`TestValidModification` / `TestInvalidModification`.
 
 ## Not Yet Ported from MATLAB
 
-These MATLAB features do not yet have Python counterparts:
+These MATLAB features do not yet have Python counterparts. (Schema
+validation was ported 2026-08-28 and is no longer listed; MATLAB's
+`document.validate` is dead code and is deliberately not ported — see the
+document entry in `bridge.yaml`.)
 
 | MATLAB feature | Bridge file | Priority |
 |---|---|---|
+| `database.exist_doc` | bridge.yaml | Medium |
+| `binaryTable` write methods | bridge_file.yaml | Medium |
+| `fileCache` cache operations (`addFile`, `removeFile`, `isFile`, `fileList`, `resizeAndAdd`, `touch`, `clear`) — and collapsing the duplicate `FileCache` in `common.py` and `file.py` so `get_cache()` returns a working cache | bridge_file.yaml | Medium |
+| Remote (URL) file locations in `open_doc` — MATLAB uses `ndi.cloud.api.files.getFile`; Python would need `requests`/`urllib` | bridge_implementations.yaml | Low |
 | `database.freeze_branch` | bridge.yaml | Low |
 | `database.is_branch_editable` | bridge.yaml | Low |
 | `database.display_branches` | bridge.yaml | Low |
-| `database.exist_doc` | bridge.yaml | Medium |
 | `database.close_doc` | bridge.yaml | Low |
-| `document.validate` | bridge.yaml | Medium |
 | `document.dependency_value_n` | bridge.yaml | Low |
 | `document.add_dependency_value_n` | bridge.yaml | Low |
 | `document.remove_dependency_value_n` | bridge.yaml | Low |
-| `binaryTable` write methods | bridge_file.yaml | Medium |

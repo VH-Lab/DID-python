@@ -15,10 +15,10 @@ meta.superclass); this test pins both paths to the same, correct answer.
 import os
 import unittest
 
+from did.datastructures import field_search
 from did.document import Document
 from did.implementations.sqlitedb import SQLiteDB
 from did.query import Query
-from did.datastructures import field_search
 
 
 def _doc(class_name, superclasses, fields=None):

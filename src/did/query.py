@@ -1,5 +1,8 @@
+from typing import ClassVar
+
+
 class Query:
-    VALID_OPS = {
+    VALID_OPS: ClassVar[set[str]] = {
         "regexp",
         "exact_string",
         "exact_string_anycase",
@@ -22,7 +25,7 @@ class Query:
 
     def __init__(self, field=None, op=None, param1=None, param2=None):
         if op:
-            check_op = op[1:] if op.startswith("~") else op
+            check_op = op.removeprefix("~")
             if check_op.lower() not in self.VALID_OPS:
                 raise ValueError(f"Invalid operator: {op}")
 

@@ -22,19 +22,32 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "205d34b"
-    matlab_current_hash: "926c430"
+    matlab_last_sync_hash: "14439fb"
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
     inherits_matlab: "did.database"
     inherits_python: "Database"
-    out_of_sync: true
-    out_of_sync_reason: >
-      MATLAB replaced websave() with ndi.cloud.api.files.getFile() for
-      URL file downloads (commit 926c430, 2026-03-30). This is a
-      MATLAB-specific change (uses NDI cloud API) and does not require
-      a direct Python port, but Python should have equivalent URL
-      download reliability.
+    out_of_sync: false
+    sync_notes: >
+      MATLAB 14439fb (2026-06-12, audit 6.1-3) added a private
+      escapeSqlLiteral() helper and applied it at the 14 sites where
+      sqlitedb.m interpolates branch_id / doc_id / document_id / filename
+      into double-quoted SQL literals. That commit was explicitly authored
+      in lockstep with the DID-python side of the same audit item, which is
+      already present here: SQLiteDB binds every branch/doc/file identifier
+      as a "?" parameter (sqlite3 handles the escaping), and the one place
+      that must build SQL text -- the search-condition builder, where the
+      operator and field vary -- routes its values through _sql_escape()
+      and validates field names. Verified 2026-08-28: no unparameterized
+      identifier interpolation remains (the only f-string SQL builds a
+      list of "?" placeholders). Behaviorally in sync; no port needed.
+
+      MATLAB 926c430 (2026-03-30) replaced websave() with
+      ndi.cloud.api.files.getFile() for URL file downloads. Python has no
+      URL download path at all -- SQLiteDB.open_doc() resolves only local
+      (absolute or db-relative) locations -- so there is nothing to port;
+      see the not_applicable entry for ndi.cloud.api.files.getFile and the
+      "Not Yet Ported" table in PORTING_INSTRUCTIONS.md.
 
     properties:
       - name: FileDir
@@ -156,8 +169,11 @@ classes:
     decision_log: >
       Core database operations are synchronized. MATLAB recently changed
       URL download mechanism (websave -> ndi.cloud.api.files.getFile) which
-      is MATLAB-ecosystem-specific. Python should verify its own URL download
-      path is robust. Last full sync: 2026-03-15.
+      is MATLAB-ecosystem-specific; Python has no URL download path to
+      mirror. The 2026-06-12 SQL-injection hardening (14439fb) was authored
+      in lockstep with the Python parameterization/_sql_escape work already
+      present here. Last full sync: 2026-03-15; drift re-checked 2026-08-28
+      against MATLAB 14439fb.
 
   # -----------------------------------------------------------------------
   # did.implementations.doc2sql  (function module)
@@ -270,7 +286,10 @@ classes:
 
     decision_log: >
       MATLAB-specific wrapper around dumbjsondb for MATLAB file I/O.
-      Python implements DumbJsonDB directly in file.py.
+      Not ported: DID-python's storage backend is SQLiteDB. Corrected
+      2026-08-28 -- this previously read "Python implements DumbJsonDB
+      directly in file.py", which overstated a dead-code stub; see the
+      did.file.dumbjsondb entry in did_matlab_python_bridge_file.yaml.
 
 # =========================================================================
 # Not applicable in Python
@@ -279,5 +298,9 @@ not_applicable:
   - name: ndi.cloud.api.files.getFile
     rationale: >
       MATLAB uses NDI cloud API for URL file downloads (added in sqlitedb.m
-      commit 926c430). Python should use requests or urllib for equivalent
-      functionality. Not a direct port target.
+      commit 926c430). Not a direct port target: the NDI cloud API is
+      MATLAB-ecosystem-specific. Python currently has no URL download path
+      at all -- SQLiteDB.open_doc() resolves only local (absolute or
+      db-relative) file locations -- so if remote locations are ever needed
+      in Python it should be built with requests/urllib rather than ported.
+      Tracked in the "Not Yet Ported" table in PORTING_INSTRUCTIONS.md.

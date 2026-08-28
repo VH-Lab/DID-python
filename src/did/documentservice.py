@@ -10,11 +10,9 @@ class DocumentService(abc.ABC):
         """
         Create a new document based on information in this class.
         """
-        pass
 
     @abc.abstractmethod
     def search_query(self):
         """
         Create a search query to find this object as a document.
         """
-        pass
