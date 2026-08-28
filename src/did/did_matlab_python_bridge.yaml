@@ -484,10 +484,17 @@ classes:
         decision_log: >
           Corrected 2026-08-28 -- the previous note had this backwards, and the
           Python docstring did too. It claimed Python treats a URL as findable.
-          It does not: can_find_one_file returns False for an http(s) location,
-          so a document whose only location for a file is a URL fails
-          validation with DID:Database:ValidationFiles ("Missing file").
-          Verified by running it.
+          It does not: can_find_one_file returns False for an http(s) location.
+          The consequence is scoped, though -- this function is only consulted
+          for files the schema marks mustbenotempty. A required URL-hosted file
+          means add_docs raises DID:Database:ValidationFiles and writes NOTHING
+          (not a partial add). An optional one validates fine, and so does any
+          non-http scheme such as s3://, which is never pre-checked. Measured
+          2026-08-28.
+
+          The stored link is never at risk either way: a document that does get
+          in round-trips its locations verbatim through SQLite, URL included.
+          The failure is only ever about admission.
 
           The two languages nonetheless AGREE, for different reasons. MATLAB
           intends to HEAD-check the URL and accept a reachable one, but the

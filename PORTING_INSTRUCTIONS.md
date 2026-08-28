@@ -593,14 +593,47 @@ or left empty, which makes MATLAB's path *relative* and resolved against the
 current working directory — the two could land in the same place without
 anyone intending it.
 
-### Remote (URL) file locations: both languages reject them
+### Remote (URL) file locations: rejected, but only when the schema requires the file
 
-Worth stating plainly, since it is the case that matters most for a
-cloud-hosted dataset. A document whose only location for a file is an
-`http(s)` URL **fails validation in both languages**:
+Qualified 2026-08-28 — an earlier draft of this section said "both languages
+reject them" without the condition, which overstates it.
+
+`can_find_one_file` / `canfindonefile` is consulted **only** for files the
+schema marks `mustbenotempty`. Measured behavior:
+
+| Schema | Location | Result |
+|---|---|---|
+| `mustbenotempty: 1` | `https://...` | **Document rejected**, `DID:Database:ValidationFiles` |
+| `mustbenotempty: 0` or absent | `https://...` | Valid; nothing is pre-checked |
+| any | `s3://`, `ftp://`, other non-http | Valid; not pre-checked in either language |
+| any | local path that exists | Valid |
+
+So the exposure is narrow: it is specifically *a schema that marks a
+URL-hosted file as required*. That is very likely why the MATLAB bug below has
+gone unnoticed.
+
+**The failure mode is worth being precise about.** It is not that the file is
+skipped and the rest of the document is stored — `add_docs` raises and **zero
+documents are written**. Validation is on by default in both languages
+(`validate=True`, `'Validate', true`).
+
+**The link itself is never lost.** Verified by round-trip: with validation off,
+a document carrying `https://example.org/data/thing.bin` comes back out of
+SQLite with that location intact under `files.file_info[].locations[]`. The
+raw JSON is stored and returned verbatim, so nothing strips the URL. Anything
+that manages to get into the database keeps its link. The problem is purely
+getting it in.
+
+Workarounds available today, in order of preference: mark the file optional in
+the schema, or pass `validate=False` / `'Validate', false` on the add.
+
+With that scoped, the underlying defect:
 
 - Python's `can_find_one_file` returns False for a URL by design — there is no
-  URL download path, so it could not resolve one later either.
+  URL download path, so it could not resolve one later either. (Note this is
+  *not* symmetric with other non-local schemes: `s3://` and anything else
+  non-http are treated as findable and left to be resolved at read time. Only
+  `http(s)` is singled out.)
 - MATLAB *intends* to HEAD-check the URL and accept a reachable one, but
   `canfindonefile` calls `req.send(url)` where `url` is never assigned
   anywhere in `database.m`. The error is swallowed by a bare `catch`, so the
