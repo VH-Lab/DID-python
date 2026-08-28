@@ -16,6 +16,8 @@ from did.implementations.sqlitedb import SQLiteDB
 from did.validate import (
     MissingOptionalDependencyWarning,
     ValidationError,
+    can_find_one_file,
+    check_files,
     is_filename_match,
     validate_field_type_and_value,
 )
@@ -334,3 +336,71 @@ class TestDocumentIdentifiers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRemoteFileLocations(_DatabaseTestCase):
+    """A non-local file location is not pre-checked during validation.
+
+    Validation does no network I/O in either language, so a required file
+    hosted at a URL is admitted and its reachability is evaluated when the file
+    is read. Before 2026-08-28 an http(s) location was singled out and rejected
+    with "Missing file", while s3:// and every other non-local scheme was
+    accepted; MATLAB's canfindonefile intended a HEAD check that had never
+    worked. Both sides now behave the same way.
+    """
+
+    URL = "https://example.org/data/thing.bin"
+
+    def _url_doc(self):
+        doc = Document("demoFile", **{"demoFile.value": 1})
+        doc.add_file("filename1.ext", self.URL)
+        doc.add_file("filename2.ext", self.URL)
+        return doc
+
+    def test_url_counts_as_findable(self):
+        self.assertTrue(can_find_one_file([{"location": self.URL}]))
+
+    def test_url_is_treated_like_any_other_non_local_scheme(self):
+        for location in (self.URL, "s3://bucket/key", "ftp://host/f.bin"):
+            with self.subTest(location=location):
+                self.assertTrue(can_find_one_file([{"location": location}]))
+
+    def test_no_locations_at_all_is_not_findable(self):
+        self.assertFalse(can_find_one_file([]))
+
+    def test_existing_local_file_is_findable(self):
+        real = os.path.join(self._dir, "f.bin")
+        with open(real, "wb") as handle:
+            handle.write(b"x")
+        self.assertTrue(can_find_one_file([{"location": real}]))
+
+    def test_required_file_at_a_url_passes_check_files(self):
+        is_valid, message = check_files(
+            expected_names=["f.ext"],
+            must_have_value=[1],
+            actual_file_names=["f.ext"],
+            doc_name="demo",
+            files=[{"name": "f.ext", "locations": [{"location": self.URL}]}],
+            actual_file_list=["f.ext"],
+        )
+        self.assertTrue(is_valid, message)
+
+    def test_document_with_a_required_url_file_can_be_added(self):
+        self.db.set_branch("a")
+        doc = self._url_doc()
+        self.db.add_docs([doc])
+        self.assertEqual(len(self.db.get_doc_ids("a")), 1)
+
+    def test_the_url_survives_the_round_trip(self):
+        self.db.set_branch("a")
+        doc = self._url_doc()
+        self.db.add_docs([doc])
+
+        got = self.db.get_docs(doc.id())
+        got = got[0] if isinstance(got, list) else got
+        locations = []
+        for entry in got.document_properties["files"]["file_info"]:
+            entries = entry["locations"]
+            entries = entries if isinstance(entries, list) else [entries]
+            locations.extend(item.get("location") for item in entries)
+        self.assertIn(self.URL, locations)

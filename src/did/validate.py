@@ -541,19 +541,20 @@ def is_filename_match(expected_name, actual_name):
 def can_find_one_file(locations):
     """Can at least one location for a file be found?
 
-    A local path must exist. An http(s) URL counts as NOT findable: Python has
-    no URL download path, so it could not resolve one later either. Any other
-    location is not pre-checked and counts as findable, being resolved when
-    actually read.
+    A local path must exist. Any non-local location -- an http(s) URL, an
+    ``s3://`` key, anything else -- is not pre-checked and counts as findable;
+    its existence is evaluated when the file is actually read.
 
-    This matches what MATLAB's ``database.canfindonefile`` does, though not
-    what it intends. MATLAB means to HEAD-check a URL and accept a reachable
-    one, but its request line reads ``req.send(url)`` where ``url`` is never
-    assigned -- the resulting error is swallowed by a bare ``catch``, so the
-    URL branch can never report found. Both languages therefore reject a
-    document whose only location for a file is a URL. If that MATLAB bug is
-    ever fixed, this function has to grow a real reachability check or the two
-    will disagree.
+    Validation does no network I/O. An unreachable URL is therefore reported
+    when the file is read, not when the document is added, which is the same
+    treatment every other non-local scheme already got.
+
+    Mirrors MATLAB ``database.canfindonefile``. Both sides changed on
+    2026-08-28: MATLAB previously tried to HEAD-check an http location, so a
+    required URL-hosted file was rejected at validation with "Missing file".
+    That branch had never worked (it passed an unassigned ``url`` variable and
+    swallowed the error), and singling out http was inconsistent with every
+    other non-local scheme, so the pre-check was removed rather than repaired.
     """
     for location in _as_list(locations):
         if isinstance(location, dict):
@@ -564,8 +565,8 @@ def can_find_one_file(locations):
             continue
         if os.path.isfile(path):
             return True
-        if not path.startswith("http"):
-            return True
+        # Not a local file: not pre-checked here, resolved at read time.
+        return True
     return False
 
 

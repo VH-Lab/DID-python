@@ -482,34 +482,30 @@ classes:
         python_name: can_find_one_file
         python_path: "did/validate.py"
         decision_log: >
-          Corrected 2026-08-28 -- the previous note had this backwards, and the
-          Python docstring did too. It claimed Python treats a URL as findable.
-          It does not: can_find_one_file returns False for an http(s) location.
-          The consequence is scoped, though -- this function is only consulted
-          for files the schema marks mustbenotempty. A required URL-hosted file
-          means add_docs raises DID:Database:ValidationFiles and writes NOTHING
-          (not a partial add). An optional one validates fine, and so does any
-          non-http scheme such as s3://, which is never pre-checked. Measured
-          2026-08-28.
+          Exact match. A local path must exist; ANY non-local location -- an
+          http(s) URL, an s3:// key, anything else -- is not pre-checked and
+          counts as findable, its existence evaluated when the file is read.
+          Validation does no network I/O in either language.
 
-          The stored link is never at risk either way: a document that does get
-          in round-trips its locations verbatim through SQLite, URL included.
-          The failure is only ever about admission.
+          Changed in BOTH repos on 2026-08-28, in lockstep. MATLAB previously
+          singled out http(s) and tried to HEAD-check it, so a file the schema
+          marked mustbenotempty and hosted at a URL was rejected at validation
+          as "Missing file". Two things were wrong with that: the branch had
+          never worked (it passed an unassigned `url` variable to req.send and
+          swallowed the error in a bare catch, so it could never report found),
+          and singling out http was inconsistent with every other non-local
+          scheme, which was accepted without a check. Python had mirrored the
+          resulting behavior.
 
-          The two languages nonetheless AGREE, for different reasons. MATLAB
-          intends to HEAD-check the URL and accept a reachable one, but the
-          request line reads req.send(url) where url is never assigned
-          anywhere in database.m -- the error is swallowed by a bare catch, so
-          MATLAB's URL branch can never set found=true either. Agreement by
-          accident, not by design.
+          The pre-check was removed rather than repaired, per the project
+          decision that a URL location should behave as a mustbenotempty == 0
+          file does. Repairing it instead would have put a network round-trip
+          inside validation and required a URL download path in Python to
+          match. Coverage: tests/test_validation.py:TestRemoteFileLocations.
 
-          Consequence: fixing the MATLAB bug would immediately split the two.
-          Python would need a real reachability check, and a URL download path
-          to back it up. Tracked in "Not Yet Ported"; see also the
-          ndi.cloud.api.files.getFile not_applicable entry.
-
-          Non-file, non-http locations are not pre-checked in either language
-          and count as findable. Ported 2026-08-28.
+          Note the shipped demoFile.json template carries location_type "url"
+          entries, so remote locations are a first-class part of the document
+          format; rejecting them was never the intent.
 
       - name: findfilematch
         kind: static

@@ -593,62 +593,53 @@ or left empty, which makes MATLAB's path *relative* and resolved against the
 current working directory — the two could land in the same place without
 anyone intending it.
 
-### Remote (URL) file locations: rejected, but only when the schema requires the file
+### Remote (URL) file locations — fixed in both repos, 2026-08-28
 
-Qualified 2026-08-28 — an earlier draft of this section said "both languages
-reject them" without the condition, which overstates it.
+**Decision: a URL location behaves exactly as a `mustbenotempty == 0` file
+does.** Validation does no network I/O; a non-local location is admitted and
+its reachability is evaluated when the file is read.
 
-`can_find_one_file` / `canfindonefile` is consulted **only** for files the
-schema marks `mustbenotempty`. Measured behavior:
+The old behavior, and why it was wrong. `canfindonefile` singled out `http(s)`
+and tried to HEAD-check it, so a file the schema marked `mustbenotempty` and
+hosted at a URL was rejected as "Missing file" — and `add_docs` then wrote
+**nothing**, not a partial document. Two things were wrong with that:
+
+1. **The branch had never worked.** MATLAB's `canfindonefile` called
+   `req.send(url)` where `url` is never assigned anywhere in `database.m`. The
+   error was swallowed by a bare `catch`, so the URL branch could never report
+   found. Python had mirrored the resulting behavior.
+2. **It was inconsistent.** `s3://`, `ftp://` and every other non-local scheme
+   were accepted without any check. Only `http(s)` was rejected.
+
+The pre-check was therefore **removed rather than repaired**. Repairing it
+would have put a network round-trip inside validation and required a URL
+download path in DID-python to match. The shipped `demoFile.json` template
+carries `location_type: "url"` entries, so remote locations are a first-class
+part of the document format; rejecting them was never the intent.
+
+Both repos changed in lockstep:
+
+- `DID-matlab` — `src/did/+did/database.m`, `canfindonefile`: the broken
+  `elseif startsWith(fileLocation, 'http')` branch removed, so a non-local
+  location falls through to the existing not-pre-checked path.
+- `DID-python` — `src/did/validate.py`, `can_find_one_file`: the
+  `startsWith('http')` special case removed, same result.
+
+Neither repo had a test covering this. Coverage is now in
+`tests/test_validation.py:TestRemoteFileLocations` (7 tests): URL findability,
+parity with other non-local schemes, an empty location list, a required
+URL-hosted file passing `check_files`, the document being addable, and the URL
+surviving the round-trip through SQLite. **MATLAB still has no test for it** —
+worth adding on that side.
+
+Behavior now, measured:
 
 | Schema | Location | Result |
 |---|---|---|
-| `mustbenotempty: 1` | `https://...` | **Document rejected**, `DID:Database:ValidationFiles` |
-| `mustbenotempty: 0` or absent | `https://...` | Valid; nothing is pre-checked |
-| any | `s3://`, `ftp://`, other non-http | Valid; not pre-checked in either language |
+| `mustbenotempty: 1` or `0` | `https://…`, `s3://…`, other non-local | Valid, not pre-checked |
 | any | local path that exists | Valid |
+| any | no locations at all | Not findable |
 
-So the exposure is narrow: it is specifically *a schema that marks a
-URL-hosted file as required*. That is very likely why the MATLAB bug below has
-gone unnoticed.
-
-**The failure mode is worth being precise about.** It is not that the file is
-skipped and the rest of the document is stored — `add_docs` raises and **zero
-documents are written**. Validation is on by default in both languages
-(`validate=True`, `'Validate', true`).
-
-**The link itself is never lost.** Verified by round-trip: with validation off,
-a document carrying `https://example.org/data/thing.bin` comes back out of
-SQLite with that location intact under `files.file_info[].locations[]`. The
-raw JSON is stored and returned verbatim, so nothing strips the URL. Anything
-that manages to get into the database keeps its link. The problem is purely
-getting it in.
-
-Workarounds available today, in order of preference: mark the file optional in
-the schema, or pass `validate=False` / `'Validate', false` on the add.
-
-With that scoped, the underlying defect:
-
-- Python's `can_find_one_file` returns False for a URL by design — there is no
-  URL download path, so it could not resolve one later either. (Note this is
-  *not* symmetric with other non-local schemes: `s3://` and anything else
-  non-http are treated as findable and left to be resolved at read time. Only
-  `http(s)` is singled out.)
-- MATLAB *intends* to HEAD-check the URL and accept a reachable one, but
-  `canfindonefile` calls `req.send(url)` where `url` is never assigned
-  anywhere in `database.m`. The error is swallowed by a bare `catch`, so the
-  branch can never report found.
-
-They agree by accident, not by design. **This is a live bug in DID-matlab**
-(`src/did/+did/database.m`, in `canfindonefile`): the argument should be
-`fileLocation`. It has presumably masked itself, because the symptom is a
-remote file being reported "missing" rather than an error.
-
-Fixing it would immediately split the two languages: MATLAB would start
-accepting reachable URLs that Python still rejects. So the Python side needs a
-real reachability check, and a URL download path behind it, at the same time.
-Both halves are in "Not Yet Ported"; the MATLAB fix should not land alone.
-
-Note also that the earlier bridge entry and the `can_find_one_file` docstring
-both described the opposite behavior — that Python treats a URL as findable —
-until this was actually run. Corrected 2026-08-28.
+The stored link was never at risk in any of this: a document that gets in
+round-trips its locations verbatim through SQLite, URL included. The failure
+was only ever about admission.
