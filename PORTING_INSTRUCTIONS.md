@@ -689,11 +689,70 @@ DID-python". It is:
 3. The cache (see above) only becomes worth building once something can
    actually download, since its purpose is to avoid re-fetching.
 
-**Not verified:** whether NDI-python implements this today. NDI-python is in
-the WalthamDataScience organization and outside this session's repository
-scope, so nothing here should be read as a claim about what it does or does
-not contain. Checking it would answer whether the hook is the missing piece or
-whether NDI-python has already routed around `open_doc` altogether.
+### How NDI-matlab actually does it (read from VH-Lab/ndi-matlab, 2026-08-28)
+
+The hook is real and already in use. `ndi.database.implementations.database.
+didsqlite` calls:
+
+```matlab
+db.open_doc(ndi_document_id, filename, 'customFileHandler', @download_file_from_cloud)
+```
+
+so NDI supplies retrieval through DID's extension point rather than DID
+knowing anything about the cloud. NDI defines three location types
+(`ndi.document.add_file`): `file`, `url` for plain `http(s)://`, and
+**`ndicloud`** for `ndic://<datasetId>/<fileUid>`. Its handler accepts exactly
+`(destPath, sourcePath)`, and for an `ndic://` path it:
+
+1. splits out `datasetId` and `fileUid`;
+2. calls `ndi.cloud.api.files.getFileDetails(datasetId, fileUid)` to mint a
+   **fresh pre-signed `downloadUrl`**;
+3. calls `ndi.cloud.api.files.getFile(fileUrl, destPath, 'useCurl', true)`.
+
+That is why documents store `ndic://…` rather than a URL: a pre-signed URL
+expires, so the durable identifier is stored and the URL is minted at read
+time.
+
+**So the answer to "does the downloader need the dataset ID?" is: it depends
+which half.** `getFile(downloadURL, downloadedFile)` needs nothing but a URL
+and a destination — `useCurl` already defaults to true. But *obtaining a valid
+URL* for an `ndic://` location needs the dataset ID, the file UID and cloud
+authentication. Only the plain `url` type is fetchable from the URL alone.
+
+Which makes DID-matlab's own `url` branch the one piece that is misplaced: a
+plain `https://` location needs no dataset ID and no auth, yet DID reaches up
+into `ndi.cloud.api.files.getFile` to fetch it. Giving DID-matlab a small
+generic downloader for that branch would remove DID's dependency on NDI
+entirely, leaving NDI responsible only for `ndicloud`, which it already
+handles through the hook.
+
+Such a downloader is not a one-liner. NDI's curl path carries four details
+that were clearly learned the hard way, and all four would have to come with
+it:
+
+- `-H "Accept-Encoding: identity"` — the payloads are already-compressed
+  archives, and letting the gateway compress them again produced corrupt files
+  on both macOS and Linux (`websave` auto-decompresses and botches them).
+- `-f` — so an HTTP error is a non-zero exit rather than a server error body
+  written into the destination file.
+- `assertSafeCurlArgs` (87 lines) — the URL is server-supplied and
+  interpolated into a `system()` command inside double quotes, which in sh do
+  **not** neutralise `` ` `` or `$`. This is a shell-injection guard.
+- `ndi.common.systemCurlEnvPrefix` (68 lines) — resets `LD_LIBRARY_PATH` so
+  the OS curl loads OS libraries rather than MATLAB's bundled ones, which a
+  MATLAB upgrade can otherwise break.
+
+**Do not copy the last two.** Duplicating a shell-injection guard across two
+repositories means a fix to one silently fails to reach the other. Both are
+generic utilities that belong in the lower layer: move them down into
+DID-matlab (`did.file.assertSafeCurlArgs`, `did.common.systemCurlEnvPrefix`)
+and have NDI call DID's copies, keeping only the cloud-API-specific parts.
+
+**Still not verified: NDI-python.** The above was read from VH-Lab/ndi-matlab.
+NDI-python is in the WalthamDataScience organization and was not examined, so
+nothing here should be read as a claim about it. If it mirrors NDI-matlab's
+design, DID-python needs the `custom_file_handler` parameter before NDI-python
+has anywhere to hook.
 
 ### open_doc, fixed 2026-08-28
 
