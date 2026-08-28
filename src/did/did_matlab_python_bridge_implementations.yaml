@@ -22,7 +22,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "14439fb"
+    matlab_last_sync_hash: "d635555"
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
     inherits_matlab: "did.database"
@@ -168,45 +168,60 @@ classes:
           - name: filename
             type_matlab: "char"
             type_python: "str"
+          - name: customFileHandler
+            type_matlab: "function_handle (name-value)"
+            type_python: "callable (custom_file_handler=None)"
         decision_log: >
-          Reworked 2026-08-28. Both now walk the document's locations in turn
-          and return the first that resolves to a readable local file, raising
-          when none does.
+          Reworked in BOTH repos 2026-08-28, in lockstep. Both walk the
+          document's locations, return the first that resolves to a readable
+          local file, hand any remote location to a caller-supplied retriever,
+          and raise when nothing can be reached.
 
-          Three bugs were fixed on the Python side, all of them quiet:
+          DID DOWNLOADS NOTHING ITSELF, in either language. Retrieval is
+          supplied through customFileHandler / custom_file_handler, called as
+          (destPath, sourcePath) and expected to produce a local file at
+          destPath; both check that it did. NDI-matlab already uses this hook,
+          passing a handler that resolves ndic://<datasetId>/<fileUid> by
+          calling getFileDetails to mint a fresh pre-signed URL and then
+          getFile to download it. Only ndic:// is supported for now; plain
+          http(s) URLs are deliberately not handled by DID.
+
+          MATLAB change: the 'url' branch, which called
+          ndi.cloud.api.files.getFile directly, was removed. It made DID depend
+          on NDI being on the path -- a lower-level package reaching for a
+          higher-level one -- for a case NDI already covers through the hook.
+          Every non-'file' type now goes to the handler.
+
+          Python changes, three quiet bugs plus the new hook:
 
           1. locations["location"] was read directly, assuming a single dict.
-             A document may carry several locations for one file -- the shipped
-             demoFile.json template lists a local path AND a url for each -- so
-             any MATLAB-written document raised TypeError: list indices must be
-             integers.
-          2. A URL was rebased against the database directory like a relative
-             path, producing nonsense such as
-             /db/dir/https://example.org/data/thing.bin.
+             Documents may carry several locations per file -- the shipped
+             demoFile.json template lists a local path AND a remote one for
+             each -- so any MATLAB-written document raised TypeError.
+          2. A remote location was rebased against the database directory like
+             a relative path, producing /db/dir/ndic://d-123/f-abc.
           3. The resulting Fileobj was returned unopened. Fileobj.fopen()
              swallows the OSError and leaves fid None, so a caller that did not
-             check fid read b"" and saw no error at all -- a missing file was
+             check fid read b"" and saw no error -- a missing file was
              indistinguishable from an empty one.
 
-          Python now raises FileAccessError, which carries MATLAB's identifier
-          the way ValidationError does, and subclasses FileNotFoundError so
-          callers written against the older behavior keep working:
-          DID:SQLITEDB:FileRetrieval:UnsupportedType when the only locations
-          are remote, DID:SQLITEDB:open otherwise.
+          Python raises FileAccessError, which carries MATLAB's identifier the
+          way ValidationError does and subclasses FileNotFoundError so older
+          callers keep working: FileRetrieval:UnsupportedType when a remote
+          location has no handler, FileRetrieval:CustomHandlerFailed when the
+          handler raises or produces no file, DID:SQLITEDB:open otherwise.
 
-          REMAINING DEVIATION, and the biggest one in this entry. MATLAB
-          RETRIEVES a file it cannot reach locally: a 'file' type is copied, a
-          'url' type is downloaded via ndi.cloud.api.files.getFile, any other
-          type is passed to a caller-supplied customFileHandler function
-          handle, and the result is added to the file cache. Python does none
-          of that -- it has no download path, no cache (see fileCache), and no
-          customFileHandler equivalent, so open_doc has no extension point a
-          downstream package could hook. A remote-only file is therefore
-          readable in MATLAB and an error in Python.
+          REMAINING DEVIATION: MATLAB adds the retrieved file to the file cache
+          and serves later opens from there; Python has no cache (see
+          fileCache), so it downloads to PathConstants.temppath and re-fetches
+          on every open.
 
-          Note the MATLAB url branch calls into NDI, so DID-matlab depends on
-          NDI being on the path for that case -- a layering inversion worth
-          resolving before mirroring it. See PORTING_INSTRUCTIONS.md.
+          STILL OUTSTANDING, both languages: do_add_doc's ingestion path also
+          calls ndi.cloud.api.files.getFile for a non-'file' location, so
+          DID-matlab's dependency on NDI is reduced but not gone. do_add_doc
+          takes no handler parameter, so closing it means plumbing one through
+          add_docs and the abstract base. Rarely hit, because ingest defaults
+          to 0 for url and ndicloud locations. See PORTING_INSTRUCTIONS.md.
 
       - name: open_db
         python_name: _open_db

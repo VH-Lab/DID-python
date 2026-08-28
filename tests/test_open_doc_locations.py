@@ -133,3 +133,190 @@ class TestOpenDocLocations(unittest.TestCase):
         self.db.add_docs([doc], validate=False)
         with self.assertRaises(FileNotFoundError):
             self.db.open_doc(doc.id(), "not_listed.ext")
+
+
+class TestCustomFileHandler(TestOpenDocLocations):
+    """Retrieval is supplied by the caller, not by DID.
+
+    Mirrors MATLAB's customFileHandler name-value argument to do_open_doc.
+    NDI-matlab uses it to resolve ndic://<datasetId>/<fileUid> by minting a
+    pre-signed URL and downloading it; DID downloads nothing itself, in either
+    language. Only ndic:// is supported for now -- plain URLs are deliberately
+    not handled by DID.
+    """
+
+    NDIC = "ndic://d-123/f-abc"
+
+    def _recording_handler(self, content=b"downloaded", produce=True):
+        calls = []
+
+        def handler(dest_path, source_path):
+            calls.append((dest_path, source_path))
+            if produce:
+                with open(dest_path, "wb") as handle:
+                    handle.write(content)
+
+        return handler, calls
+
+    def test_handler_is_called_and_its_file_is_returned(self):
+        doc = self._doc_with_locations(
+            [{"location": self.NDIC, "location_type": "ndicloud", "uid": "f-abc"}]
+        )
+        self.db.add_docs([doc], validate=False)
+        handler, calls = self._recording_handler()
+
+        file_obj = self.db.open_doc(
+            doc.id(), "filename1.ext", custom_file_handler=handler
+        )
+        self.assertEqual(len(calls), 1)
+        dest_path, source_path = calls[0]
+        self.assertEqual(source_path, self.NDIC)
+        self.assertTrue(dest_path.endswith("f-abc"))
+
+        file_obj.fopen()
+        self.assertEqual(file_obj.fread(), b"downloaded")
+        file_obj.fclose()
+
+    def test_ndic_is_remote_even_without_a_location_type(self):
+        doc = self._doc_with_locations([{"location": self.NDIC}])
+        self.db.add_docs([doc], validate=False)
+        handler, calls = self._recording_handler()
+
+        self.db.open_doc(doc.id(), "filename1.ext", custom_file_handler=handler)
+        self.assertEqual(len(calls), 1)
+
+    def test_a_local_file_is_preferred_and_the_handler_is_not_called(self):
+        path = self._local_file()
+        doc = self._doc_with_locations(
+            [
+                {"location": self.NDIC, "location_type": "ndicloud"},
+                {"location": path, "location_type": "file"},
+            ]
+        )
+        self.db.add_docs([doc], validate=False)
+        handler, calls = self._recording_handler()
+
+        file_obj = self.db.open_doc(
+            doc.id(), "filename1.ext", custom_file_handler=handler
+        )
+        self.assertEqual(calls, [], "a local file should not be re-downloaded")
+        file_obj.fopen()
+        self.assertEqual(file_obj.fread(), b"payload")
+        file_obj.fclose()
+
+    def test_a_raising_handler_becomes_a_FileAccessError(self):
+        doc = self._doc_with_locations(
+            [{"location": self.NDIC, "location_type": "ndicloud"}]
+        )
+        self.db.add_docs([doc], validate=False)
+
+        def handler(dest_path, source_path):
+            raise RuntimeError("cloud is down")
+
+        with self.assertRaises(FileAccessError) as caught:
+            self.db.open_doc(doc.id(), "filename1.ext", custom_file_handler=handler)
+        self.assertEqual(
+            caught.exception.identifier,
+            "DID:SQLITEDB:FileRetrieval:CustomHandlerFailed",
+        )
+        self.assertIn("cloud is down", str(caught.exception))
+
+    def test_a_handler_that_produces_nothing_is_an_error(self):
+        """MATLAB checks isfile(destPath) after the handler returns."""
+        doc = self._doc_with_locations(
+            [{"location": self.NDIC, "location_type": "ndicloud"}]
+        )
+        self.db.add_docs([doc], validate=False)
+        handler, _ = self._recording_handler(produce=False)
+
+        with self.assertRaises(FileAccessError) as caught:
+            self.db.open_doc(doc.id(), "filename1.ext", custom_file_handler=handler)
+        self.assertEqual(
+            caught.exception.identifier,
+            "DID:SQLITEDB:FileRetrieval:CustomHandlerFailed",
+        )
+        self.assertIn("did not produce a file", str(caught.exception))
+
+    def test_without_a_handler_a_remote_location_is_unsupported(self):
+        doc = self._doc_with_locations(
+            [{"location": self.NDIC, "location_type": "ndicloud"}]
+        )
+        self.db.add_docs([doc], validate=False)
+
+        with self.assertRaises(FileAccessError) as caught:
+            self.db.open_doc(doc.id(), "filename1.ext")
+        self.assertEqual(
+            caught.exception.identifier,
+            "DID:SQLITEDB:FileRetrieval:UnsupportedType",
+        )
+
+    def test_a_second_location_is_tried_when_the_first_fails(self):
+        doc = self._doc_with_locations(
+            [
+                {"location": "ndic://d-123/gone", "location_type": "ndicloud"},
+                {"location": self.NDIC, "location_type": "ndicloud", "uid": "f-abc"},
+            ]
+        )
+        self.db.add_docs([doc], validate=False)
+
+        def handler(dest_path, source_path):
+            if source_path.endswith("gone"):
+                raise RuntimeError("404")
+            with open(dest_path, "wb") as handle:
+                handle.write(b"second")
+
+        file_obj = self.db.open_doc(
+            doc.id(), "filename1.ext", custom_file_handler=handler
+        )
+        file_obj.fopen()
+        self.assertEqual(file_obj.fread(), b"second")
+        file_obj.fclose()
+
+    def test_a_stale_download_is_not_served_as_fresh(self):
+        """temppath persists, so an earlier download must not stand in.
+
+        Caught by the suite: uids are unique per document, not globally, so a
+        leftover file at the same destination made a handler that produced
+        nothing look like it had succeeded -- and would have served one
+        document's bytes for another.
+        """
+        from did.common import PathConstants
+
+        doc = self._doc_with_locations(
+            [{"location": self.NDIC, "location_type": "ndicloud", "uid": "f-abc"}]
+        )
+        self.db.add_docs([doc], validate=False)
+
+        stale = os.path.join(PathConstants().temppath, "f-abc")
+        with open(stale, "wb") as handle:
+            handle.write(b"stale bytes from an earlier download")
+        self.addCleanup(lambda: os.path.exists(stale) and os.remove(stale))
+
+        handler, _ = self._recording_handler(produce=False)
+        with self.assertRaises(FileAccessError) as caught:
+            self.db.open_doc(doc.id(), "filename1.ext", custom_file_handler=handler)
+        self.assertEqual(
+            caught.exception.identifier,
+            "DID:SQLITEDB:FileRetrieval:CustomHandlerFailed",
+        )
+
+    def test_a_fresh_download_replaces_a_stale_one(self):
+        from did.common import PathConstants
+
+        doc = self._doc_with_locations(
+            [{"location": self.NDIC, "location_type": "ndicloud", "uid": "f-abc"}]
+        )
+        self.db.add_docs([doc], validate=False)
+
+        stale = os.path.join(PathConstants().temppath, "f-abc")
+        with open(stale, "wb") as handle:
+            handle.write(b"stale")
+        self.addCleanup(lambda: os.path.exists(stale) and os.remove(stale))
+
+        handler, _ = self._recording_handler(content=b"fresh")
+        file_obj = self.db.open_doc(
+            doc.id(), "filename1.ext", custom_file_handler=handler
+        )
+        file_obj.fopen()
+        self.assertEqual(file_obj.fread(), b"fresh")
+        file_obj.fclose()

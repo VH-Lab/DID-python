@@ -791,3 +791,62 @@ Two things surfaced while fixing it, both now corrected:
   content back.
 
 Coverage: `tests/test_open_doc_locations.py` (8 tests).
+
+## File retrieval: the hook, implemented 2026-08-28
+
+**Policy: only `ndic://` is supported. DID does not download anything itself,
+in either language, and plain `http(s)` URLs are deliberately not handled.**
+Retrieval is supplied by the caller through a handler, which is how NDI
+already does it.
+
+Both repos now behave the same way. `open_doc` walks the document's locations,
+returns the first that resolves to a readable local file, and hands any remote
+location to the handler:
+
+| | MATLAB | Python |
+|---|---|---|
+| Parameter | `'customFileHandler', @fn` (name-value) | `custom_file_handler=fn` |
+| Called as | `fn(destPath, sourcePath)` | `fn(dest_path, source_path)` |
+| Contract | must produce a file at `destPath` | same, and it is checked |
+| No handler, remote location | `DID:SQLITEDB:FileRetrieval:UnsupportedType` | same identifier, via `FileAccessError` |
+| Handler failed | `…:CustomHandlerFailed` | same identifier |
+
+**MATLAB change**: the `url` branch of `do_open_doc`, which called
+`ndi.cloud.api.files.getFile` directly, was removed. It made DID depend on NDI
+being on the path — a lower-level package reaching for a higher-level one —
+for a case NDI already covers through the hook. Every non-`file` type now goes
+to the handler.
+
+**Python change**: `open_doc` gained the `custom_file_handler` parameter, so
+NDI-python has somewhere to supply retrieval without DID acquiring a network
+dependency.
+
+### Two deviations that remain
+
+- **No cache.** MATLAB adds the retrieved file to the file cache and serves
+  later opens from there. Python has none (see "The file cache"), so it
+  downloads into `PathConstants.temppath` and **re-fetches on every open**.
+  This is the concrete cost of the missing cache, and the reason to build it
+  now that something can actually download.
+- **`do_add_doc` still calls into NDI.** DID-matlab's *ingestion* path
+  (`do_add_doc`, not `do_open_doc`) also calls
+  `ndi.cloud.api.files.getFile` for a non-`file` location, so DID-matlab's
+  dependency on NDI is reduced but **not gone**. `do_add_doc` takes no handler
+  parameter, so closing it means plumbing one through `add_docs` and the
+  abstract base — a real API change, not done here. It is rarely reached,
+  because `ingest` defaults to 0 for `url` and `ndicloud` locations, which is
+  presumably why it went unnoticed.
+
+### A hazard the tests caught
+
+`temppath` persists between calls and a location's `uid` is unique per
+document, not globally. The first implementation checked only whether a file
+existed at the destination after the handler ran — so a leftover download from
+an earlier open made a handler that produced *nothing* look like it had
+succeeded, and would have served one document's bytes for another. The
+destination is now cleared before the handler is invoked. Covered by
+`test_a_stale_download_is_not_served_as_fresh` and
+`test_a_fresh_download_replaces_a_stale_one`.
+
+Coverage: `tests/test_open_doc_locations.py`, 23 tests. MATLAB has none for
+this path.
