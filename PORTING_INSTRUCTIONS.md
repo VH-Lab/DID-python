@@ -178,45 +178,22 @@ the same audit item, which is already in this repo:
 **No port needed.** The older `websave` → `ndi.cloud.api.files.getFile` change
 (`926c430`) also needs no port; see *Not Yet Ported* below.
 
-### `database` — cannot be ported yet (`out_of_sync: true`)
+### `database` — ported: Python now has schema validation
 
 MATLAB PR #153 (`c561c13`..`0142532`, 2026-07-25) changed
 `validate_doc_vs_schema()`:
 
 - A schema-declared `depends_on` entry is required to be **present** only when
-  the schema marks it `mustbenotempty`. Optional dependencies may now be
-  omitted from a document without raising
-  `DID:Database:ValidationDependsOn`.
+  the schema marks it `mustbenotempty`. Optional dependencies may be omitted
+  without raising `DID:Database:ValidationDependsOn`.
 - A missing optional dependency is reported through a new
-  `DID:Database:MissingOptionalDependency` warning, which is **opt-in**: it is
-  emitted only when the `DID_FORCE_VALIDATION_WARNINGS` environment variable is
-  set to a non-zero value, and when enabled it is forced through a caller's
-  global `warning('off')`.
-- The MATLAB test suite was reclassified accordingly: the `item1`/`item2`/
-  `item3` removers and the `invalid name` dependency modifier moved from
-  `TestInvalidModification` to `TestValidModification`, and a new
-  `TestOptionalDependencyWarning` covers both sides of the env-var gate.
+  `DID:Database:MissingOptionalDependency` warning, **opt-in**: emitted only
+  when `DID_FORCE_VALIDATION_WARNINGS` is set to a non-zero value, and then
+  forced through a caller's global `warning('off')`.
 
-**Python has no counterpart to change.** There is no document-vs-schema
-validation anywhere in DID-python: `Database.add_docs()` adds documents without
-validating them, `did.database` has no `validate_docs` /
-`validate_doc_vs_schema`, and `Document` has no `validate` (see the comment at
-the end of `document.py`). Python's `tests/test_valid_modification.py` and
-`tests/test_invalid_modification.py` are not the schema-modification suites
-their MATLAB namesakes are — they exercise branch/document add-remove behavior —
-so the MATLAB test reclassification has no Python analogue either.
-
-Because there is no required-dependency check to relax, there is no code path
-in which PR #153 is observable in Python. This is a pre-existing capability gap
-that PR #153 widens, not a regression it introduced. The `database` bridge entry
-now records `matlab_current_hash: 0142532` with `out_of_sync: true`, and
-`validate_docs` / `validate_doc_vs_schema` are listed there as not implemented.
-
-**To close this gap**, port the validation subsystem as one unit — it needs
-schema loading, recursive superclass validation, and per-field type checks, all
-of which `Document.validate` also requires. When it is ported, the
-optional-dependency semantics above must be implemented at the same time so the
-two languages agree on which documents are valid.
+Python had **no document-vs-schema validation at all**, so there was nothing to
+port the change into. Rather than record a permanent gap, the validation
+subsystem was ported (2026-08-28). See *Validation* below.
 
 ### Bridge coverage gaps found and fixed
 
@@ -289,15 +266,96 @@ handled correctly by Python:
   `must_be_valid_permission()` already accepts `rb`, `wb`, `ab`, etc.
   **Already in sync.**
 
+## Validation
+
+`src/did/validate.py` is the Python counterpart of the validation MATLAB
+performs in `did.database`. The live entry point is the same in both languages:
+`database.add_docs`, which validates by default (`validate=True` in Python,
+`'Validate', true` in MATLAB) and can be turned off per call.
+
+| MATLAB | Python |
+|---|---|
+| `database.validate_docs` | `Database.validate_docs` → `validate.validate_docs` |
+| `database.get_document_schema` | `validate.get_document_schema` (+ `resolve_definition_path`) |
+| `database.validate_doc_vs_schema` | `validate.validate_doc_vs_schema` |
+| `database.validate_field_type_and_value` | `validate.validate_field_type_and_value` |
+| `database.checkfiles` | `validate.check_files` |
+| `database.isfilenamematch` | `validate.is_filename_match` |
+| `database.canfindonefile` | `validate.can_find_one_file` |
+
+What it checks, per document: `document_class` exists and carries a non-empty
+`class_name`, `property_list_name` and `class_version`; a document whose
+`document_class` has no `validation` field is skipped (that is how a class opts
+out); otherwise the schema is loaded and the document is checked for classname,
+superclasses (recursing into each superclass schema), `depends_on`, `file`, and
+each class-specific property list, with every field checked against its declared
+type — `integer`, `double`, `matrix`, `timestamp`, `char`/`string`, `did_uid`,
+`structure`, `cell`.
+
+Failures raise `ValidationError`, which carries MATLAB's error identifier as
+`.identifier` (e.g. `'DID:Database:ValidationDependsOn'`), so both languages can
+be branched on with the same strings. PR #153's semantics are included:
+optional dependencies may be absent, and
+`MissingOptionalDependencyWarning` is raised only under
+`DID_FORCE_VALIDATION_WARNINGS`. MATLAB forces that warning past a global
+`warning('off')` by switching the identifier on for the duration; Python's
+equivalent is a `catch_warnings` block with an `always` filter.
+
+Deviations, all recorded in the bridge YAML:
+
+- **Timestamps** — MATLAB parses via `java.time.LocalDateTime`, Python via
+  `datetime.fromisoformat` with `strptime` fallbacks.
+- **`can_find_one_file`** — MATLAB pre-checks an `http` location with a HEAD
+  request. Python has no URL download path, so a URL counts as findable and is
+  resolved when actually read (which is MATLAB's own behavior for any other
+  non-file location).
+- **Journalling** — MATLAB's `add_docs` disables SQLite journalling when
+  validation is off. Python does not; its `sqlite3` connection is managed
+  differently.
+
+### Two bugs validation exposed immediately
+
+Turning validation on surfaced two divergences that had been invisible:
+
+**1. Document IDs were the wrong format.** `base.schema.json` types `base.id` as
+`did_uid`, which requires MATLAB's `did.ido` format: 16 hex digits, an
+underscore, 16 more. Python's `IDO.unique_id()` returned a **UUID4**, so *every*
+Python-generated document was schema-invalid and would have been rejected by
+MATLAB's `add_docs`. UUID4 is also not sortable by creation time, which
+`did.ido` guarantees. `ido.py` now generates
+`num2hex(serial_date_number) + '_' + num2hex(rand)` like MATLAB, and `is_valid`
+enforces MATLAB's rule. (The `ido` bridge entry had recorded this divergence as
+acceptable because "both guarantee uniqueness" — it was not.) Deviation: MATLAB
+takes the serial date number from `clock`, which is local time; Python uses UTC,
+as `did.ido`'s own documentation specifies. IDs are only ever compared for
+equality across languages, never parsed back into a time.
+
+**2. Documents were built from the wrong file.**
+`Document.read_blank_definition` read `database_schema/<class>.schema.json` —
+the *validation schema* — as though it were the class definition. A new document
+therefore carried the schema's field-descriptor list as its property list,
+superclasses as bare strings, and no `document_class.validation` at all, so
+there was no pointer to validate against. It now reads
+`database_documents/<class>.json` and merges superclass definitions recursively
+like MATLAB's `readblankdefinition`, so a `demoB` document carries the `base`,
+`demoA` and `demoB` property lists. Fixing that in turn exposed
+`_reset_file_info`, which only cleared `files.file_info` when it was *absent*
+and so let a definition's template file entries (`demoFile.json` ships two) leak
+into every new document; it now clears unconditionally, as MATLAB does.
+
+Coverage is in `tests/test_validation.py` (34 tests), mirroring MATLAB's
+`TestOptionalDependencyWarning` and the reclassified `depends_on` rows of
+`TestValidModification` / `TestInvalidModification`.
+
 ## Not Yet Ported from MATLAB
 
-These MATLAB features do not yet have Python counterparts:
+These MATLAB features do not yet have Python counterparts. (Schema
+validation was ported 2026-08-28 and is no longer listed; MATLAB's
+`document.validate` is dead code and is deliberately not ported — see the
+document entry in `bridge.yaml`.)
 
 | MATLAB feature | Bridge file | Priority |
 |---|---|---|
-| `database.validate_docs` | bridge.yaml | High |
-| `database.validate_doc_vs_schema` (incl. optional `depends_on` semantics and the `DID_FORCE_VALIDATION_WARNINGS`-gated warning, MATLAB PR #153) | bridge.yaml | High |
-| `document.validate` | bridge.yaml | Medium |
 | `database.exist_doc` | bridge.yaml | Medium |
 | `binaryTable` write methods | bridge_file.yaml | Medium |
 | `fileCache` cache operations (`addFile`, `removeFile`, `isFile`, `fileList`, `resizeAndAdd`, `touch`, `clear`) — and collapsing the duplicate `FileCache` in `common.py` and `file.py` so `get_cache()` returns a working cache | bridge_file.yaml | Medium |

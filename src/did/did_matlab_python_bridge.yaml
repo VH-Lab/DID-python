@@ -31,28 +31,23 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "26ad723"
-    matlab_current_hash: "0142532"
+    matlab_last_sync_hash: "0142532"
     python_path: "did/database.py"
     python_class: "Database"
     inherits: "abc.ABC"
-    out_of_sync: true
-    out_of_sync_reason: >
-      MATLAB commits c561c13..0142532 (PR #153, 2026-07-25) changed
-      validate_doc_vs_schema(): a schema-declared depends_on entry is now
-      required to be present only when the schema marks it
-      mustbenotempty; optional dependencies may be omitted from a document,
-      and a missing one is reported through the opt-in
-      DID:Database:MissingOptionalDependency warning (emitted only when the
-      DID_FORCE_VALIDATION_WARNINGS environment variable is set to a
-      non-zero value). Python cannot mirror this yet: it has no
-      document-vs-schema validation at all. Database.add_docs() adds
-      documents without validating them, so there is no required-dependency
-      check to relax and no code path in which the change is observable.
-      This is a pre-existing capability gap that PR #153 widens, not a
-      regression introduced by it -- see validate_docs /
-      validate_doc_vs_schema below and the "Not Yet Ported" table in
-      PORTING_INSTRUCTIONS.md.
+    out_of_sync: false
+    sync_notes: >
+      Schema validation was ported on 2026-08-28, closing what had been the
+      largest capability gap between the two languages. Python previously had
+      no document-vs-schema validation at all, so MATLAB PR #153
+      (c561c13..0142532) had nothing to port into. The validator now lives in
+      did/validate.py and is driven from Database.add_docs, which validates by
+      default exactly as MATLAB's does, including PR #153's semantics: a
+      schema-declared depends_on entry is required to be present only when the
+      schema marks it mustbenotempty, optional ones may be omitted, and a
+      missing optional dependency raises the opt-in
+      MissingOptionalDependencyWarning gated on the
+      DID_FORCE_VALIDATION_WARNINGS environment variable.
 
     properties:
       - name: connection
@@ -314,48 +309,88 @@ classes:
         input_arguments:
           - name: document_objs
             type_matlab: "cell of did.document"
-            type_python: "(not implemented)"
+            type_python: "list[Document] | list[dict]"
         decision_log: >
-          Present in MATLAB (called from add_docs when the Validate option
-          is on). It checks that each document has document_class /
-          class_name / property_list_name / class_version, loads the
-          class's validation schema, and hands off to
-          validate_doc_vs_schema. Python's Database.add_docs() performs no
-          validation. Not yet ported.
+          MATLAB: database.validate_docs(document_objs), called from add_docs
+          when the Validate option is on. Python: Database.validate_docs(),
+          called from add_docs when validate is True (the default in both).
+          Both build all_ids as the superset of the document ids already in
+          the database and those in the batch, so a batch may depend on
+          itself; both check that each doc has a non-empty document_class
+          with class_name / property_list_name / class_version, skip any doc
+          whose document_class has no validation field, and otherwise load
+          the schema and hand off to validate_doc_vs_schema. The per-document
+          work lives in did/validate.py:validate_docs. Ported 2026-08-28.
+
+      - name: get_document_schema
+        input_arguments:
+          - name: schema_filename
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: >
+          MATLAB: database.get_document_schema. Python:
+          did/validate.py:get_document_schema, with the path resolution split
+          out into resolve_definition_path. Both expand a $PATH placeholder
+          against the definitions map and try the literal name, then
+          '.schema.json', then '_schema.json'. Ported 2026-08-28.
 
       - name: validate_doc_vs_schema
         input_arguments:
           - name: docProps
             type_matlab: "struct"
-            type_python: "(not implemented)"
+            type_python: "dict"
           - name: schemaStruct
             type_matlab: "struct"
-            type_python: "(not implemented)"
+            type_python: "dict"
           - name: all_ids
             type_matlab: "cell"
-            type_python: "(not implemented)"
+            type_python: "list[str]"
         decision_log: >
-          Present in MATLAB. Validates classname, superclasses (recursively),
-          and depends_on for one document against one schema. As of MATLAB
-          PR #153 (2026-07-25) only depends_on entries marked
-          mustbenotempty are required to be present; optional ones may be
-          missing, and a missing optional dependency raises the opt-in
-          DID:Database:MissingOptionalDependency warning gated on the
-          DID_FORCE_VALIDATION_WARNINGS environment variable. Python has no
-          equivalent. Porting it requires the schema-loading and
-          superclass-recursion machinery that Python's Document also lacks
-          (document.validate), so the two should be ported together.
-          Not yet ported.
+          Python: did/validate.py:validate_doc_vs_schema. Validates classname,
+          superclasses (recursing into each superclass schema), depends_on,
+          file, and each class-specific property list against one schema.
+          Carries MATLAB PR #153's semantics: only depends_on entries marked
+          mustbenotempty are required to be present, and a missing optional
+          dependency raises MissingOptionalDependencyWarning only when
+          DID_FORCE_VALIDATION_WARNINGS is set to a non-zero value. MATLAB
+          forces that warning past a caller's global warning('off') by
+          switching the identifier on for the duration; Python's equivalent
+          is a catch_warnings block with an 'always' filter. Failures raise
+          ValidationError carrying MATLAB's error identifier (e.g.
+          'DID:Database:ValidationDependsOn') as .identifier. Ported
+          2026-08-28.
+
+      - name: validate_field_type_and_value
+        decision_log: >
+          Python: did/validate.py:validate_field_type_and_value. Covers all
+          MATLAB types: integer, double, matrix, timestamp, char/string,
+          did_uid, structure, cell, and the unknown-type error. Deviation:
+          MATLAB parses timestamps via java.time.LocalDateTime, Python via
+          datetime.fromisoformat with strptime fallbacks -- both accept the
+          schema's ISO-8601 timestamps with an optional trailing Z. Ported
+          2026-08-28.
+
+      - name: checkfiles / isfilenamematch / canfindonefile
+        kind: static
+        decision_log: >
+          Python: did/validate.py:check_files / is_filename_match /
+          can_find_one_file. Deviation in can_find_one_file: MATLAB issues an
+          HTTP HEAD request to pre-check a URL location; Python has no URL
+          download path (see the sqlitedb entry), so a URL counts as findable
+          and is resolved when actually read -- which is also MATLAB's
+          behavior for any non-file, non-http location. Ported 2026-08-28.
 
     decision_log: >
       Python Database class closely mirrors MATLAB did.database.
-      A few MATLAB methods (freeze_branch, is_branch_editable,
-      display_branches, exist_doc, close_doc) are not yet ported.
-      Synchronized 2026-03-15. Re-checked 2026-08-28 against MATLAB
-      0142532: the schema-validation methods (validate_docs,
-      validate_doc_vs_schema) have no Python counterpart, so the
-      optional-depends_on change in MATLAB PR #153 has nothing to port
-      into; recorded in out_of_sync_reason above.
+      Schema validation (validate_docs, get_document_schema,
+      validate_doc_vs_schema, validate_field_type_and_value, checkfiles and
+      friends) was ported 2026-08-28 and brought the entry up to MATLAB
+      0142532, PR #153 included. A few MATLAB methods (freeze_branch,
+      is_branch_editable, display_branches, exist_doc, close_doc) are still
+      not ported. Deviation: MATLAB's add_docs also disables SQLite
+      journalling when validation is off; Python does not, since its sqlite3
+      connection is managed differently (see the sqlitedb open_db/close_db
+      note). Synchronized 2026-03-15; validation 2026-08-28.
 
   # -----------------------------------------------------------------------
   # did.document
@@ -471,9 +506,17 @@ classes:
         input_arguments:
           - name: did_database
             type_matlab: "did.database"
-            type_python: "(not implemented)"
+            type_python: "(deliberately not ported)"
         decision_log: >
-          Present in MATLAB. Not yet ported to Python.
+          DO NOT PORT. Verified 2026-08-28: MATLAB's did.document.validate is
+          dead code. It calls did.validate(), and there is no validate.m
+          anywhere in DID-matlab -- so calling it raises (with nargin==1,
+          "You must pass in an instance of did.database"; with a database
+          argument, an undefined-function error). Its only callers are the
+          retired tests under tests/+did/+test/_old/. This entry previously
+          read "Not yet ported", which implied a real capability worth
+          mirroring. Document validation in both languages goes through
+          database.add_docs -> validate_docs; see the database entry.
 
       - name: plus
         decision_log: >
@@ -490,12 +533,54 @@ classes:
         decision_log: >
           MATLAB: document.readblankdefinition(jsonfilelocationstring).
           Python: Document.read_blank_definition(json_file_location_string).
-          Synchronized 2026-03-16.
+          Rewritten 2026-08-28 to match MATLAB. It previously read
+          database_schema/<class>.schema.json -- the *validation schema* --
+          as though it were the class definition, which meant a new document
+          carried the schema's field-descriptor list as its property list,
+          superclasses as bare name strings, and no document_class.validation
+          at all. It now reads the definition
+          (database_documents/<class>.json) and merges each superclass
+          definition recursively, as MATLAB does: superclass lists unioned by
+          definition string, depends_on unioned by name, and every other
+          property list merged in without overwriting the subclass. A demoB
+          document therefore carries the base, demoA and demoB property lists,
+          and every document carries the validation pointer add_docs needs.
+          The old schema-file path is retained as a fallback for callers that
+          ship only a schema.
+
+      - name: readjsonfilelocation
+        kind: static
+        decision_log: >
+          MATLAB: document.readjsonfilelocation. Python:
+          Document.read_json_file_location, resolving via
+          did/validate.py:resolve_definition_path. Handles a full path, a
+          $PATH-relative reference, and a bare class name searched under the
+          definition directories. Deviation: MATLAB also accepts a URL and
+          webreads it; Python has no URL download path (see the sqlitedb
+          entry), so that case is unsupported. Ported 2026-08-28.
+
+      - name: reset_file_info
+        decision_log: >
+          MATLAB: document.reset_file_info. Python:
+          Document._reset_file_info. Both clear files.file_info for a newly
+          created document whenever a files field exists. Fixed 2026-08-28:
+          Python previously only set file_info when it was *absent*, so the
+          template file_info entries that a definition may ship (demoFile.json
+          ships two) survived into every new document. That was invisible
+          while read_blank_definition was reading the schema file, which has
+          no files field. MATLAB's emptystruct('name','locations') is an empty
+          struct *array*, so the Python equivalent is [].
 
     decision_log: >
-      Core functionality is synchronized. MATLAB has additional
-      numbered dependency methods (dependency_value_n, etc.) and
-      schema validation (validate) not yet ported. Synchronized 2026-03-16.
+      Core functionality is synchronized. Document construction was brought
+      in line with MATLAB on 2026-08-28 (see readblankdefinition,
+      readjsonfilelocation and reset_file_info above), which is what makes
+      schema validation possible -- documents now carry
+      document_class.validation and their inherited property lists. MATLAB
+      still has numbered dependency methods (dependency_value_n, etc.) that
+      are not ported. MATLAB's validate method is dead code and is
+      deliberately not ported. Synchronized 2026-03-16; construction and
+      validation 2026-08-28.
 
   # -----------------------------------------------------------------------
   # did.query
@@ -578,9 +663,9 @@ classes:
             type_matlab: "char (optional)"
             type_python: "str (optional)"
         decision_log: >
-          MATLAB generates 33-char hex ID. Python generates UUID4.
-          Both produce globally unique identifiers with different formats.
-          Synchronized 2026-03-15.
+          MATLAB: ido(id_value) stores the given id. Python: IDO(id_value)
+          now does the same -- it previously regenerated an id that failed
+          is_valid, silently discarding a caller's id. Ported 2026-08-28.
 
       - name: id
         input_arguments: []
@@ -592,8 +677,14 @@ classes:
       - name: unique_id
         kind: static
         decision_log: >
-          MATLAB: 33-char hex ID. Python: UUID4.
-          Synchronized 2026-03-15.
+          Both now produce num2hex(serial_date_number) + '_' + num2hex(rand):
+          16 lowercase hex digits, an underscore, and 16 more. Python
+          previously returned a UUID4 -- see the class decision_log below.
+          Deviation: MATLAB derives the serial date number from clock (local
+          time), Python from UTC, as did.ido's own documentation specifies.
+          IDs are only ever compared for equality across the two languages,
+          never parsed back into a time, and UTC keeps them sortable across
+          machines in different time zones. Ported 2026-08-28.
 
       - name: isvalid
         kind: static
@@ -605,12 +696,21 @@ classes:
           - name: b
             type_python: "bool"
         decision_log: >
-          MATLAB: ido.isvalid(id). Python: IDO.is_valid(id).
-          Snake-case rename. Synchronized 2026-03-15.
+          MATLAB: ido.isvalid(id). Python: IDO.is_valid(id). Snake-case
+          rename. Both now enforce the same rule: 16 hex digits (0-9a-f), an
+          underscore, and 16 more, 33 characters in total. Python previously
+          matched a UUID4 pattern. Ported 2026-08-28.
 
     decision_log: >
-      ID format differs (MATLAB hex vs Python UUID4) but both guarantee
-      uniqueness. Synchronized 2026-03-15.
+      IN SYNC as of 2026-08-28. This entry previously recorded the ID format
+      difference (MATLAB 33-char hex vs Python UUID4) as acceptable because
+      "both guarantee uniqueness". That was wrong, and adding schema
+      validation to Python exposed it immediately: base.schema.json types
+      base.id as did_uid, which requires exactly the MATLAB format, so every
+      Python-generated document was schema-invalid and would be rejected by
+      MATLAB's add_docs (which validates by default). UUID4 is also not
+      sortable by creation time, which did.ido guarantees. Python now
+      generates the MATLAB format.
 
   # -----------------------------------------------------------------------
   # did.documentservice  (abstract)
