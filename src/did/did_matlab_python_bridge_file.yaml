@@ -265,6 +265,10 @@ classes:
   # -----------------------------------------------------------------------
   # did.file.binaryTable
   # -----------------------------------------------------------------------
+  # NOTE (2026-08-28): nothing in src/ or tests/ constructs a BinaryTable, so
+  # none of the entries below are exercised by either test suite. That is why
+  # a stubbed read_row could sit under a "Synchronized" note unnoticed. Treat
+  # the whole class as unverified against MATLAB until something uses it.
   - name: binaryTable
     type: class
     matlab_path: "+did/+file/binaryTable.m"
@@ -386,9 +390,17 @@ classes:
       - name: readRow
         python_name: read_row
         decision_log: >
-          MATLAB: readRow(row, col). Python: read_row(row, col).
-          MATLAB now uses 'rb' permission for reading.
-          Synchronized 2026-03-15.
+          Synchronized 2026-03-15; NOT synchronized in behavior, corrected
+          2026-08-28. MATLAB's readRow decodes the row into typed data using
+          the table's recordType and elementsPerColumn. Python's read_row seeks
+          to the right offset and then returns the raw bytes of a single
+          column: it never maps the MATLAB type strings onto struct formats and
+          ignores elements_per_column entirely. Its own comments say as much
+          ("Simplified implementation", "Placeholder for reading data"). The
+          two return different things for the same call.
+
+          Impact is low today only because nothing uses BinaryTable -- see the
+          class-level note.
 
       - name: insertRow
         python_name: ~   # not ported

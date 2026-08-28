@@ -135,7 +135,16 @@ classes:
           - name: parent_branch_id
             type_matlab: "char"
             type_python: "str"
-        decision_log: "Exact match. Synchronized 2026-03-15."
+        decision_log: >
+          Synchronized 2026-03-15; NOT an exact match, corrected 2026-08-28.
+          Deviation found 2026-08-28: Python's method body carries a
+          "# Validation logic would go here" placeholder where MATLAB calls
+          validate_branch_id. In practice the SQLite schema is a backstop -- a
+          duplicate branch_id hits a UNIQUE constraint and a missing parent a
+          FOREIGN KEY constraint -- so the data stays correct, but the caller
+          gets a bare sqlite3.IntegrityError instead of MATLAB's
+          DID:Database:* identifier. See the note on error identifiers in
+          PORTING_INSTRUCTIONS.md.
 
       - name: set_branch
         python_name: set_branch
@@ -143,7 +152,15 @@ classes:
           - name: branch_id
             type_matlab: "char"
             type_python: "str"
-        decision_log: "Exact match. Synchronized 2026-03-15."
+        decision_log: >
+          Synchronized 2026-03-15; NOT an exact match, corrected 2026-08-28.
+          Deviation found 2026-08-28: Python's method body carries a
+          "# Validation logic would go here" placeholder where MATLAB calls
+          validate_branch_id. Python accepts a branch_id that does not exist and
+          sets current_branch_id to it; the error surfaces later, at the next
+          add_docs ("Branch '<id>' does not exist."). MATLAB fails fast at
+          set_branch. Fail-deferred rather than fail-silent, but the two
+          languages report the mistake at different points.
 
       - name: get_branch
         python_name: get_branch
@@ -181,7 +198,26 @@ classes:
           - name: branch_id
             type_matlab: "char"
             type_python: "str"
-        decision_log: "Exact match. Synchronized 2026-03-15."
+        decision_log: >
+          Synchronized 2026-03-15; NOT an exact match, corrected 2026-08-28.
+          This is the most divergent of the four stubbed branch methods.
+          Deviation found 2026-08-28: Python's method body carries a
+          "# Validation logic would go here" placeholder where MATLAB calls
+          validate_branch_id. MATLAB's delete_branch guards three things; Python
+          none of them:
+
+          1. Branch must exist. Python deleting a non-existent branch is a
+             SILENT NO-OP -- nothing raises and nothing changes, so a script
+             deleting the wrong id gets no signal. There is no schema backstop
+             here, because there is no row to constrain. This is the one case
+             with no safety net.
+          2. Branch must not have sub-branches. Enforced in Python only by a
+             SQLite FOREIGN KEY, which raises sqlite3.IntegrityError with no
+             .identifier, where MATLAB raises DID:Database:ParentBranch.
+          3. Branch must not be frozen. Absent in Python, but immaterial
+             across languages -- see freeze_branch.
+
+          Verified empirically 2026-08-28.
 
       - name: freeze_branch
         python_name: ~   # not ported
@@ -190,7 +226,14 @@ classes:
             type_matlab: "char"
             type_python: "(not implemented)"
         decision_log: >
-          Present in MATLAB. Not yet ported to Python.
+          Present in MATLAB. Not ported. Confirmed Low priority 2026-08-28,
+          with the evidence that was previously missing: MATLAB's
+          frozen_branch_ids is an in-memory property that is never written to
+          the database (no implementation touches it), and the only place it is
+          enforced is delete_branch. So a freeze does not survive a session and
+          cannot cross languages -- one process freezing a branch has no effect
+          on any other. The feature is simply absent in Python rather than
+          divergent.
 
       - name: is_branch_editable
         python_name: ~   # not ported
@@ -199,7 +242,11 @@ classes:
             type_matlab: "char"
             type_python: "(not implemented)"
         decision_log: >
-          Present in MATLAB. Not yet ported to Python.
+          Present in MATLAB (not frozen AND no sub-branches). Not ported.
+          Confirmed Low 2026-08-28: the frozen half cannot cross languages
+          (see freeze_branch) and the sub-branch half is enforced in Python by
+          a SQLite FOREIGN KEY, so the invariant holds even without the
+          predicate. What is missing is the ability to *ask* before trying.
 
       - name: display_branches
         python_name: ~   # not ported
@@ -221,6 +268,10 @@ classes:
 
       - name: get_doc_ids
         python_name: get_doc_ids
+        deviation_note: >
+          Carries the same "# Validation logic would go here" placeholder as
+          the branch methods above; MATLAB validates the branch_id first.
+          Noted 2026-08-28.
         input_arguments:
           - name: branch_id
             type_matlab: "char"
@@ -570,6 +621,12 @@ classes:
           Python: set_properties(**kwargs). Snake-case rename.
           Synchronized 2026-03-16.
 
+          Qualified 2026-08-28: the Python body describes itself as "a
+          simplified way to set properties" and notes that a full
+          implementation would differ. Not audited field-by-field against
+          MATLAB's version; treat the parity claim as unverified rather than
+          established.
+
       - name: dependency_value
         python_name: dependency_value
         input_arguments:
@@ -702,7 +759,22 @@ classes:
 
       - name: eq
         python_name: ~   # not ported
+        do_not_port: true
         decision_log: >
+          DO NOT PORT -- dead code in MATLAB, reclassified 2026-08-28. It was
+          listed as "not yet ported", which invited someone to port a bug.
+          MATLAB's eq compares
+          document_properties.did_document.id, and no such field exists
+          anywhere in either repo: documents carry base.id. Calling it on a
+          real document raises "Reference to non-existent field". Same status
+          as document.validate.
+
+          Note for Python callers: with no __eq__, `doc_a == doc_b` falls back
+          to identity, so two Document objects holding the same base.id compare
+          unequal. If an id comparison is ever wanted, implement it against
+          base.id rather than mirroring MATLAB here.
+
+          Original note follows:
           MATLAB operator overload for comparing document IDs.
           Not ported to Python (use doc.id() == other.id()).
 

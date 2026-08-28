@@ -420,50 +420,105 @@ document entry in `bridge.yaml`.)
 | `database.is_branch_editable` | bridge.yaml | Low |
 | `database.display_branches` | bridge.yaml | Low |
 | `database.close_doc` | bridge.yaml | Low |
-| `document.dependency_value_n` / `add_dependency_value_n` / `remove_dependency_value_n` — enumerated dependency lists; see below | bridge.yaml | **High** |
 | `binaryTable.compare` (only needed by `findRow`, also unported) | bridge_file.yaml | Low |
 | `query.searchcellarray2searchstructure` handles only numbers and strings; MATLAB also handles cells, structs and logicals | bridge.yaml | Low |
 
-### Enumerated dependency lists (`name_1`, `name_2`, ...)
+### Enumerated dependency lists (`name_1`, `name_2`, ...) — ported 2026-08-28
 
-MATLAB's three `_n` document methods implement variable-length dependency
-lists: `dependency_value_n` walks `name_1`, `name_2`, ... until one is missing
-and returns the values; `add_dependency_value_n` appends `name_(n+1)`;
-`remove_dependency_value_n` deletes `name_n` and renumbers the rest. These were
-listed as Low priority. That was wrong -- retested 2026-08-28 and raised to
-High, because the missing half is the *write* side and it fails silently.
+`dependency_value_n`, `add_dependency_value_n` and `remove_dependency_value_n`
+were listed as Low priority. That was wrong. They were ported on 2026-08-28
+after testing showed the missing half was the *write* side, and that it failed
+silently:
 
-Python has only exact-name `dependency_value` / `set_dependency_value`, and:
+1. **Reading**: `dependency_value('item')` raised on a document holding
+   `item_1`, `item_2`, `item_3` — a caller had to guess suffixes and probe.
+2. **Writing**: the only way to append was
+   `set_dependency_value(name, value, error_if_not_found=False)`, which wrote
+   an entry named literally `item`, not `item_4`.
+3. **Neither validator caught it.** The schema declares the un-enumerated stem
+   and `_strip_enumeration_suffix('item')` returns `'item'`, so the malformed
+   entry matched the stem. Building both documents and running `validate_docs`
+   confirmed: the well-formed list and the corrupted one *both* pass.
+4. **MATLAB then could not see it.** `dependency_value_n` stops at the first
+   gap, so the entry Python wrote was invisible — silent cross-language data
+   loss on an ordinary call, with no error on either side.
 
-1. **Reading**: `dependency_value('item')` raises `ValueError` on a document
-   holding `item_1`, `item_2`, `item_3`. A caller must guess the suffixes and
-   probe until one misses; there is no way to ask how many there are.
-2. **Writing**: the only way to add another dependency of an existing kind is
-   `set_dependency_value(name, value, error_if_not_found=False)`, which
-   appends an entry named literally `item` -- not `item_4`.
-3. **Neither validator catches it.** The schema declares the un-enumerated
-   stem, and `_strip_enumeration_suffix('item')` returns `'item'`, so the
-   malformed entry matches the stem and validates clean in both languages.
-4. **MATLAB then cannot see it.** `dependency_value_n('item')` enumerates
-   `item_1`..`item_3` and stops at the first gap, so the entry Python wrote is
-   invisible -- silent data loss across the bridge, with no error on either
-   side.
+Two things changed alongside the port. `set_dependency_value` now refuses to
+append a stem-named entry when an enumerated list exists, pointing the caller
+at `add_dependency_value_n` — a deliberate divergence, since MATLAB appends
+without complaint and that is how the corruption arose. And matching in
+`dependency_value` / `set_dependency_value` is now case-insensitive, mirroring
+MATLAB's `strcmpi`; it had been case-sensitive, so a MATLAB-written `Item_1`
+was unreachable from Python by `item_1`. Coverage is in
+`tests/test_dependency_lists.py` (23 tests); MATLAB has none for these methods.
 
-Confirmed by building both documents and running `validate_docs`: the
-well-formed list and the one Python's own API produces are *both* accepted.
+## Re-audit of the remaining Low-priority items, 2026-08-28
 
-Exposure is limited today -- nothing inside DID uses the convention (the demo
-schema's `item1`/`item2`/`item3` have no underscore, so they are plain names,
-and the `_n` methods have no MATLAB tests either) -- but it is public API for
-downstream consumers that do use `name_n` schemas. Severity is what makes this
-High: the trigger is an ordinary Python call and the failure is silent.
+Every remaining item was retested rather than taken on trust, since the
+enumerated-lists entry had been mis-ranked. The rankings below now rest on
+evidence.
 
-Two things worth doing, in order:
+### Confirmed Low, with the evidence that was missing
 
-- **Cheap mitigation, independent of the port**: make `set_dependency_value`
-  refuse to create a stem-named entry when enumerated siblings already exist,
-  so the corruption becomes an error instead of silent.
-- **The port itself**: add `dependency_value_n`, `add_dependency_value_n` and
-  `remove_dependency_value_n`, mirroring MATLAB's enumerate-until-gap
-  semantics and its renumbering on removal. Worth adding symmetry-test
-  coverage at the same time, since MATLAB has none.
+- **`freeze_branch` / `is_branch_editable`** — MATLAB's `frozen_branch_ids` is
+  an in-memory property never written to the database, enforced in exactly one
+  place (`delete_branch`). A freeze does not survive a session and cannot cross
+  languages, so this is an absent feature, not a divergence. The sub-branch
+  half of `is_branch_editable` is upheld in Python by a SQLite FOREIGN KEY
+  anyway; what is missing is the ability to *ask* before trying.
+- **`close_doc`** — a thin delegate to `do_close_doc`. Python's file objects
+  close on garbage collection.
+- **`display_branches` / `display_branch`** — display helpers, no data effect.
+- **`fileobj.fscanf` / `fprintf`** — Python uses native file I/O instead.
+
+### Re-ranked: `document.eq` is not "not yet ported", it is **do not port**
+
+MATLAB's `eq` compares `document_properties.did_document.id`. No such field
+exists anywhere in either repo — documents carry `base.id` — so calling it on a
+real document raises "Reference to non-existent field". It is dead code, like
+`document.validate`, and listing it as "not yet ported" invited someone to port
+a bug. Noted for Python callers: with no `__eq__`, `doc_a == doc_b` falls back
+to identity, so two `Document` objects holding the same `base.id` compare
+unequal. If an id comparison is ever wanted, write it against `base.id`.
+
+### New: methods marked "Exact match" whose Python side is a stub
+
+These are **not** on any gap list, because the methods exist in both languages.
+The `member` coverage check cannot catch them either — it verifies that a
+counterpart exists, not that it does the same thing. Four `Database` methods
+carry a `# Validation logic would go here` placeholder where MATLAB validates:
+
+| Method | What actually happens |
+|---|---|
+| `delete_branch` | **Deleting a non-existent branch is a silent no-op.** No schema backstop, because there is no row to constrain. The sub-branch guard exists only as a FOREIGN KEY, raising `sqlite3.IntegrityError` where MATLAB raises `DID:Database:ParentBranch`. |
+| `set_branch` | Accepts a branch that does not exist; the error surfaces later at `add_docs`. MATLAB fails fast. Fail-deferred, not fail-silent. |
+| `add_branch` | Duplicate id and missing parent are caught by UNIQUE / FOREIGN KEY constraints, so data stays correct but the error type differs. |
+| `get_doc_ids` | Same placeholder; MATLAB validates the branch id first. |
+
+Also `BinaryTable.read_row`, marked "Synchronized": MATLAB decodes the row
+using `recordType` and `elementsPerColumn`, while Python returns the raw bytes
+of one column and does neither. And `Document.set_properties` describes itself
+as "a simplified way to set properties" under a parity claim; treat it as
+unverified.
+
+Nothing in `src/` or `tests/` constructs a `BinaryTable`, a `FileCache` or a
+`DumbJsonDB`. All three are dead code, which is why a stubbed `read_row` could
+sit under a "Synchronized" note unnoticed.
+
+### Cross-cutting: the error identifier asymmetry
+
+Porting validation deliberately gave `ValidationError` an `.identifier`
+carrying MATLAB's error id, so both languages branch on the same strings. That
+pattern only half-exists: the branch and database operations above raise bare
+`ValueError` or `sqlite3.IntegrityError` with no identifier, so a caller cannot
+branch on `DID:Database:ParentBranch` the way it can on
+`DID:Database:ValidationDependsOn`. Worth closing as one piece of work rather
+than method by method.
+
+### Suggested next step
+
+Port `validate_branch_id` / `validate_doc_id` and call them from the four
+stubbed methods, raising an identifier-carrying error as the validation port
+does. That closes the one genuinely silent failure (`delete_branch`), converts
+three constraint errors into MATLAB-matching identifiers, and makes
+`set_branch` fail fast — in one change with one set of tests.
