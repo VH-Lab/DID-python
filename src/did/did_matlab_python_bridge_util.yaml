@@ -321,9 +321,58 @@ functions:
     matlab_last_sync_hash: "3aa892d"
     python_path: "did/common.py"
     python_class: "PathConstants"
+
+    # The properties are the whole content of this class -- it has no methods.
+    # They had no entries until 2026-08-28, so the one thing the class actually
+    # defines was entirely untracked.
+    properties:
+      - name: path
+        python_name: PATH
+        decision_log: >
+          The toolbox root. MATLAB: did.toolboxdir(). Python: toolboxdir().
+          Python uses UPPER_CASE for the class constants that MATLAB declares
+          in a `properties (Constant)` block. Added to the bridge 2026-08-28.
+
+      - name: defpath
+        python_name: DEFPATH
+        decision_log: >
+          <root>/example_schema/demo_schema1 in both. Added to the bridge
+          2026-08-28.
+
+      - name: definitions
+        python_name: DEFINITIONS
+        type_matlab: "containers.Map"
+        type_python: "dict[str, str]"
+        decision_log: >
+          The placeholder-to-path map ($DIDDOCUMENT_EX1, $DIDSCHEMA_EX1,
+          $DIDCONTROLLEDVOCAB_EX1). Same three keys and same targets in both.
+          Added to the bridge 2026-08-28.
+
+      - name: temppath
+        python_name: temppath
+        decision_log: >
+          Deviation: MATLAB enforces writability with a mustBeWritable
+          validator on the property itself, so it is checked once at class
+          load. Python holds the value in _temp_path and exposes temppath as a
+          @property that calls must_be_writable() on every read. Same
+          guarantee, checked at a different moment. Added to the bridge
+          2026-08-28.
+
+      - name: filecachepath
+        python_name: filecachepath
+        decision_log: >
+          Same @property-vs-validator deviation as temppath. Added to the
+          bridge 2026-08-28.
+
+      - name: preferences
+        python_name: preferences
+        decision_log: >
+          Same @property-vs-validator deviation as temppath. Added to the
+          bridge 2026-08-28.
+
     decision_log: >
       Both provide global path configuration for the DID toolkit.
-      Synchronized 2026-03-15.
+      Synchronized 2026-03-15; properties enumerated 2026-08-28.
 
   - name: getCache
     type: function

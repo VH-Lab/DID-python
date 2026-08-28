@@ -51,21 +51,25 @@ classes:
 
     properties:
       - name: connection
+        python_name: connection
         type_matlab: "char"
         type_python: "str"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: version
+        python_name: version
         type_matlab: "any"
         type_python: "None"
         decision_log: "Placeholder in both. Synchronized 2026-03-15."
 
       - name: current_branch_id
+        python_name: current_branch_id
         type_matlab: "string"
         type_python: "str"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: frozen_branch_ids
+        python_name: frozen_branch_ids
         type_matlab: "cell"
         type_python: "list"
         decision_log: >
@@ -73,16 +77,19 @@ classes:
           Synchronized 2026-03-15.
 
       - name: dbid
+        python_name: dbid
         type_matlab: "any (transient)"
         type_python: "None"
         decision_log: "Transient handle in both. Synchronized 2026-03-15."
 
       - name: debug
+        python_name: debug
         type_matlab: "logical"
         type_python: "bool"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: preferences
+        python_name: preferences
         type_matlab: "(not present)"
         type_python: "dict"
         decision_log: >
@@ -90,6 +97,7 @@ classes:
 
     methods:
       - name: database
+        python_name: __init__
         kind: constructor
         input_arguments:
           - name: connection
@@ -100,14 +108,17 @@ classes:
           Synchronized 2026-03-15.
 
       - name: open
+        python_name: open
         input_arguments: []
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: close
+        python_name: close
         input_arguments: []
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: all_branch_ids
+        python_name: all_branch_ids
         input_arguments: []
         output_arguments:
           - name: branch_ids
@@ -116,6 +127,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: add_branch
+        python_name: add_branch
         input_arguments:
           - name: branch_id
             type_matlab: "char"
@@ -126,6 +138,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: set_branch
+        python_name: set_branch
         input_arguments:
           - name: branch_id
             type_matlab: "char"
@@ -133,6 +146,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: get_branch
+        python_name: get_branch
         input_arguments: []
         output_arguments:
           - name: branch_id
@@ -140,6 +154,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: get_branch_parent
+        python_name: get_branch_parent
         input_arguments:
           - name: branch_id
             type_matlab: "char"
@@ -150,6 +165,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: get_sub_branches
+        python_name: get_sub_branches
         input_arguments:
           - name: branch_id
             type_matlab: "char"
@@ -160,6 +176,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: delete_branch
+        python_name: delete_branch
         input_arguments:
           - name: branch_id
             type_matlab: "char"
@@ -167,6 +184,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: freeze_branch
+        python_name: ~   # not ported
         input_arguments:
           - name: branch_id
             type_matlab: "char"
@@ -175,6 +193,7 @@ classes:
           Present in MATLAB. Not yet ported to Python.
 
       - name: is_branch_editable
+        python_name: ~   # not ported
         input_arguments:
           - name: branch_id
             type_matlab: "char"
@@ -183,6 +202,7 @@ classes:
           Present in MATLAB. Not yet ported to Python.
 
       - name: display_branches
+        python_name: ~   # not ported
         input_arguments:
           - name: branch_id
             type_matlab: "char"
@@ -192,6 +212,7 @@ classes:
           Display/visualization helper.
 
       - name: all_doc_ids
+        python_name: all_doc_ids
         input_arguments: []
         output_arguments:
           - name: doc_ids
@@ -199,6 +220,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: get_doc_ids
+        python_name: get_doc_ids
         input_arguments:
           - name: branch_id
             type_matlab: "char"
@@ -209,6 +231,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: add_docs
+        python_name: add_docs
         input_arguments:
           - name: document_objs
             type_matlab: "cell of did.document"
@@ -221,6 +244,7 @@ classes:
           Python accepts **kwargs. Synchronized 2026-03-15.
 
       - name: get_docs
+        python_name: get_docs
         input_arguments:
           - name: document_ids
             type_matlab: "cell | char"
@@ -237,6 +261,7 @@ classes:
           OnMissing behavior is the same. Synchronized 2026-03-16.
 
       - name: remove_docs
+        python_name: remove_docs
         input_arguments:
           - name: document_ids
             type_matlab: "cell | char"
@@ -247,6 +272,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: search
+        python_name: search
         input_arguments:
           - name: query_obj
             type_matlab: "did.query"
@@ -260,6 +286,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: run_sql_query
+        python_name: do_run_sql_query
         input_arguments:
           - name: query_str
             type_matlab: "char"
@@ -271,6 +298,8 @@ classes:
           Synchronized 2026-03-15.
 
       - name: open_doc
+        python_name: open_doc
+        python_path: "did/implementations/sqlitedb.py"
         input_arguments:
           - name: document_id
             type_matlab: "char"
@@ -286,6 +315,7 @@ classes:
           ReadOnlyFileobj. Synchronized 2026-03-15.
 
       - name: exist_doc
+        python_name: ~   # not ported
         input_arguments:
           - name: document_id
             type_matlab: "char"
@@ -298,6 +328,7 @@ classes:
           SQLiteDB has partial support via check_exist_doc pattern.
 
       - name: close_doc
+        python_name: ~   # not ported
         input_arguments:
           - name: file_obj
             type_matlab: "did.file.fileobj"
@@ -306,6 +337,7 @@ classes:
           Present in MATLAB. Python relies on garbage collection / fclose.
 
       - name: validate_docs
+        python_name: validate_docs
         input_arguments:
           - name: document_objs
             type_matlab: "cell of did.document"
@@ -323,6 +355,8 @@ classes:
           work lives in did/validate.py:validate_docs. Ported 2026-08-28.
 
       - name: get_document_schema
+        python_name: get_document_schema
+        python_path: "did/validate.py"
         input_arguments:
           - name: schema_filename
             type_matlab: "char"
@@ -335,6 +369,8 @@ classes:
           '.schema.json', then '_schema.json'. Ported 2026-08-28.
 
       - name: validate_doc_vs_schema
+        python_name: validate_doc_vs_schema
+        python_path: "did/validate.py"
         input_arguments:
           - name: docProps
             type_matlab: "struct"
@@ -361,6 +397,8 @@ classes:
           2026-08-28.
 
       - name: validate_field_type_and_value
+        python_name: validate_field_type_and_value
+        python_path: "did/validate.py"
         decision_log: >
           Python: did/validate.py:validate_field_type_and_value. Covers all
           MATLAB types: integer, double, matrix, timestamp, char/string,
@@ -370,15 +408,104 @@ classes:
           schema's ISO-8601 timestamps with an optional trailing Z. Ported
           2026-08-28.
 
-      - name: checkfiles / isfilenamematch / canfindonefile
+      - name: checkfiles
         kind: static
+        python_name: check_files
+        python_path: "did/validate.py"
         decision_log: >
-          Python: did/validate.py:check_files / is_filename_match /
-          can_find_one_file. Deviation in can_find_one_file: MATLAB issues an
-          HTTP HEAD request to pre-check a URL location; Python has no URL
-          download path (see the sqlitedb entry), so a URL counts as findable
-          and is resolved when actually read -- which is also MATLAB's
-          behavior for any non-file, non-http location. Ported 2026-08-28.
+          Ported 2026-08-28. Previously these three static methods shared a
+          single "checkfiles / isfilenamematch / canfindonefile" entry, which
+          meant a coverage check could not tell that isfilenamematch and
+          canfindonefile were bridged at all. Split 2026-08-28.
+
+      - name: isfilenamematch
+        kind: static
+        python_name: is_filename_match
+        python_path: "did/validate.py"
+        decision_log: >
+          Exact match. Both treat a trailing '#' in the expected name as a
+          numeric wildcard. Ported 2026-08-28.
+
+      - name: canfindonefile
+        kind: static
+        python_name: can_find_one_file
+        python_path: "did/validate.py"
+        decision_log: >
+          Deviation: MATLAB issues an HTTP HEAD request to pre-check a URL
+          location; Python has no URL download path (see the sqlitedb entry),
+          so a URL counts as findable and is resolved when actually read --
+          which is also MATLAB's behavior for any non-file, non-http
+          location. Ported 2026-08-28.
+
+      - name: findfilematch
+        kind: static
+        python_name: ~   # not ported
+        decision_log: >
+          MATLAB helper used only by checkfiles: it returns the index of the
+          actual file name matching an expected name. Python's check_files
+          does the same matching inline through is_filename_match rather than
+          returning an index, so there is no separate counterpart. Behavior is
+          equivalent; no port planned. Added to the bridge 2026-08-28 -- it had
+          no entry at all, so this was previously untracked.
+
+      - name: get_preference_names
+        python_name: ~   # not ported
+        decision_log: >
+          Public MATLAB API with no Python counterpart. Python's Database has
+          the `preferences` dict but no accessors for it, so preferences can
+          only be manipulated by reaching into the attribute directly. Added
+          to the bridge 2026-08-28 -- previously untracked. See "Not Yet
+          Ported" in PORTING_INSTRUCTIONS.md.
+
+      - name: get_preference
+        python_name: ~   # not ported
+        decision_log: >
+          Public MATLAB API with no Python counterpart. See
+          get_preference_names. Added to the bridge 2026-08-28.
+
+      - name: set_preference
+        python_name: ~   # not ported
+        decision_log: >
+          Public MATLAB API with no Python counterpart. MATLAB validates the
+          preference name and value type on write; Python has nothing
+          equivalent. Added to the bridge 2026-08-28.
+
+      - name: add_doc
+        kind: hidden
+        python_name: ~   # not ported
+        decision_log: >
+          MATLAB Hidden singular-form alias that forwards to add_docs. Python
+          exposes only the plural form. Deliberately not ported; recorded here
+          so the coverage check does not report it as an unbridged public
+          method. Added to the bridge 2026-08-28.
+
+      - name: get_doc
+        kind: hidden
+        python_name: ~   # not ported
+        decision_log: >
+          MATLAB Hidden singular-form alias that forwards to get_docs. See
+          add_doc. Added to the bridge 2026-08-28.
+
+      - name: remove_doc
+        kind: hidden
+        python_name: ~   # not ported
+        decision_log: >
+          MATLAB Hidden singular-form alias that forwards to remove_docs. See
+          add_doc. Added to the bridge 2026-08-28.
+
+      - name: get_parent_branch
+        kind: hidden
+        python_name: ~   # not ported
+        decision_log: >
+          MATLAB Hidden alias for get_branch_parent. Python exposes only
+          get_branch_parent. Added to the bridge 2026-08-28.
+
+      - name: display_branch
+        kind: hidden
+        python_name: ~   # not ported
+        decision_log: >
+          MATLAB Hidden alias for display_branches, which is itself not ported.
+          Added to the bridge 2026-08-28.
 
     decision_log: >
       Python Database class closely mirrors MATLAB did.database.
@@ -404,12 +531,14 @@ classes:
 
     properties:
       - name: document_properties
+        python_name: document_properties
         type_matlab: "struct"
         type_python: "dict"
         decision_log: "Exact match. Synchronized 2026-03-16."
 
     methods:
       - name: document
+        python_name: __init__
         kind: constructor
         input_arguments:
           - name: document_type
@@ -423,6 +552,7 @@ classes:
           Synchronized 2026-03-16.
 
       - name: id
+        python_name: id
         input_arguments: []
         output_arguments:
           - name: uid
@@ -430,6 +560,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-16."
 
       - name: setproperties
+        python_name: set_properties
         input_arguments:
           - name: kwargs
             type_matlab: "name-value pairs"
@@ -440,6 +571,7 @@ classes:
           Synchronized 2026-03-16.
 
       - name: dependency_value
+        python_name: dependency_value
         input_arguments:
           - name: dependency_name
             type_matlab: "char"
@@ -450,6 +582,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-16."
 
       - name: set_dependency_value
+        python_name: set_dependency_value
         input_arguments:
           - name: dependency_name
             type_matlab: "char"
@@ -460,19 +593,23 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-16."
 
       - name: dependency_value_n
+        python_name: ~   # not ported
         decision_log: >
           Present in MATLAB for numbered dependency lists.
           Not yet ported to Python.
 
       - name: add_dependency_value_n
+        python_name: ~   # not ported
         decision_log: >
           Present in MATLAB. Not yet ported to Python.
 
       - name: remove_dependency_value_n
+        python_name: ~   # not ported
         decision_log: >
           Present in MATLAB. Not yet ported to Python.
 
       - name: add_file
+        python_name: add_file
         input_arguments:
           - name: name
             type_matlab: "char"
@@ -486,6 +623,7 @@ classes:
           Synchronized 2026-03-16.
 
       - name: remove_file
+        python_name: remove_file
         input_arguments:
           - name: name
             type_matlab: "char"
@@ -493,6 +631,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-16."
 
       - name: is_in_file_list
+        python_name: is_in_file_list
         input_arguments:
           - name: name
             type_matlab: "char"
@@ -503,6 +642,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-16."
 
       - name: validate
+        python_name: ~   # not ported
         input_arguments:
           - name: did_database
             type_matlab: "did.database"
@@ -519,16 +659,19 @@ classes:
           database.add_docs -> validate_docs; see the database entry.
 
       - name: plus
+        python_name: ~   # not ported
         decision_log: >
           MATLAB operator overload for merging documents.
           Not ported to Python (use set_properties instead).
 
       - name: eq
+        python_name: ~   # not ported
         decision_log: >
           MATLAB operator overload for comparing document IDs.
           Not ported to Python (use doc.id() == other.id()).
 
       - name: readblankdefinition
+        python_name: read_blank_definition
         kind: static
         decision_log: >
           MATLAB: document.readblankdefinition(jsonfilelocationstring).
@@ -549,6 +692,7 @@ classes:
           ship only a schema.
 
       - name: readjsonfilelocation
+        python_name: read_json_file_location
         kind: static
         decision_log: >
           MATLAB: document.readjsonfilelocation. Python:
@@ -560,6 +704,7 @@ classes:
           entry), so that case is unsupported. Ported 2026-08-28.
 
       - name: reset_file_info
+        python_name: _reset_file_info
         decision_log: >
           MATLAB: document.reset_file_info. Python:
           Document._reset_file_info. Both clear files.file_info for a newly
@@ -594,6 +739,7 @@ classes:
 
     properties:
       - name: searchstructure
+        python_name: search_structure
         type_matlab: "struct array"
         type_python: "(internal)"
         decision_log: >
@@ -603,6 +749,7 @@ classes:
 
     methods:
       - name: query
+        python_name: __init__
         kind: constructor
         input_arguments:
           - name: field
@@ -620,19 +767,45 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: and
+        python_name: __and__
         decision_log: >
           MATLAB: A & B. Python: A & B (via __and__).
           Exact match. Synchronized 2026-03-15.
 
       - name: or
+        python_name: __or__
         decision_log: >
           MATLAB: A | B. Python: A | B (via __or__).
           Exact match. Synchronized 2026-03-15.
 
       - name: to_searchstructure
+        python_name: to_search_structure
         decision_log: >
           MATLAB: to_searchstructure(). Python: to_search_structure().
           Snake-case rename. Synchronized 2026-03-15.
+
+      - name: searchcellarray2searchstructure
+        kind: static
+        python_name: search_cell_array_to_search_structure
+        decision_log: >
+          Added to the bridge 2026-08-28 -- ported but previously untracked,
+          which also left its deviation unrecorded. MATLAB builds the search
+          structure from a name/value cell array and dispatches on the value's
+          MATLAB class; Python's version is simplified, choosing
+          'exact_number' for an int or float and 'regexp' for everything else.
+          A value that is neither -- a cell/list, a struct/dict, a logical --
+          is handled by MATLAB but falls through to 'regexp' in Python.
+
+      - name: searchstruct
+        kind: static
+        python_name: _create_search_structure
+        decision_log: >
+          Added to the bridge 2026-08-28 -- ported but previously untracked.
+          Both assemble one {field, operation, param1, param2} entry. MATLAB
+          exposes it as a public static method and validates the operation
+          against the permitted set with mustBeMember; in Python it is a
+          private instance helper, and the equivalent validation happens in
+          Query.__init__ against VALID_OPS.
 
     decision_log: >
       Query operations are fully synchronized. All MATLAB query
@@ -651,12 +824,14 @@ classes:
 
     properties:
       - name: identifier
+        python_name: identifier
         type_matlab: "char"
         type_python: "str"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
     methods:
       - name: ido
+        python_name: __init__
         kind: constructor
         input_arguments:
           - name: id_value
@@ -668,6 +843,7 @@ classes:
           is_valid, silently discarding a caller's id. Ported 2026-08-28.
 
       - name: id
+        python_name: id
         input_arguments: []
         output_arguments:
           - name: identifier
@@ -675,6 +851,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: unique_id
+        python_name: unique_id
         kind: static
         decision_log: >
           Both now produce num2hex(serial_date_number) + '_' + num2hex(rand):
@@ -687,6 +864,7 @@ classes:
           machines in different time zones. Ported 2026-08-28.
 
       - name: isvalid
+        python_name: is_valid
         kind: static
         input_arguments:
           - name: id_value
@@ -725,16 +903,19 @@ classes:
 
     methods:
       - name: documentservice
+        python_name: __init__
         kind: constructor
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: newdocument
+        python_name: new_document
         kind: abstract
         decision_log: >
           MATLAB: newdocument(). Python: new_document().
           Snake-case rename. Synchronized 2026-03-15.
 
       - name: searchquery
+        python_name: search_query
         kind: abstract
         decision_log: >
           MATLAB: searchquery(). Python: search_query().
@@ -755,34 +936,42 @@ classes:
 
     methods:
       - name: binarydoc
+        python_name: __init__
         kind: constructor
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: fopen
+        python_name: fopen
         kind: abstract
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: fseek
+        python_name: fseek
         kind: abstract
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: ftell
+        python_name: ftell
         kind: abstract
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: feof
+        python_name: feof
         kind: abstract
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: fwrite
+        python_name: fwrite
         kind: abstract
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: fread
+        python_name: fread
         kind: abstract
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: fclose
+        python_name: fclose
         kind: abstract
         decision_log: "Exact match. Synchronized 2026-03-15."
 
@@ -792,6 +981,15 @@ classes:
 # Not applicable in Python
 # =========================================================================
 not_applicable:
+  - name: Contents
+    rationale: >
+      src/did/Contents.m is a MATLAB toolbox contents/version listing that
+      `ver` reads -- a manifest, not code, and Python packaging carries the
+      same information in pyproject.toml. Recorded 2026-08-28 so the coverage
+      check can tell "deliberately out of scope" from "nobody has looked at
+      this yet".
+
+
   - name: did.filesep
     rationale: >
       MATLAB-only utility. Python uses os.sep / pathlib natively.

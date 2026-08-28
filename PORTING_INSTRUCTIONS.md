@@ -32,33 +32,50 @@ If the command produces output, the MATLAB file has changed since the last port.
 
 ### Bulk drift check
 
-Run this to check all bridge files at once:
+`bin/check_bridge_coverage.py` runs the drift check over every bridge entry,
+along with the coverage checks below:
 
 ```bash
-cd /path/to/DID-matlab
-for yaml in /path/to/DID-python/src/did/did_matlab_python_bridge*.yaml; do
-    echo "=== $(basename $yaml) ==="
-    # Extract matlab_path and matlab_last_sync_hash pairs
-    python3 -c "
-import yaml, sys
-with open('$yaml') as f:
-    data = yaml.safe_load(f)
-for section in ['classes', 'functions']:
-    for item in data.get(section, []):
-        path = item.get('matlab_path', '')
-        sync_hash = item.get('matlab_last_sync_hash', '')
-        name = item.get('name', '')
-        if path and sync_hash:
-            print(f'{name}|src/did/{path}|{sync_hash}')
-" | while IFS='|' read name path hash; do
-        changes=$(git log --oneline "$hash"..HEAD -- "$path" 2>/dev/null)
-        if [ -n "$changes" ]; then
-            echo "  DRIFT: $name ($path)"
-            echo "$changes" | sed 's/^/    /'
-        fi
-    done
-done
+python bin/check_bridge_coverage.py --matlab-repo /path/to/DID-matlab
 ```
+
+It defaults to `../DID-matlab`, and also reads `DID_MATLAB_REPO`. Use
+`--check` to run one check at a time (`file`, `hash`, `drift`, `member`,
+`missing`); it exits non-zero if anything is reported.
+
+### What the coverage checks are for
+
+A drift check only sees a MATLAB file that some bridge entry names *and* gives
+a `matlab_last_sync_hash`. Anything else is invisible: a MATLAB change to it
+will never show up. The script checks that the bridge has no such blind spots.
+
+| Check | What it enforces |
+|---|---|
+| `file` | Every `.m` file under `DID-matlab/src/did` is either tracked by an entry or listed under `not_applicable`; every `.py` module under `src/did` is some entry's `python_path`. Both `matlab_path` and `python_path` point at files that exist. |
+| `hash` | Every entry with a `matlab_path` has a `matlab_last_sync_hash`, and that hash is a real commit. An entry without one can never show drift. |
+| `drift` | No MATLAB commits touch a tracked file after its sync hash. |
+| `member` | Every method/property entry names a symbol that exists in the MATLAB class (or one it inherits from), and its `python_name` exists in the Python class. |
+| `missing` | Every public MATLAB method and property has a bridge entry. Protected, private and `delete` members are skipped as implementation detail. |
+
+CI runs `file`, `hash`, `member` and `missing` as gating checks, and `drift`
+non-gating: drift turns red when DID-matlab moves, which no commit here causes
+and none can fix until someone does the port.
+
+### Member entry conventions
+
+The `member` check relies on two fields, both required for it to mean anything:
+
+- **`python_name`** — the Python identifier, or `~` when the member is not
+  ported. Without it the mapping is prose only and nothing can verify it.
+- **`python_path`** — only when the counterpart lives outside the entry's own
+  `python_path`. `database.validate_doc_vs_schema` maps to `did/validate.py`,
+  for example.
+- **`matlab_name: ~`** — for a Python-only member. Every member's `name` is the
+  MATLAB name, so a Python-only addition needs the marker or it reads as an
+  entry pointing at a MATLAB method that does not exist.
+
+One entry must describe one member. A combined `name: "a / b / c"` hides
+whether `b` and `c` are bridged at all.
 
 ## Porting a MATLAB Change to Python
 
@@ -134,6 +151,18 @@ If MATLAB is available, run the full 3-step symmetry cycle:
 | `properties` | No | List of property mappings |
 | `methods` | No | List of method mappings |
 
+Each entry in `methods` / `properties` takes:
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | Yes | MATLAB method/property name. One entry per member — never `"a / b"` |
+| `python_name` | Yes | Python identifier, or `~` when not ported |
+| `matlab_name` | No | `~` marks a Python-only member with no MATLAB counterpart |
+| `python_path` | No | Only when the counterpart lives outside the entry's `python_path` |
+| `kind` | No | `constructor`, `static` or `hidden` |
+| `decision_log` | Yes | Deviations, sync date, rationale |
+| `input_arguments` / `output_arguments` | No | Argument type mappings |
+
 ## Adding a New MATLAB File
 
 When a new file is added to DID-matlab that needs a Python counterpart:
@@ -146,6 +175,8 @@ When a new file is added to DID-matlab that needs a Python counterpart:
 ## Current Sync Status
 
 Last drift check: **2026-08-28**, against DID-matlab `83646a7` (2026-07-25).
+Run `python bin/check_bridge_coverage.py` to re-check; it currently reports
+zero problems across all five checks.
 
 Three bridge entries showed drift; each was investigated and resolved as
 described below. All other entries are clean.
@@ -195,56 +226,79 @@ Python had **no document-vs-schema validation at all**, so there was nothing to
 port the change into. Rather than record a permanent gap, the validation
 subsystem was ported (2026-08-28). See *Validation* below.
 
-### Bridge coverage gaps found and fixed
+### Bridge coverage audit, 2026-08-28
 
-A drift check only covers files that have a bridge entry with a sync hash, so
-coverage was audited in both directions on 2026-08-28.
+Coverage was audited in both directions and is now enforced by
+`bin/check_bridge_coverage.py` (above), which reports zero problems against
+DID-matlab `83646a7`. The audit found the bridge described the port accurately
+in prose but was not *checkable*, and had several blind spots.
 
-**Python side: complete.** Every module under `src/did/` is referenced by some
-bridge entry's `python_path`, except the three `__init__.py` package markers
-(two empty, one re-exporting `did.util`).
+**No drift.** Every tracked entry is current against MATLAB `83646a7`.
 
-**MATLAB side: two files were invisible to the drift check.** `dumbjsondb.m`
-and `fileCache.m` sat in `not_applicable` in `bridge_file.yaml`, which means no
-`matlab_last_sync_hash` and therefore no drift detection — while their own
-rationales asserted that Python equivalents exist. Both rationales were wrong,
-in opposite directions:
+**Blind spots closed:**
 
-- **`dumbjsondb`** — stays `not_applicable`, rationale corrected. DID-python's
-  backend is SQLiteDB and there is no plan to port the JSON-file document
-  store. The `DumbJsonDB` class in `file.py` arrived with the initial bulk port
-  commit (`97ba45c`) and is dead code: nothing in `src/` or `tests/` imports or
-  exercises it, and it has no binary-file, search, remove, clear, `alldocids`,
-  or metadata support. It is a vestigial stub, not a port, and the old
-  rationale ("has a Python equivalent") overstated it. Either delete the class
-  or, if a JSON backend is ever wanted, promote it to a tracked entry and port
-  it properly.
-- **`fileCache`** — promoted to a tracked class entry, `out_of_sync: true`.
-  Not a MATLAB divergence (`fileCache.m` is unchanged since `3aa892d`); the
-  Python side is a stub, and it is duplicated. There are two unrelated classes
-  named `FileCache`: `file.py:FileCache` implements construction plus
-  `.fileCacheInfo` read/write and nothing else — no `addFile`, `removeFile`,
-  `isFile`, `fileList`, `resizeAndAdd`, `touch`, or `clear`, so nothing can be
-  cached and `maxSize`/`reduceSize` are stored but never enforced — while
-  `common.py:FileCache` is a three-line placeholder holding only
-  `(path, size)`. **`did.common.get_cache()` returns the `common.py`
-  placeholder**, so the object DID-python hands callers is the emptier of the
-  two, where MATLAB's `getCache()` returns a working `did.file.fileCache`.
-  Fixing this means collapsing the two classes and implementing the cache
-  operations.
+- **`validate.py` was not referenced by any entry.** The largest recent port —
+  the whole validation subsystem — had no `python_path` pointing at it. It is
+  now reached through `python_path` on the `database` method entries that map
+  into it (`get_document_schema`, `validate_doc_vs_schema`,
+  `validate_field_type_and_value`, `checkfiles`, `isfilenamematch`,
+  `canfindonefile`). The claim in the previous audit that every Python module
+  was referenced stopped being true when `validate.py` was added.
+- **`matlabdumbjsondb` had no `matlab_last_sync_hash`** — the same blind spot
+  found in `dumbjsondb` and `fileCache` last time, missed because that audit
+  checked the `not_applicable` lists but not tracked entries with a missing
+  hash. It is tracked now; unported does not have to mean unwatched.
+- **`Contents.m`** is now an explicit `not_applicable` entry rather than simply
+  unmentioned, so "out of scope" is distinguishable from "not yet looked at".
 
-Two further entries were making claims that did not hold and were corrected:
+**Ported but untracked.** Real ported code no bridge entry mentioned, so a
+MATLAB change to any of it would have gone unnoticed:
 
-- `getCache` in `bridge_util.yaml` read "Exact match"; the function shape
-  matches but the returned object does not (see above).
-- The `did.datastructures.table_cross_join (duplicate)` entry in
-  `bridge_util.yaml` claimed MATLAB has `tableCrossJoin` in both
-  `+did/+datastructures/` and `+did/+db/`. It exists only in `+did/+db/`;
-  there is no duplicate.
+| Member | Python counterpart |
+|---|---|
+| `binaryTable.getLock` / `releaseLock` / `lockFileName` / `tempFileName` / `rowSize` | `get_lock` / `release_lock` / `lock_file_name` / `temp_file_name` / `row_size` |
+| `query.searchcellarray2searchstructure` | `search_cell_array_to_search_structure` |
+| `query.searchstruct` | `Query._create_search_structure` |
+| `sqldb.alldocids` | `Database.all_doc_ids` |
+| all six `PathConstants` properties | `PATH`, `DEFPATH`, `DEFINITIONS`, `temppath`, `filecachepath`, `preferences` |
 
-The remaining unbridged MATLAB files are correctly out of scope: `filesep.m`
-and `toolboxdir.m` (`not_applicable` entries, MATLAB-only utilities) and
-`Contents.m` (a MATLAB toolbox version listing, not code).
+Writing these up surfaced two deviations that had never been recorded.
+`search_cell_array_to_search_structure` is a simplification: MATLAB dispatches
+on the value's MATLAB class, while Python picks `exact_number` for an int or
+float and `regexp` for everything else, so a cell/list, struct/dict or logical
+that MATLAB handles falls through to `regexp`. And `PathConstants` enforces
+writability with a `mustBeWritable` property validator in MATLAB, checked once
+at class load, versus a `@property` calling `must_be_writable()` on every read
+in Python.
+
+**Unported and untracked.** Public MATLAB API with no Python counterpart *and*
+no bridge entry, so the gap was recorded nowhere:
+
+- `database.get_preference_names` / `get_preference` / `set_preference`. Python
+  has the `preferences` dict but no accessors, so preferences can only be
+  reached by touching the attribute directly. Added to *Not Yet Ported* below.
+- `database.findfilematch`. No port needed — `check_files` does the same
+  matching inline through `is_filename_match` — but that reasoning was written
+  down nowhere.
+- `binaryTable.compare`, and MATLAB's Hidden singular-form aliases
+  (`add_doc`, `get_doc`, `remove_doc`, `display_branch`, `get_parent_branch`).
+
+**Entries corrected:**
+
+- `binaryTable.insertRow` claimed "Python: (partial implementation)". There is
+  no `insert_row` in `BinaryTable` at all.
+- Three entries packed several members into one `name` field
+  (`checkfiles / isfilenamematch / canfindonefile`, `open_db / close_db`,
+  `doc2sql / doc_to_sql`) — the last of which was not even two MATLAB methods
+  but a MATLAB name and a Python name in one string. All are now one entry per
+  member.
+- `sqlitedb.get_docs_by_branch` is Python-only and is marked `matlab_name: ~`.
+
+**Checked and correct:** all 52 tracked entries are current; the symmetry test
+suites correspond one-to-one (`tests/symmetry/{make,read}_artifacts/database/`
+against `tests_symmetry/+did/+symmetry/+{make,read}Artifacts/+database/`); and
+`filesep.m`, `toolboxdir.m` and `dumbjsondb.m` remain correctly
+`not_applicable`.
 
 ### Previously resolved (no Python changes needed)
 
@@ -357,6 +411,7 @@ document entry in `bridge.yaml`.)
 | MATLAB feature | Bridge file | Priority |
 |---|---|---|
 | `database.exist_doc` | bridge.yaml | Medium |
+| `database.get_preference` / `set_preference` / `get_preference_names` — Python has the `preferences` dict but no accessors for it | bridge.yaml | Medium |
 | `binaryTable` write methods | bridge_file.yaml | Medium |
 | `fileCache` cache operations (`addFile`, `removeFile`, `isFile`, `fileList`, `resizeAndAdd`, `touch`, `clear`) — and collapsing the duplicate `FileCache` in `common.py` and `file.py` so `get_cache()` returns a working cache | bridge_file.yaml | Medium |
 | Remote (URL) file locations in `open_doc` — MATLAB uses `ndi.cloud.api.files.getFile`; Python would need `requests`/`urllib` | bridge_implementations.yaml | Low |
@@ -367,3 +422,5 @@ document entry in `bridge.yaml`.)
 | `document.dependency_value_n` | bridge.yaml | Low |
 | `document.add_dependency_value_n` | bridge.yaml | Low |
 | `document.remove_dependency_value_n` | bridge.yaml | Low |
+| `binaryTable.compare` (only needed by `findRow`, also unported) | bridge_file.yaml | Low |
+| `query.searchcellarray2searchstructure` handles only numbers and strings; MATLAB also handles cells, structs and logicals | bridge.yaml | Low |

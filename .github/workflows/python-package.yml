@@ -34,6 +34,45 @@ jobs:
       - name: Lint with ruff
         run: ruff check src/ tests/
 
+  bridge:
+    name: Bridge coverage vs DID-matlab
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out DID-python
+        uses: actions/checkout@v4
+
+      - name: Check out DID-matlab
+        uses: actions/checkout@v4
+        with:
+          repository: VH-Lab/DID-matlab
+          path: DID-matlab
+          fetch-depth: 0   # drift check walks history from each sync hash
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      # These four checks depend only on the current state of the two repos,
+      # so a PR can break them and a PR can fix them. They gate.
+      - name: Check bridge coverage
+        run: |
+          python bin/check_bridge_coverage.py \
+            --matlab-repo DID-matlab \
+            --check file --check hash --check member --check missing
+
+      # Drift is different: it turns red when DID-matlab moves, which no commit
+      # here causes and no commit here can fix until someone does the port. Kept
+      # visible but non-gating, so main does not go red without a commit.
+      - name: Report MATLAB drift (informational)
+        continue-on-error: true
+        run: |
+          python bin/check_bridge_coverage.py \
+            --matlab-repo DID-matlab --check drift
+
   test:
     runs-on: ubuntu-latest
     strategy:

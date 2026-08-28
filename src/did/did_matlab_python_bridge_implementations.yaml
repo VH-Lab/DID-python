@@ -51,6 +51,7 @@ classes:
 
     properties:
       - name: FileDir
+        python_name: ~   # not ported
         type_matlab: "char"
         type_python: "(derived from connection path)"
         decision_log: >
@@ -58,6 +59,7 @@ classes:
           paths from the database connection string. Synchronized 2026-03-15.
 
       - name: fields_cache
+        python_name: _fields_cache
         type_matlab: "cell (protected)"
         type_python: "dict (private)"
         decision_log: >
@@ -66,6 +68,7 @@ classes:
 
     methods:
       - name: sqlitedb
+        python_name: __init__
         kind: constructor
         input_arguments:
           - name: filename
@@ -77,6 +80,7 @@ classes:
           Synchronized 2026-03-15.
 
       - name: do_run_sql_query
+        python_name: do_run_sql_query
         input_arguments:
           - name: query_str
             type_matlab: "char"
@@ -87,6 +91,7 @@ classes:
           Python uses parameterized queries. Synchronized 2026-03-15.
 
       - name: do_add_doc
+        python_name: _do_add_doc
         input_arguments:
           - name: document_obj
             type_matlab: "did.document"
@@ -99,6 +104,7 @@ classes:
           Synchronized 2026-03-15.
 
       - name: do_get_doc
+        python_name: _do_get_doc
         input_arguments:
           - name: document_id
             type_matlab: "char"
@@ -111,6 +117,7 @@ classes:
           did.document / Document object. Synchronized 2026-03-15.
 
       - name: do_remove_doc
+        python_name: _do_remove_doc
         input_arguments:
           - name: document_id
             type_matlab: "char"
@@ -121,6 +128,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: search
+        python_name: search
         input_arguments:
           - name: query_obj
             type_matlab: "did.query"
@@ -136,16 +144,23 @@ classes:
           complex queries. Synchronized 2026-03-15.
 
       - name: get_docs
+        python_name: get_docs
         decision_log: >
           Python adds bulk get_docs with OnMissing parameter.
           Synchronized 2026-03-16.
 
       - name: get_docs_by_branch
+        matlab_name: ~   # Python-only, no MATLAB counterpart
+        python_name: get_docs_by_branch
         decision_log: >
-          Python-only convenience method. Returns all documents in a
-          branch. Added 2026-03-16.
+          Python-only convenience method. Returns all documents in a branch.
+          Added 2026-03-16. Marked matlab_name: ~ on 2026-08-28 -- every other
+          member entry's `name` is the MATLAB name, so without the marker a
+          coverage check reads this as a bridge entry pointing at a MATLAB
+          method that does not exist.
 
       - name: open_doc
+        python_name: open_doc
         input_arguments:
           - name: doc_id
             type_matlab: "char"
@@ -160,11 +175,20 @@ classes:
         decision_log: >
           Both return a read-only file object. Synchronized 2026-03-15.
 
-      - name: open_db / close_db
+      - name: open_db
+        python_name: _open_db
         decision_log: >
-          MATLAB opens/closes mksqlite connection per operation.
-          Python keeps sqlite3 connection open for session lifetime.
-          Behavioral difference by design. Synchronized 2026-03-15.
+          MATLAB opens an mksqlite connection per operation; Python keeps one
+          sqlite3 connection open for the session lifetime. Behavioral
+          difference by design. Synchronized 2026-03-15. Split out of a
+          combined "open_db / close_db" entry 2026-08-28 so each method
+          resolves on its own.
+
+      - name: close_db
+        python_name: _close_db
+        decision_log: >
+          See open_db. Synchronized 2026-03-15. Split out of a combined
+          entry 2026-08-28.
 
     decision_log: >
       Core database operations are synchronized. MATLAB recently changed
@@ -186,7 +210,8 @@ classes:
     python_name: "doc_to_sql"
 
     methods:
-      - name: doc2sql / doc_to_sql
+      - name: doc2sql
+        python_name: doc_to_sql
         input_arguments:
           - name: doc
             type_matlab: "did.document"
@@ -224,16 +249,19 @@ classes:
 
     properties:
       - name: key
+        python_name: key
         type_matlab: "any"
         type_python: "str"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: doc_unique_id
+        python_name: doc_unique_id
         type_matlab: "any"
         type_python: "str"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: machineformat
+        python_name: machineformat
         type_matlab: "char"
         type_python: "str"
         decision_log: >
@@ -243,6 +271,7 @@ classes:
 
     methods:
       - name: binarydoc_matfid
+        python_name: __init__
         kind: constructor
         decision_log: >
           MATLAB: binarydoc_matfid(fileProps, matfidProps).
@@ -250,6 +279,7 @@ classes:
           Synchronized 2026-03-15.
 
       - name: fclose
+        python_name: fclose
         decision_log: >
           MATLAB resets permission to 'rb' after close (changed from 'r').
           Python closes file handle. Synchronized 2026-03-15.
@@ -270,11 +300,20 @@ classes:
     python_path: "(not separately implemented)"
     python_class: "(merged into Database)"
 
+    methods:
+      - name: alldocids
+        python_name: all_doc_ids
+        python_path: "did/database.py"
+        decision_log: >
+          sqldb's only method. Python has no sqldb layer, so it lives on
+          Database as all_doc_ids. Added to the bridge 2026-08-28 -- the
+          mapping was described in this entry's prose but had no method entry,
+          so a coverage check saw it as an unbridged public method.
+
     decision_log: >
       MATLAB has an intermediate abstract class sqldb between database
       and sqlitedb. Python merges this layer directly into Database
-      and SQLiteDB. The alldocids() method from sqldb is available
-      as Database.all_doc_ids() in Python. Synchronized 2026-03-15.
+      and SQLiteDB. Synchronized 2026-03-15.
 
   # -----------------------------------------------------------------------
   # did.implementations.matlabdumbjsondb
@@ -282,7 +321,23 @@ classes:
   - name: matlabdumbjsondb
     type: class
     matlab_path: "+did/+implementations/matlabdumbjsondb.m"
+    matlab_last_sync_hash: "13463d1"
     python_path: "(not applicable)"
+
+    properties:
+      - name: db
+        python_name: ~   # not ported
+        type_matlab: "did.file.dumbjsondb"
+        decision_log: >
+          The wrapped dumbjsondb handle. No Python counterpart, since the
+          whole class is unported. Added to the bridge 2026-08-28.
+
+    methods:
+      - name: alldocids
+        python_name: ~   # not ported
+        decision_log: >
+          No Python counterpart; the class is unported. Added to the bridge
+          2026-08-28.
 
     decision_log: >
       MATLAB-specific wrapper around dumbjsondb for MATLAB file I/O.
@@ -290,6 +345,10 @@ classes:
       2026-08-28 -- this previously read "Python implements DumbJsonDB
       directly in file.py", which overstated a dead-code stub; see the
       did.file.dumbjsondb entry in did_matlab_python_bridge_file.yaml.
+      A matlab_last_sync_hash was added 2026-08-28: the entry had none, and
+      without one it could never show drift -- the same blind spot that had
+      hidden dumbjsondb and fileCache. Unported does not have to mean
+      unwatched, so the file is tracked even though nothing is ported from it.
 
 # =========================================================================
 # Not applicable in Python
