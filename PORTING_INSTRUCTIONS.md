@@ -643,3 +643,92 @@ Behavior now, measured:
 The stored link was never at risk in any of this: a document that gets in
 round-trips its locations verbatim through SQLite, URL included. The failure
 was only ever about admission.
+
+## Where does the remote-file download live?
+
+Traced 2026-08-28. DID-python has no download path, so a remote file is
+unreachable from Python. Looking at how MATLAB does it answers where the
+Python equivalent belongs — and the answer is probably *not* DID-python.
+
+`sqlitedb.do_open_doc` dispatches on the location's `type`:
+
+| type | MATLAB does |
+|---|---|
+| `file` | `copyfile(sourcePath, destPath)` |
+| `url` | **`ndi.cloud.api.files.getFile(sourcePath, destPath)`** |
+| anything else | calls a caller-supplied `customFileHandler(destPath, sourcePath)`, or errors `DID:SQLITEDB:FileRetrieval:UnsupportedType` |
+
+then adds the result to the file cache and returns a `readonly_fileobj` over
+the cached copy.
+
+Two things follow.
+
+**1. DID-matlab depends on NDI.** The `url` branch calls
+`ndi.cloud.api.files.getFile` directly — a function that lives in NDI-matlab,
+not here. So DID-matlab needs NDI on the path to open a remote file, which is
+a layering inversion: the lower-level package calling the higher-level one.
+Worth resolving before mirroring it into Python. The cleanest fix on the
+MATLAB side is to route `url` through `customFileHandler` too, so NDI supplies
+the downloader rather than DID reaching for it.
+
+**2. `customFileHandler` is the extension point, and Python has none.**
+`do_open_doc` accepts it as a name-value pair, so a downstream package can
+supply file retrieval without DID knowing anything about it. DID-python's
+`open_doc(doc_id, filename)` takes no such parameter and no `**kwargs`, so
+there is nowhere for a downstream package to hook in.
+
+So the likely shape of the Python work is *not* "add `requests` to
+DID-python". It is:
+
+1. Give `open_doc` a `custom_file_handler` parameter mirroring MATLAB's, so a
+   downstream package (NDI-python) can supply the downloader. This keeps the
+   network dependency out of DID-python entirely.
+2. Decide whether DID-python should have a built-in `url` handler at all, or
+   whether — as the layering suggests — every remote fetch should go through
+   the hook, including in MATLAB.
+3. The cache (see above) only becomes worth building once something can
+   actually download, since its purpose is to avoid re-fetching.
+
+**Not verified:** whether NDI-python implements this today. NDI-python is in
+the WalthamDataScience organization and outside this session's repository
+scope, so nothing here should be read as a claim about what it does or does
+not contain. Checking it would answer whether the hook is the missing piece or
+whether NDI-python has already routed around `open_doc` altogether.
+
+### open_doc, fixed 2026-08-28
+
+Three quiet bugs were fixed in `SQLiteDB.open_doc` along the way:
+
+- `locations["location"]` was read directly, assuming a single dict. Documents
+  may carry several locations per file — the shipped `demoFile.json` template
+  lists a local path *and* a URL for each — so **any MATLAB-written document
+  raised `TypeError: list indices must be integers`**. It now walks the
+  locations in turn and returns the first that resolves, as MATLAB does.
+- A URL was rebased against the database directory like a relative path,
+  producing `/db/dir/https://example.org/data/thing.bin`.
+- The resulting `Fileobj` was returned unopened. `Fileobj.fopen()` swallows
+  the `OSError` and leaves `fid` None, so a caller that did not check `fid`
+  read `b""` and saw no error — a missing file was indistinguishable from an
+  empty one.
+
+`open_doc` now raises `FileAccessError`, which carries MATLAB's identifier the
+way `ValidationError` does and subclasses `FileNotFoundError` so existing
+callers keep working:
+`DID:SQLITEDB:FileRetrieval:UnsupportedType` when the only locations are
+remote, `DID:SQLITEDB:open` otherwise.
+
+Two things surfaced while fixing it, both now corrected:
+
+- **`Fileobj.fread` returned different types on success and failure** — `bytes`
+  when the file was open, the 2-tuple `(b"", 0)` when it was not. A caller
+  doing `fread().decode()` got `AttributeError` on a tuple; one doing
+  `data, count = fread()` unpacked correctly only when the read returned
+  exactly two bytes. Now `b""` in both cases.
+- **`tests/test_file_document.py` was asserting success on a file that could
+  never be opened.** It wrote its fixture into the working directory while a
+  relative location resolves against the *database* directory, and only
+  checked `isinstance(file_obj, ReadOnlyFileobj)` — which the old silent
+  behavior always satisfied. Fixture corrected and the test now reads the
+  content back.
+
+Coverage: `tests/test_open_doc_locations.py` (8 tests).

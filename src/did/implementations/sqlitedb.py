@@ -642,7 +642,20 @@ class SQLiteDB(Database):
         doc_ids = self.get_doc_ids(branch_id)
         return self.get_docs(doc_ids, OnMissing="ignore")
 
+    @staticmethod
+    def _is_remote_location(location, location_type=None):
+        """Is this location one DID-python cannot resolve to a local file?
+
+        MATLAB downloads a 'url' location (through the NDI cloud API) or hands
+        an unrecognized type to its customFileHandler. DID-python has neither,
+        so any location carrying a URI scheme is unreachable here.
+        """
+        if str(location_type or "").lower() == "url":
+            return True
+        return "://" in location
+
     def open_doc(self, doc_id, filename):
+        from ..database import FileAccessError
         from ..file import ReadOnlyFileobj
 
         doc = self.get_docs(doc_id)
@@ -650,17 +663,58 @@ class SQLiteDB(Database):
             raise ValueError(f"Document {doc_id} not found.")
 
         is_in, info, _ = doc.is_in_file_list(filename)
-        if is_in:
-            location = info["locations"]["location"]
+        if not is_in:
+            raise FileNotFoundError(f"File {filename} not found in document {doc_id}.")
 
-            # Rebase path if it's relative, assuming it's relative to the DB location
-            if not os.path.isabs(location):
-                db_dir = os.path.dirname(os.path.abspath(self.connection))
-                location = os.path.join(db_dir, location)
+        # A document may list several locations for one file -- the shipped
+        # demoFile template carries a local path and a URL for each. MATLAB
+        # tries them in turn and returns the first it can reach. Reading
+        # locations["location"] directly, as this used to, raises TypeError on
+        # any MATLAB-written document.
+        locations = info.get("locations")
+        if isinstance(locations, dict):
+            locations = [locations]
+        elif not isinstance(locations, list):
+            locations = []
 
-            return ReadOnlyFileobj(location)
+        db_dir = os.path.dirname(os.path.abspath(self.connection))
+        remote = []
+        for entry in locations:
+            if not isinstance(entry, dict):
+                continue
+            location = entry.get("location", "")
+            if not isinstance(location, str) or not location:
+                continue
 
-        raise FileNotFoundError(f"File {filename} not found in document {doc_id}.")
+            if self._is_remote_location(location, entry.get("location_type")):
+                remote.append(location)
+                continue
+
+            # Rebase a relative path against the database's directory.
+            resolved = (
+                location if os.path.isabs(location) else os.path.join(db_dir, location)
+            )
+            if os.path.isfile(resolved):
+                return ReadOnlyFileobj(resolved)
+
+        # Nothing was reachable. Raise rather than hand back a Fileobj over a
+        # path that does not exist: Fileobj.fopen() swallows the OSError and
+        # leaves fid None, so a caller that does not check it reads b"" and
+        # sees no error at all.
+        if remote and len(remote) == len(
+            [e for e in locations if isinstance(e, dict) and e.get("location")]
+        ):
+            raise FileAccessError(
+                "DID:SQLITEDB:FileRetrieval:UnsupportedType",
+                f'The file "{filename}" in document "{doc_id}" is only '
+                f"available remotely ({remote[0]}), and DID-python has no "
+                f"download path. MATLAB retrieves such a file through the NDI "
+                f"cloud API; see PORTING_INSTRUCTIONS.md.",
+            )
+        raise FileAccessError(
+            "DID:SQLITEDB:open",
+            f'The file "{filename}" in document "{doc_id}" cannot be accessed.',
+        )
 
     def _do_remove_doc(self, document_id, branch_id, **kwargs):
         cursor = self.dbid.cursor()

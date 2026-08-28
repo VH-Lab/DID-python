@@ -174,7 +174,20 @@ classes:
         decision_log: >
           MATLAB fread() default precision changed: 'char' -> 'uint8'
           (commit 02c83c5). Python fread returns raw bytes, which is
-          equivalent to uint8. No Python change needed.
+          equivalent to uint8.
+
+          Deviation: MATLAB returns [data, count]; Python returns the data
+          alone, since len(data) is the count. Fixed 2026-08-28 -- the
+          unopened-file path returned the 2-tuple (b"", 0) while the success
+          path returned bytes, so the return type depended on whether the open
+          had succeeded. A caller doing fread().decode() got AttributeError on
+          a tuple, and one doing "data, count = fread()" unpacked correctly
+          only when the read happened to return exactly two bytes. Now b"" in
+          both cases.
+
+          Both languages read an unopened file as empty rather than raising
+          (MATLAB: data = [], count = 0 when fid < 0), so check fid to tell an
+          empty file from one that could not be opened.
 
       - name: fgetl
         python_name: fgetl

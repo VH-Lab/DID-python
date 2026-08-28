@@ -31,7 +31,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "0142532"
+    matlab_last_sync_hash: "d7b352e"
     python_path: "did/database.py"
     python_class: "Database"
     inherits: "abc.ABC"

@@ -168,12 +168,45 @@ classes:
           - name: filename
             type_matlab: "char"
             type_python: "str"
-        output_arguments:
-          - name: file_obj
-            type_matlab: "did.file.readonly_fileobj"
-            type_python: "ReadOnlyFileobj"
         decision_log: >
-          Both return a read-only file object. Synchronized 2026-03-15.
+          Reworked 2026-08-28. Both now walk the document's locations in turn
+          and return the first that resolves to a readable local file, raising
+          when none does.
+
+          Three bugs were fixed on the Python side, all of them quiet:
+
+          1. locations["location"] was read directly, assuming a single dict.
+             A document may carry several locations for one file -- the shipped
+             demoFile.json template lists a local path AND a url for each -- so
+             any MATLAB-written document raised TypeError: list indices must be
+             integers.
+          2. A URL was rebased against the database directory like a relative
+             path, producing nonsense such as
+             /db/dir/https://example.org/data/thing.bin.
+          3. The resulting Fileobj was returned unopened. Fileobj.fopen()
+             swallows the OSError and leaves fid None, so a caller that did not
+             check fid read b"" and saw no error at all -- a missing file was
+             indistinguishable from an empty one.
+
+          Python now raises FileAccessError, which carries MATLAB's identifier
+          the way ValidationError does, and subclasses FileNotFoundError so
+          callers written against the older behavior keep working:
+          DID:SQLITEDB:FileRetrieval:UnsupportedType when the only locations
+          are remote, DID:SQLITEDB:open otherwise.
+
+          REMAINING DEVIATION, and the biggest one in this entry. MATLAB
+          RETRIEVES a file it cannot reach locally: a 'file' type is copied, a
+          'url' type is downloaded via ndi.cloud.api.files.getFile, any other
+          type is passed to a caller-supplied customFileHandler function
+          handle, and the result is added to the file cache. Python does none
+          of that -- it has no download path, no cache (see fileCache), and no
+          customFileHandler equivalent, so open_doc has no extension point a
+          downstream package could hook. A remote-only file is therefore
+          readable in MATLAB and an error in Python.
+
+          Note the MATLAB url branch calls into NDI, so DID-matlab depends on
+          NDI being on the path for that case -- a layering inversion worth
+          resolving before mirroring it. See PORTING_INSTRUCTIONS.md.
 
       - name: open_db
         python_name: _open_db
