@@ -343,6 +343,13 @@ class SQLiteDB(Database):
             # Populate fields and doc_data tables (matching MATLAB's doc2sql behavior)
             self._populate_doc_data(cursor, doc_idx, document_obj)
 
+        # Record the document's file locations. MATLAB's do_open_doc resolves a
+        # file by querying `docs, files` -- it never reads the locations back
+        # out of the document JSON -- so without these rows every file in a
+        # Python-written document is unreachable from MATLAB, including a plain
+        # local file that exists on disk.
+        self._populate_files(cursor, doc_idx, document_obj)
+
         try:
             cursor.execute(
                 "INSERT INTO branch_docs (branch_id, doc_idx, timestamp) VALUES (?, ?, ?)",
@@ -353,6 +360,63 @@ class SQLiteDB(Database):
             if "FOREIGN KEY" in str(e):
                 raise ValueError(f"Branch '{branch_id}' does not exist.")
             # Ignore other integrity errors (duplicates)
+
+    @staticmethod
+    def _file_entries(document_obj):
+        """Yield (filename, location_entry) for every location of every file."""
+        files = document_obj.document_properties.get("files")
+        if not isinstance(files, dict):
+            return
+        file_info = files.get("file_info")
+        if isinstance(file_info, dict):
+            file_info = [file_info]
+        if not isinstance(file_info, list):
+            return
+
+        for info in file_info:
+            if not isinstance(info, dict):
+                continue
+            name = info.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            locations = info.get("locations")
+            if isinstance(locations, dict):
+                locations = [locations]
+            if not isinstance(locations, list):
+                continue
+            for entry in locations:
+                if isinstance(entry, dict) and entry.get("location"):
+                    yield name, entry
+
+    def _populate_files(self, cursor, doc_idx, document_obj):
+        """Insert one `files` row per file location, mirroring MATLAB.
+
+        Columns match MATLAB's insert exactly: doc_idx, filename, uid,
+        orig_location, cached_location, type, parameters.
+
+        cached_location is always empty here. MATLAB fills it when it ingests a
+        location into its FileDir; DID-python does no ingestion, so there is
+        never a cached copy to point at. That is a real difference in what the
+        two write, not a gap in this row -- see PORTING_INSTRUCTIONS.md.
+
+        INSERT OR IGNORE because a document added to a second branch reaches
+        this path again with the same (doc_idx, filename, uid) primary key.
+        """
+        for name, entry in self._file_entries(document_obj):
+            cursor.execute(
+                "INSERT OR IGNORE INTO files "
+                "(doc_idx, filename, uid, orig_location, cached_location, "
+                "type, parameters) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    doc_idx,
+                    name,
+                    str(entry.get("uid", "")),
+                    str(entry.get("location", "")),
+                    "",
+                    str(entry.get("location_type", "file")),
+                    str(entry.get("parameters", "")),
+                ),
+            )
 
     # --- SQL-based search (matching MATLAB's database.m) ---
 
@@ -660,6 +724,59 @@ class SQLiteDB(Database):
         db_dir = os.path.dirname(os.path.abspath(self.connection))
         return os.path.join(db_dir, location)
 
+    def _locations_from_files_table(self, doc_id, filename):
+        """Locations for one file, read from the `files` table.
+
+        This is where MATLAB keeps them, and it is the only place it looks:
+        do_open_doc selects cached_location, orig_location, uid and type from
+        `docs, files`. A MATLAB-written document that was ingested has had its
+        original deleted, so the document JSON's location no longer exists and
+        only these rows can find the file.
+
+        Returns a list shaped like the document's own locations, so both
+        sources feed the same resolution path.
+        """
+        try:
+            cursor = self.dbid.cursor()
+            rows = cursor.execute(
+                "SELECT f.uid, f.orig_location, f.cached_location, f.type "
+                "FROM docs d, files f "
+                "WHERE d.doc_id = ? AND f.doc_idx = d.doc_idx AND f.filename = ?",
+                (doc_id, filename),
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+
+        locations = []
+        for row in rows:
+            uid = row["uid"]
+            cached = row["cached_location"]
+            # MATLAB stores an ingested copy at <FileDir>/<uid>, where FileDir
+            # is <directory holding the .sqlite file>/files. It looks the copy
+            # up by uid rather than by cached_location, so mirror that first.
+            if uid:
+                locations.append(
+                    {
+                        "location": os.path.join(self._file_dir(), str(uid)),
+                        "location_type": "file",
+                    }
+                )
+            if cached:
+                locations.append({"location": cached, "location_type": "file"})
+            if row["orig_location"]:
+                locations.append(
+                    {
+                        "location": row["orig_location"],
+                        "location_type": row["type"] or "file",
+                        "uid": uid,
+                    }
+                )
+        return locations
+
+    def _file_dir(self):
+        """MATLAB's FileDir: `files/` beside the database file."""
+        return os.path.join(os.path.dirname(os.path.abspath(self.connection)), "files")
+
     @staticmethod
     def _valid_locations(info):
         """The document's locations for one file, always as a list of dicts.
@@ -707,7 +824,11 @@ class SQLiteDB(Database):
         if not is_in:
             raise FileNotFoundError(f"File {filename} not found in document {doc_id}.")
 
-        locations = self._valid_locations(info)
+        # The files table first, since that is the only place MATLAB records an
+        # ingested copy; then the document's own locations, which is all a
+        # database written before this table was populated will have.
+        locations = self._locations_from_files_table(doc_id, filename)
+        locations += self._valid_locations(info)
 
         # First pass: anything already on disk, as MATLAB does before it tries
         # to retrieve anything.

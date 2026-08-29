@@ -58,14 +58,20 @@ class TestDocument(unittest.TestCase):
             fI_index, "File info index should not be empty after adding a file."
         )
 
-        # Verify the location of the added file
+        # Verify the location of the added file. locations is a LIST, as it is
+        # in MATLAB and in the shipped demoFile.json template -- a file may
+        # carry several locations (e.g. a local path and a URL).
+        locations = doc.document_properties["files"]["file_info"][fI_index]["locations"]
+        self.assertIsInstance(locations, list)
         self.assertEqual(
-            doc.document_properties["files"]["file_info"][fI_index]["locations"][
-                "location"
-            ],
+            locations[0]["location"],
             "/path/to/file1.txt",
             "The location of the added file is incorrect.",
         )
+        # Every location carries a uid: it is how MATLAB finds an ingested copy
+        # (<FileDir>/<uid>) and it is the UNIQUE key of the files table.
+        self.assertTrue(locations[0]["uid"], "the location should carry a uid")
+        self.assertEqual(locations[0]["location_type"], "file")
 
         # Remove the file and verify it was removed
         doc.remove_file("filename1.ext")

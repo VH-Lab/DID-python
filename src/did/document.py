@@ -84,7 +84,31 @@ class Document:
                 return True, info, i
         return False, None, None
 
-    def add_file(self, filename, location):
+    def add_file(
+        self,
+        filename,
+        location,
+        ingest=None,
+        delete_original=None,
+        location_type=None,
+    ):
+        """Record a location for one of the document's files.
+
+        Mirrors MATLAB ``did.document/add_file``. Each location carries a
+        ``uid``, a ``location_type``, and the ``ingest`` / ``delete_original``
+        flags, all defaulted from the location itself: an ``http(s)`` location
+        is a ``url`` and defaults to not ingesting and not deleting; anything
+        else is a ``file`` and defaults to both.
+
+        The ``uid`` matters beyond bookkeeping. It is how MATLAB finds a file
+        it has ingested -- it looks for ``<FileDir>/<uid>`` -- and it is the
+        UNIQUE key of the database's ``files`` table, so two locations without
+        one collapse into a single row.
+
+        Adding a second location for a file that already has one appends to its
+        list, as MATLAB does, rather than replacing it: the shipped
+        demoFile.json template carries a local path and a URL for each file.
+        """
         if "files" not in self.document_properties:
             self.document_properties["files"] = {"file_info": []}
 
@@ -93,13 +117,39 @@ class Document:
             files_prop["file_info"] = []
 
         files_prop["file_info"] = self._normalize_file_info(files_prop["file_info"])
-
         file_info_list = files_prop["file_info"]
 
-        is_in, _, _ = self.is_in_file_list(filename)
-        if not is_in:
-            new_info = {"name": filename, "locations": {"location": location}}
-            file_info_list.append(new_info)
+        location = str(location).strip()
+        detected = (
+            "url" if location.lower().startswith(("http://", "https://")) else "file"
+        )
+        if ingest is None:
+            ingest = 0 if detected == "url" else 1
+        if delete_original is None:
+            delete_original = 0 if detected == "url" else 1
+        if location_type is None:
+            location_type = detected
+
+        entry = {
+            "delete_original": delete_original,
+            "uid": ido.IDO.unique_id(),
+            "location": location,
+            "parameters": "",
+            "location_type": location_type,
+            "ingest": ingest,
+        }
+
+        is_in, info, _ = self.is_in_file_list(filename)
+        if is_in and isinstance(info, dict):
+            existing = info.get("locations")
+            if isinstance(existing, dict):
+                existing = [existing]
+            elif not isinstance(existing, list):
+                existing = []
+            existing.append(entry)
+            info["locations"] = existing
+        else:
+            file_info_list.append({"name": filename, "locations": [entry]})
 
     def remove_file(self, filename):
         files_prop = self.document_properties.get("files")
