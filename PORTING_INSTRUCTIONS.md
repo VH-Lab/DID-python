@@ -851,7 +851,7 @@ destination is now cleared before the handler is invoked. Covered by
 Coverage: `tests/test_open_doc_locations.py`, 23 tests. MATLAB has none for
 this path.
 
-## Files added by Python are invisible to MATLAB (found 2026-08-28, NOT fixed)
+## Files added by Python are invisible to MATLAB — FIXED 2026-08-29
 
 The most serious symmetry break found in this audit, and it is one-directional,
 which is why nothing caught it.
@@ -874,15 +874,36 @@ Verified by adding a `demoFile` document with two local files through Python:
 `docs` has 1 row, `files` has 0, Python's own `open_doc` succeeds, and
 MATLAB's join returns nothing.
 
-**Why the symmetry tests miss it**: the suite covers `buildDatabase` only, with
-no file-bearing documents. Any fix should add that coverage — it is the case
-the tests exist to catch.
+**Why the symmetry tests missed it**: the suite covered `buildDatabase` only,
+whose demoA/demoB/demoC documents declare no `files` section, and it compares
+database summaries, which carry no file information. Nothing in the suite had a
+file, nothing called `open_doc`, and the compared summary had nowhere to show a
+difference. A `fileDocument` symmetry pair was added alongside the fix.
 
-**The fix is mechanical** — mirror MATLAB's insert, one row per location — with
-one judgement call. Python does not ingest, so `cached_location` would always
-be empty. That appears harmless, since MATLAB builds its candidate paths from
-the `uid` and falls back to `orig_location` for retrieval, but it wants
-confirming against a real MATLAB run.
+**The fix turned out to be three changes, not one:**
+
+1. `_do_add_doc` inserts one `files` row per location, with MATLAB's columns.
+2. `open_doc` **reads** that table too, falling back to the document's own
+   locations. This is the other half of the same gap: MATLAB deletes the
+   original after ingesting, so for a MATLAB-written document the JSON location
+   no longer exists and only the `files` rows can find the file. Ingested
+   copies resolve at `<db dir>/files/<uid>`, which is how MATLAB derives
+   `FileDir` and how it looks them up.
+3. **`add_file` was under-ported**, and blocked both of the above. It recorded
+   only the location string: no `uid`, no `location_type`, no `ingest` or
+   `delete_original`, and it stored `locations` as a bare dict rather than the
+   list MATLAB uses and the shipped `demoFile.json` carries. The missing `uid`
+   was not cosmetic — it is the `UNIQUE` key of the `files` table, so two
+   locations without one collapsed into a single row: **adding two files to a
+   document produced exactly one row.**
+
+`cached_location` is always empty on the Python side, since DID-python does no
+ingestion. That is a real difference in what the two write, not a gap in the
+row.
+
+**Known remaining divergence**: MATLAB's `add_file` errors when the name is not
+declared in the class's `file_list`; Python appends instead. Left alone as a
+separate behavioral decision.
 
 **Related, and larger**: Python has no ingestion at all. MATLAB copies or
 retrieves a location marked `ingest` into `FileDir`, and can delete the
@@ -890,3 +911,39 @@ original afterwards. Python does neither, so `ingest` and `delete_original`
 are inert on the Python side. `add_docs(**kwargs)` already forwards
 `custom_file_handler` through to `_do_add_doc`, so the parameter arrives — but
 there is nothing there to use it yet.
+
+## The fileDocument symmetry pair, added 2026-08-29
+
+`buildDatabase` exercises documents but never files. `fileDocument` exercises
+files end to end, in both directions:
+
+| | makeArtifacts | readArtifacts |
+|---|---|---|
+| Python | `tests/symmetry/make_artifacts/database/test_file_document.py` | `tests/symmetry/read_artifacts/database/test_file_document.py` |
+| MATLAB | `tests_symmetry/+did/+symmetry/+makeArtifacts/+database/fileDocument.m` | `tests_symmetry/+did/+symmetry/+readArtifacts/+database/fileDocument.m` |
+
+The maker builds a `demoFile` document with both declared files, each holding
+ten deterministic bytes — file *i* holds `i*10 .. i*10+9` — writes a
+`manifest.json` recording the document id and the expected bytes, and
+self-checks by reading them back through `open_doc`. The reader, parameterized
+over both artifact sources, opens each file and compares the bytes.
+
+Two properties worth keeping if these are edited:
+
+- **The reader skips rather than fails when the artifact is absent.** Each
+  repository's symmetry job checks out the *other* repository's `main`, so a
+  hard failure would mean neither half could land first. Skipping lets each
+  side merge independently and the cross-language check become real once both
+  are in.
+- **The maker self-checks before writing the manifest.** A maker that silently
+  produces a broken artifact turns into a *reader* failure in the other
+  language, which is a much harder thing to diagnose.
+
+### What can be verified without MATLAB
+
+`tests/test_open_doc_locations.py:TestMatlabShapedDatabase` builds MATLAB's
+on-disk shape by hand — files rows present, ingested copy at
+`<db dir>/files/<uid>`, original deleted — and checks `open_doc` resolves it.
+One of its cases deletes the `files` rows and asserts the same document becomes
+unreadable, which is what demonstrates the table is load-bearing rather than
+incidental.
