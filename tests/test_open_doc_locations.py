@@ -320,3 +320,78 @@ class TestCustomFileHandler(TestOpenDocLocations):
         file_obj.fopen()
         self.assertEqual(file_obj.fread(), b"fresh")
         file_obj.fclose()
+
+
+class TestMatlabShapedDatabase(TestOpenDocLocations):
+    """Reading a database written the way MATLAB writes one.
+
+    MATLAB ingests a local file into its FileDir -- `files/` beside the .sqlite
+    file -- names the copy by the location's uid, and then deletes the original.
+    The document JSON still holds the original path, which no longer exists, so
+    the file is findable only through the `files` table.
+
+    This is the half of the cross-language gap that can be verified without
+    MATLAB: it builds that exact shape by hand and checks open_doc resolves it.
+    """
+
+    def _matlab_shaped_doc(self, content=b"ingested payload"):
+        """Add a document, then rearrange it into MATLAB's on-disk shape."""
+        original = self._local_file("original.bin", content)
+        doc = Document("demoFile", **{"demoFile.value": 1})
+        doc.add_file("filename1.ext", original)
+        doc.add_file("filename2.ext", original)
+        self.db.add_docs([doc])
+
+        # The uid MATLAB would have named the ingested copy by.
+        cursor = self.db.dbid.cursor()
+        row = cursor.execute(
+            "SELECT f.uid FROM docs d, files f "
+            "WHERE d.doc_idx = f.doc_idx AND d.doc_id = ? AND f.filename = ?",
+            (doc.id(), "filename1.ext"),
+        ).fetchone()
+        self.assertIsNotNone(row, "the files table should carry a row per file")
+        uid = row["uid"]
+
+        # Ingest it: copy to <db dir>/files/<uid>, then delete the original.
+        file_dir = os.path.join(os.path.dirname(self.db.connection), "files")
+        os.makedirs(file_dir, exist_ok=True)
+        with open(os.path.join(file_dir, uid), "wb") as handle:
+            handle.write(content)
+        os.remove(original)
+
+        return doc, original
+
+    def test_ingested_copy_is_found_after_the_original_is_deleted(self):
+        doc, original = self._matlab_shaped_doc()
+        self.assertFalse(os.path.exists(original), "fixture should have removed it")
+
+        file_obj = self.db.open_doc(doc.id(), "filename1.ext")
+        file_obj.fopen()
+        self.assertIsNotNone(
+            file_obj.fid,
+            "an ingested file must resolve through the files table; the "
+            "document JSON's location no longer exists",
+        )
+        self.assertEqual(file_obj.fread(), b"ingested payload")
+        file_obj.fclose()
+
+    def test_a_file_with_no_ingested_copy_and_no_original_is_an_error(self):
+        doc, _ = self._matlab_shaped_doc()
+        # filename2.ext shares the deleted original but was never ingested.
+        with self.assertRaises(FileAccessError) as caught:
+            self.db.open_doc(doc.id(), "filename2.ext")
+        self.assertEqual(caught.exception.identifier, "DID:SQLITEDB:open")
+
+    def test_the_files_table_is_what_makes_it_work(self):
+        """Delete the rows and the same document becomes unreadable."""
+        doc, _ = self._matlab_shaped_doc()
+        cursor = self.db.dbid.cursor()
+        cursor.execute(
+            "DELETE FROM files WHERE doc_idx IN "
+            "(SELECT doc_idx FROM docs WHERE doc_id = ?)",
+            (doc.id(),),
+        )
+        self.db.dbid.commit()
+
+        with self.assertRaises(FileAccessError):
+            self.db.open_doc(doc.id(), "filename1.ext")
