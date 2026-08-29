@@ -592,7 +592,53 @@ on a format MATLAB cannot read); `tests/test_open_doc_locations.py` has a
 `TestFileCacheOnOpen` class whose second-open test uses a handler that raises,
 so the open can only succeed from the cache.
 
-### Still open: the path
+### The path — settled 2026-08-29
+
+Both languages now name `<home>/Documents/DID/fileCache`. MATLAB's
+`did.common.homeDirectory()` reads `USERPROFILE` on Windows and `HOME`
+elsewhere, which is what `pathlib.Path.home()` resolves, so the two agree by
+construction rather than by two string literals that happen to match.
+
+It was `fullfile(userpath, 'Documents', 'DID', 'fileCache')`, which on a
+normal install is `<home>/Documents/MATLAB/Documents/DID/fileCache` — a
+doubled `Documents` that reads like the line was written assuming `userpath`
+was the home directory. Anything left there is an unused cache and can be
+deleted.
+
+The symmetry pair `common.pathAgreement` covers what all the other cache
+tests assume. They check the two languages agree on the *contents* of the
+shared directory; that one checks they agree on *which* directory. A
+divergence there has no symptom — no error, no failing test, just two
+half-populated caches and every file fetched twice.
+
+### Known and accepted: the lock is not atomic on the MATLAB side
+
+MATLAB's `checkout_lock_file` tests `isfile(filename)` in its wait loop and
+then calls `fopen(filename,'wt')`, which does **not** fail if the file
+appeared in between. DID-python uses `open(..., "x")`, which is atomic.
+
+Two MATLAB processes can therefore both write a lock. Since 2026-08-29 they
+no longer both *believe* they hold it: `checkout_lock_file` reads the file
+back through `did.file.lock_file_key` and stands down unless the surviving
+key is its own. The records are a fixed length, so the loser reads a
+well-formed file with someone else's key rather than a mangled one.
+
+**The same race between the languages is deliberately left open.** MATLAB's
+`'wt'` truncates a lock Python created atomically, and the read-back then
+legitimately finds MATLAB's own key, so both proceed. Closing it needs
+create-exclusive semantics, which MATLAB's `fopen` does not offer. The
+options are a Java dependency in a low-level file utility — at a time when
+MathWorks is removing Java from the product — or an on-disk protocol change
+(a `mkdir`-based sentinel) that DID-python would have to adopt too.
+
+Neither is a good trade. The window is a few statements wide, contenders are
+spread apart by the `pause(1)` in the wait loop, and simultaneous MATLAB
+processes have used this scheme for years without trouble. The consequence
+is bounded for the file cache — a corrupted index is disposable, clear it
+and re-fetch — though not for `dumbjsondb`, which uses the same lock to
+guard a document store. Revisit if it ever actually bites.
+
+### Still superseded: the old note on the path
 
 `PathConstants.filecachepath` still differs — MATLAB `fullfile(userpath, ...)`,
 Python `Path.home()/Documents/DID/fileCache`. With the formats agreed, making

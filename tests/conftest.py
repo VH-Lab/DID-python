@@ -11,6 +11,18 @@ import pytest
 
 from did import common
 
+# Captured at import, before the fixture below has patched anything. The
+# path-agreement symmetry test has to record where the cache really lives,
+# not where the tests redirect it -- comparing two redirected paths would
+# prove nothing about whether the two languages agree.
+REAL_FILE_CACHE_PATH = common.PathConstants._file_cache_path
+
+
+@pytest.fixture
+def real_file_cache_path():
+    """Where the file cache actually lives, ignoring the test redirect."""
+    return REAL_FILE_CACHE_PATH
+
 
 @pytest.fixture(autouse=True)
 def isolated_file_cache(tmp_path_factory, monkeypatch):
