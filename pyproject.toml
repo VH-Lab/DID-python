@@ -11,11 +11,11 @@ authors = [
   { name = "Author", email = "vanhoosr@brandeis.edu" },
 ]
 dependencies = [
-    "numpy",
-    "pandas",
-    "portalocker",
-    "networkx",
-    "matplotlib",
+    "numpy>=1.20",
+    "pandas>=2.0,<4",
+    "portalocker>=2.0",
+    "networkx>=2.6",
+    "matplotlib>=3.5",
 ]
 requires-python = ">=3.10"
 
@@ -40,3 +40,14 @@ where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+# Ship the example schema/document JSON in the built distribution. Without this
+# a pip-installed `did` has no example_schema/ under site-packages, so
+# PathConstants.DEFPATH points at a nonexistent directory and Document('demoA')
+# raises FileNotFoundError. example_schema/ is a data directory (no __init__.py),
+# so packages.find does not discover it and its JSON must be declared here.
+[tool.setuptools.package-data]
+"did" = ["example_schema/**/*.json"]
+
+[tool.setuptools]
+include-package-data = true

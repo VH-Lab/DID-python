@@ -19,10 +19,8 @@ import json
 import os
 import shutil
 
-import pytest
-
 from did.file import checkout_lock_file, parse_lock_expiration, release_lock_file
-from tests.symmetry.conftest import SYMMETRY_BASE
+from tests.symmetry.conftest import SYMMETRY_BASE, missing_artifact
 
 
 class TestReadLockFile:
@@ -31,12 +29,14 @@ class TestReadLockFile:
             SYMMETRY_BASE, source_type, "file", "lockFile", "testLockFileArtifacts"
         )
         if not os.path.isdir(artifact_dir):
-            pytest.skip(
+            missing_artifact(
                 f"Artifact directory from {source_type} does not exist: {artifact_dir}"
             )
         manifest_file = os.path.join(artifact_dir, "manifest.json")
         if not os.path.isfile(manifest_file):
-            pytest.skip(f"manifest.json not found in {source_type} artifact directory.")
+            missing_artifact(
+                f"manifest.json not found in {source_type} artifact directory."
+            )
         with open(manifest_file) as handle:
             manifest = json.load(handle)
 

@@ -107,16 +107,35 @@ class Database(abc.ABC):
 
         _validate_docs(document_objs, all_ids, debug=self.debug)
 
-    def add_docs(self, document_objs, branch_id=None, validate=True, **kwargs):
+    #: Allowed values for the ``OnDuplicate`` option, mirroring DID-matlab's
+    #: ``did.database.add_docs`` ``OnDuplicate {mustBeMember(...)} = 'error'``.
+    _ON_DUPLICATE_CHOICES = ("ignore", "warn", "error")
+
+    def add_docs(
+        self,
+        document_objs,
+        branch_id=None,
+        validate=True,
+        OnDuplicate="error",
+        **kwargs,
+    ):
         if branch_id is None:
             branch_id = self.current_branch_id
+
+        # Reject invalid OnDuplicate up front (mirror MATLAB mustBeMember) so a
+        # typo cannot silently fall through to default behaviour.
+        if str(OnDuplicate).lower() not in self._ON_DUPLICATE_CHOICES:
+            raise ValueError(
+                "OnDuplicate must be one of "
+                f"{self._ON_DUPLICATE_CHOICES}; got {OnDuplicate!r}."
+            )
 
         # Ensure all input docs pass schema validation (unless requested not to)
         if validate:
             self.validate_docs(document_objs)
 
         for doc in document_objs:
-            self._do_add_doc(doc, branch_id, **kwargs)
+            self._do_add_doc(doc, branch_id, OnDuplicate=OnDuplicate, **kwargs)
 
     # ... other document-related methods would follow ...
 

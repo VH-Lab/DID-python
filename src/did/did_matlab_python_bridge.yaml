@@ -31,7 +31,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "ec1c7c7"
+    matlab_last_sync_hash: "c0a9507"
     python_path: "did/database.py"
     python_class: "Database"
     inherits: "abc.ABC"
@@ -48,6 +48,34 @@ classes:
       missing optional dependency raises the opt-in
       MissingOptionalDependencyWarning gated on the
       DID_FORCE_VALIDATION_WARNINGS environment variable.
+
+      Reviewed 2026-08-29 through MATLAB c0a9507, nothing to port. Two
+      MATLAB fixes landed in this window and Python has neither defect:
+
+      c0a9507 -- MATLAB's checkfiles built the "Some required files are
+      missing" message and then fell through to isvalid = 1, so add_docs
+      committed the document anyway. Python's validate.check_files returns
+      (False, message) on that branch and Database.add_docs raises on it;
+      tests/test_validation.py covers it. Python's can_find_one_file already
+      matches the post-#156 MATLAB rule (no network I/O during validation, a
+      non-local location is admitted and reported at read time), which is why
+      no http pre-check appears on either side.
+
+      4ce3e1b -- MATLAB's remove_docs wrapped each do_remove_doc call in a
+      bare try/catch with an empty handler, nullifying OnMissing='error'.
+      Python's Database.remove_docs calls _do_remove_doc directly with no
+      exception handling, and SQLiteDB._do_remove_doc honors OnMissing
+      (ignore returns, warn prints, anything else raises). Already correct.
+
+      add_docs gained an OnDuplicate parameter on 2026-08-29 (default
+      'error', mirroring MATLAB's mustBeMember), validated in this class and
+      passed through to _do_add_doc; see the sqlitedb entry in
+      did_matlab_python_bridge_implementations.yaml for the full note.
+      Document.base.datestamp also changed on the same date, from
+      str(datetime.utcnow()) to ISO-8601 milliseconds with a 'Z' suffix,
+      matching DID-matlab's UTCLeapSeconds output and base.schema.json's own
+      declared default; the old space-separated, timezone-less form was read
+      as LOCAL time by a JS consumer's new Date().
 
     properties:
       - name: connection

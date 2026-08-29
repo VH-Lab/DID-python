@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import datetime, timezone
 
 from did.document import Document
 
@@ -45,6 +46,20 @@ class TestDocument(unittest.TestCase):
             "updated_value",
             "Failed to update an existing dependency value.",
         )
+
+    def test_datestamp_is_iso8601_utc(self):
+        # base.datestamp must be ISO-8601 millis + 'Z' (not the old
+        # space-separated tz-less str(datetime.utcnow()) form).
+        doc = Document("demoA")
+        ts = doc.document_properties["base"]["datestamp"]
+
+        self.assertRegex(ts, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
+        # The actual bug: the string must be an unambiguous UTC instant. Parsing
+        # it must yield a timezone-aware datetime within a few seconds of now.
+        parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        self.assertIsNotNone(parsed.tzinfo)
+        now = datetime.now(timezone.utc)
+        self.assertLess(abs((now - parsed).total_seconds()), 5)
 
     def test_file_management(self):
         # Create a document of type 'demoFile', which is defined to handle files

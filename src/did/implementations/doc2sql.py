@@ -1,3 +1,4 @@
+import json
 import re
 
 
@@ -43,56 +44,60 @@ def _get_class_name(doc_props):
     return get_field(doc_props, ["document_class.class_name", "ndi_document.type"])
 
 
+def _superclass_names_from(superclasses):
+    """Bare superclass names from one ``superclasses`` collection.
+
+    Mirrors MATLAB ``doc2sql``'s array-level preference (DID-matlab c618a05):
+    a did1-form collection carries ``definition`` (a ``$DIDDOCUMENT/base.json``
+    path, from which the name is the stripped basename); a did2-form collection
+    (V_delta / V_zeta) carries the superclass name directly in ``class_name``
+    and has no ``definition``. MATLAB reads ``{superclass.definition}`` across
+    the whole struct array, so the choice is made once for the collection, not
+    per entry -- ``definition`` wins wherever any entry has it.
+    """
+    if isinstance(superclasses, dict):
+        # MATLAB's jsonencode unwraps a single-element cell array into a scalar.
+        superclasses = [superclasses]
+    if not isinstance(superclasses, list) or not superclasses:
+        return []
+
+    dicts = [sc for sc in superclasses if isinstance(sc, dict)]
+    key = None
+    if any("definition" in sc for sc in dicts):
+        key = "definition"
+    elif any("class_name" in sc for sc in dicts):
+        key = "class_name"
+
+    names = []
+    for sc in superclasses:
+        if isinstance(sc, str):
+            names.append(sc)
+        elif isinstance(sc, dict) and key is not None and key in sc:
+            name = re.sub(r".+/", "", str(sc[key]))
+            names.append(re.sub(r"\..+$", "", name))
+    return names
+
+
 def _get_superclass_str(doc_props):
     """Extract superclass string matching MATLAB's doc2sql format.
 
     MATLAB produces comma-space separated, sorted unique superclass names.
-    For MATLAB-style definitions like "$PATH/base.json", strip path and extension.
-    For DID-python style ["base", "demoA"], use directly.
+    For MATLAB-style definitions like "$PATH/base.json", strip path and
+    extension; for a did2 ``{"class_name": "base"}`` entry take the name as
+    given; for DID-python style ["base", "demoA"], use directly.
     """
     # DID-python schema format: top-level 'superclasses' list of strings
     if "superclasses" in doc_props and isinstance(
         doc_props["superclasses"], (list, dict)
     ):
-        superclasses = doc_props["superclasses"]
-        # Normalize bare dict to a single-element list (MATLAB's jsonencode
-        # unwraps single-element cell arrays into scalars).
-        if isinstance(superclasses, dict):
-            superclasses = [superclasses]
-        if not superclasses:
-            return ""
-        names = []
-        for sc in superclasses:
-            if isinstance(sc, str):
-                names.append(sc)
-            elif isinstance(sc, dict) and "definition" in sc:
-                # MATLAB-style: extract name from definition path
-                defn = sc["definition"]
-                name = re.sub(r".+/", "", defn)
-                name = re.sub(r"\..+$", "", name)
-                names.append(name)
-        names = sorted(set(names))
-        return ", ".join(names)
+        names = _superclass_names_from(doc_props["superclasses"])
+        return ", ".join(sorted(set(names)))
 
     # NDI / MATLAB format: document_class.superclasses
-    superclasses = get_field(doc_props, ["document_class.superclasses"])
-    # Normalize bare dict (single superclass from MATLAB's jsonencode)
-    if isinstance(superclasses, dict):
-        superclasses = [superclasses]
-    if isinstance(superclasses, list):
-        names = []
-        for sc in superclasses:
-            if isinstance(sc, dict) and "definition" in sc:
-                defn = sc["definition"]
-                name = re.sub(r".+/", "", defn)
-                name = re.sub(r"\..+$", "", name)
-                names.append(name)
-            elif isinstance(sc, str):
-                names.append(sc)
-        names = sorted(set(names))
-        return ", ".join(names)
-
-    return ""
+    names = _superclass_names_from(
+        get_field(doc_props, ["document_class.superclasses"])
+    )
+    return ", ".join(sorted(set(names)))
 
 
 def _serialize_depends_on(doc_props):
@@ -115,15 +120,39 @@ def _serialize_depends_on(doc_props):
 
 
 def _flatten_dict(d, prefix=""):
-    """Flatten a nested dict using ___ separator for nested keys (matching MATLAB's getMetaTableFrom)."""
+    """Flatten a nested dict using ___ separator for nested keys.
+
+    Matches DID-matlab getMetaTableFrom/recurseFields:
+
+    * nested dicts recurse with a ``___`` separator;
+    * a list of dicts (a struct array) expands into one column per element,
+      each element's flattened column suffixed ``_<1-based idx>`` — but ONLY
+      when the list has more than one element (a single-element list is
+      unsuffixed, mirroring doc2sql.m's ``numElements > 1`` rule);
+    * any residual scalar/mixed list is JSON-encoded (not ``str()``-repr'd) so
+      the stored value is valid JSON parseable by MATLAB/JS consumers instead
+      of a Python repr with single quotes.
+
+    Previously every list was ``str(value)``'d into one column, so per-element
+    fields were unsearchable and the stored string disagreed with what
+    DID-matlab writes for the same document.
+    """
     items = []
     for key, value in d.items():
         col_name = f"{prefix}___{key}" if prefix else key
         if isinstance(value, dict):
             items.extend(_flatten_dict(value, col_name))
         elif isinstance(value, list):
-            # Convert lists to string representation
-            items.append((col_name, str(value)))
+            if value and all(isinstance(el, dict) for el in value):
+                # Struct array: expand per element.
+                multi = len(value) > 1
+                for idx, el in enumerate(value, start=1):
+                    for sub_name, sub_val in _flatten_dict(el, col_name):
+                        name = f"{sub_name}_{idx}" if multi else sub_name
+                        items.append((name, sub_val))
+            else:
+                # Scalar / empty / mixed list: JSON-encode.
+                items.append((col_name, json.dumps(value)))
         else:
             items.append((col_name, value))
     return items

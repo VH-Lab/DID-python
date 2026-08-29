@@ -6,9 +6,21 @@ from . import ido
 from .common import PathConstants
 
 
-def _utcnow():
-    """Naive UTC timestamp, identical to the deprecated datetime.utcnow()."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+def _utc_timestamp():
+    """Return the current UTC time as an ISO-8601 millisecond string with 'Z'.
+
+    Ported from NDI-python (ndi.fun.timestamp) with the leap-second guard.
+    ``str(datetime.utcnow())`` previously emitted a space-separated,
+    timezone-less string ('2026-07-20 22:36:19.611068') that diverges from the
+    DID-matlab UTCLeapSeconds ISO-8601 output and from base.schema.json's own
+    default ('2018-12-05T18:36:47.241Z'); a JS ``new Date()`` parses the
+    tz-less form as LOCAL time. Emit '%Y-%m-%dT%H:%M:%S.%fZ' truncated to
+    milliseconds, clamping the (theoretical) leap-second :60 to :59.999.
+    """
+    now = datetime.now(timezone.utc)
+    ts = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+    ts = ts.replace(":60.", ":59.999")
+    return ts + "Z"
 
 
 class Document:
@@ -18,7 +30,7 @@ class Document:
         else:
             self.document_properties = self.read_blank_definition(document_type)
             self.document_properties["base"]["id"] = ido.IDO.unique_id()
-            self.document_properties["base"]["datestamp"] = str(_utcnow())
+            self.document_properties["base"]["datestamp"] = _utc_timestamp()
 
             for key, value in kwargs.items():
                 path = key.split(".")

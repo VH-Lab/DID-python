@@ -10,11 +10,9 @@ the MATLAB makeArtifact test, then validates them against a live database summar
 import json
 import os
 
-import pytest
-
 from did.implementations.sqlitedb import SQLiteDB
 from did.util import compare_database_summary, database_summary
-from tests.symmetry.conftest import SYMMETRY_BASE
+from tests.symmetry.conftest import SYMMETRY_BASE, missing_artifact
 
 
 class TestReadBuildDatabase:
@@ -30,14 +28,16 @@ class TestReadBuildDatabase:
         )
 
         if not os.path.isdir(artifact_dir):
-            pytest.skip(
+            missing_artifact(
                 f"Artifact directory from {source_type} does not exist: {artifact_dir}"
             )
 
         # Step 1: Load the saved summary
         summary_file = os.path.join(artifact_dir, "summary.json")
         if not os.path.isfile(summary_file):
-            pytest.skip(f"summary.json not found in {source_type} artifact directory.")
+            missing_artifact(
+                f"summary.json not found in {source_type} artifact directory."
+            )
 
         with open(summary_file, "r") as f:
             saved_summary = json.load(f)
@@ -48,7 +48,7 @@ class TestReadBuildDatabase:
         # Step 2: Open the DID database and produce a live summary
         db_path = os.path.join(artifact_dir, saved_summary["dbFilename"])
         if not os.path.isfile(db_path):
-            pytest.skip(f"Database file not found: {db_path}")
+            missing_artifact(f"Database file not found: {db_path}")
 
         db = SQLiteDB(db_path)
         live_summary = database_summary(db)
@@ -66,14 +66,14 @@ class TestReadBuildDatabase:
 
         json_branches_dir = os.path.join(artifact_dir, "jsonBranches")
         if not os.path.isdir(json_branches_dir):
-            pytest.skip(f"jsonBranches directory not found in {source_type}")
+            missing_artifact(f"jsonBranches directory not found in {source_type}")
 
         for branch_name in branch_names:
             branch_json_file = os.path.join(
                 json_branches_dir, f"branch_{branch_name}.json"
             )
             if not os.path.isfile(branch_json_file):
-                pytest.skip(
+                missing_artifact(
                     f"Branch JSON file missing for {branch_name} in {source_type}"
                 )
 

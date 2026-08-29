@@ -22,7 +22,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "bd25cd9"
+    matlab_last_sync_hash: "6edd765"
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
     inherits_matlab: "did.database"
@@ -48,6 +48,41 @@ classes:
       (absolute or db-relative) locations -- so there is nothing to port;
       see the not_applicable entry for ndi.cloud.api.files.getFile and the
       "Not Yet Ported" table in PORTING_INSTRUCTIONS.md.
+
+      MATLAB 6edd765 (2026-07-22) fixed two lifecycle defects on the add
+      path. Reviewed 2026-08-29; neither is present here, but the first
+      leaves a behavioral divergence worth recording:
+
+      (a) MATLAB's do_add_doc honored OnDuplicate='ignore'/'warn' by not
+      erroring, then reached the branch_docs INSERT anyway and threw on
+      PRIMARY KEY(branch_id,doc_idx). Python never had that failure --
+      SQLiteDB._do_add_doc caught sqlite3.IntegrityError around that INSERT
+      -- but it had no OnDuplicate option at all and so always behaved as
+      'ignore', silently keeping stale content where MATLAB errors.
+      CLOSED 2026-08-29 by porting audriB's e72551f from DID-python#26:
+      add_docs and _do_add_doc now take OnDuplicate in
+      {error(default),warn,ignore}, validated up front against
+      _ON_DUPLICATE_CHOICES the way MATLAB's mustBeMember does, and the
+      duplicate path returns early without rewriting content. The default
+      is now 'error', matching MATLAB -- a behavior change: re-adding a
+      document already on a branch raises where it used to be a silent
+      no-op. No existing test or caller relied on the old behavior.
+
+      That commit also made the add path atomic, which MATLAB reached by a
+      different route. Python inserted docs/doc_data rows BEFORE the
+      branch_docs FOREIGN KEY check discovered a missing branch, and raised
+      without rolling back, so the orphan rows sat in the open transaction
+      and were committed by the next successful add -- a document belonging
+      to no branch was then reported present. The branch is now checked
+      before any INSERT, and every failure path rolls back and restores the
+      _fields_cache snapshot. Regression: tests/test_add_docs_atomicity.py.
+
+      (b) MATLAB's add_docs('Validate',false) issued `pragma
+      journal_mode=OFF` and restored it only on the normal exit path, so a
+      throw in the document loop disabled rollback protection for the life
+      of the connection; 6edd765 restores it from an onCleanup. Python has
+      no such fast path -- it never changes journal_mode (grep confirms no
+      occurrence in did/) -- so there is nothing to restore.
 
     properties:
       - name: FileDir
@@ -295,7 +330,7 @@ classes:
   - name: doc2sql
     type: function
     matlab_path: "+did/+implementations/doc2sql.m"
-    matlab_last_sync_hash: "3aa892d"
+    matlab_last_sync_hash: "c618a05"
     python_path: "did/implementations/doc2sql.py"
     python_name: "doc_to_sql"
 
@@ -319,6 +354,33 @@ classes:
       doc2sql contains the critical MATLAB-Python bridge logic for
       serializing documents to SQL. Python version handles both native
       and MATLAB document_class formats. Synchronized 2026-03-25.
+
+      MATLAB c618a05 (2026-07-22) taught doc2sql to read did2-form
+      superclasses. Ported 2026-08-29. did1 documents carry a superclass
+      `.definition` path; did2 (V_delta / V_zeta) documents carry the name
+      directly in `.class_name` and have no `.definition`. MATLAB errored
+      outright on the did2 shape ("Unrecognized field name definition");
+      Python's _get_superclass_str silently dropped the entry and wrote an
+      empty meta.superclass column, so an isa() query returned a different
+      result set in each language with no error in either -- a silent
+      scientific divergence. _superclass_names_from now mirrors MATLAB's
+      array-level preference exactly: `definition` wherever any entry has
+      it, else `class_name`, else nothing. Deliberately NOT re-engineered
+      into a per-entry union, matching the MATLAB commit's own reasoning --
+      a MATLAB struct array cannot hold mixed fields, so the mixed shape
+      does not arise from MATLAB. Regression: tests/test_doc2sql_superclass.py
+      TestGetSuperclassStrDid2ClassName.
+
+      Also ported 2026-08-29, from audriB's c968c95 in DID-python#26:
+      _flatten_dict now mirrors doc2sql.m's getMetaTableFrom/recurseFields.
+      A list of dicts (a MATLAB struct array) expands into one column per
+      element suffixed _<1-based idx>, but only when the list has more than
+      one element -- doc2sql.m's numElements > 1 rule -- and any residual
+      scalar or mixed list is JSON-encoded. Previously every list was
+      str()'d into a single column, storing a Python repr with single
+      quotes: per-element fields were unsearchable and the stored string
+      disagreed with what DID-matlab writes for the same document.
+      Regression: tests/test_doc2sql_flatten.py.
 
   # -----------------------------------------------------------------------
   # did.implementations.binarydoc_matfid
