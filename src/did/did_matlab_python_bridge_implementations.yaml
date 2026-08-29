@@ -56,11 +56,26 @@ classes:
       (a) MATLAB's do_add_doc honored OnDuplicate='ignore'/'warn' by not
       erroring, then reached the branch_docs INSERT anyway and threw on
       PRIMARY KEY(branch_id,doc_idx). Python never had that failure --
-      SQLiteDB._do_add_doc catches sqlite3.IntegrityError around that
-      INSERT -- but it also has no OnDuplicate option at all, so it always
-      behaves as 'ignore'. A caller cannot ask Python to error or warn on a
-      duplicate the way MATLAB now can. Not ported: adding the option is a
-      small feature, not a bug fix, and no Python caller depends on it yet.
+      SQLiteDB._do_add_doc caught sqlite3.IntegrityError around that INSERT
+      -- but it had no OnDuplicate option at all and so always behaved as
+      'ignore', silently keeping stale content where MATLAB errors.
+      CLOSED 2026-08-29 by porting audriB's e72551f from DID-python#26:
+      add_docs and _do_add_doc now take OnDuplicate in
+      {error(default),warn,ignore}, validated up front against
+      _ON_DUPLICATE_CHOICES the way MATLAB's mustBeMember does, and the
+      duplicate path returns early without rewriting content. The default
+      is now 'error', matching MATLAB -- a behavior change: re-adding a
+      document already on a branch raises where it used to be a silent
+      no-op. No existing test or caller relied on the old behavior.
+
+      That commit also made the add path atomic, which MATLAB reached by a
+      different route. Python inserted docs/doc_data rows BEFORE the
+      branch_docs FOREIGN KEY check discovered a missing branch, and raised
+      without rolling back, so the orphan rows sat in the open transaction
+      and were committed by the next successful add -- a document belonging
+      to no branch was then reported present. The branch is now checked
+      before any INSERT, and every failure path rolls back and restores the
+      _fields_cache snapshot. Regression: tests/test_add_docs_atomicity.py.
 
       (b) MATLAB's add_docs('Validate',false) issued `pragma
       journal_mode=OFF` and restored it only on the normal exit path, so a
@@ -355,6 +370,17 @@ classes:
       a MATLAB struct array cannot hold mixed fields, so the mixed shape
       does not arise from MATLAB. Regression: tests/test_doc2sql_superclass.py
       TestGetSuperclassStrDid2ClassName.
+
+      Also ported 2026-08-29, from audriB's c968c95 in DID-python#26:
+      _flatten_dict now mirrors doc2sql.m's getMetaTableFrom/recurseFields.
+      A list of dicts (a MATLAB struct array) expands into one column per
+      element suffixed _<1-based idx>, but only when the list has more than
+      one element -- doc2sql.m's numElements > 1 rule -- and any residual
+      scalar or mixed list is JSON-encoded. Previously every list was
+      str()'d into a single column, storing a Python repr with single
+      quotes: per-element fields were unsearchable and the stored string
+      disagreed with what DID-matlab writes for the same document.
+      Regression: tests/test_doc2sql_flatten.py.
 
   # -----------------------------------------------------------------------
   # did.implementations.binarydoc_matfid

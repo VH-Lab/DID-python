@@ -67,6 +67,16 @@ classes:
       exception handling, and SQLiteDB._do_remove_doc honors OnMissing
       (ignore returns, warn prints, anything else raises). Already correct.
 
+      add_docs gained an OnDuplicate parameter on 2026-08-29 (default
+      'error', mirroring MATLAB's mustBeMember), validated in this class and
+      passed through to _do_add_doc; see the sqlitedb entry in
+      did_matlab_python_bridge_implementations.yaml for the full note.
+      Document.base.datestamp also changed on the same date, from
+      str(datetime.utcnow()) to ISO-8601 milliseconds with a 'Z' suffix,
+      matching DID-matlab's UTCLeapSeconds output and base.schema.json's own
+      declared default; the old space-separated, timezone-less form was read
+      as LOCAL time by a JS consumer's new Date().
+
     properties:
       - name: connection
         python_name: connection
