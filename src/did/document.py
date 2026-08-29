@@ -217,8 +217,7 @@ class Document:
 
         if data is not None:
             # A flat schema-style file: normalize it the way DID-python used to.
-            if "base" not in data:
-                data["base"] = {}
+            data["base"] = Document._blank_base_group(data.get("base"))
             return Document._normalize_to_document_class(data)
 
         # Legacy path: look for the validation schema directly.
@@ -227,8 +226,7 @@ class Document:
         if os.path.exists(filepath):
             with open(filepath, "r") as f:
                 data = json.load(f)
-                if "base" not in data:
-                    data["base"] = {}
+                data["base"] = Document._blank_base_group(data.get("base"))
                 return Document._normalize_to_document_class(data)
 
         # Fallback for base
@@ -324,6 +322,44 @@ class Document:
         class_props["superclasses"] = unique_superclasses
         data["document_class"] = class_props
         return data
+
+    @staticmethod
+    def _blank_base_group(base):
+        """Return a ``base`` group the constructor can stamp id/datestamp onto.
+
+        ``__init__`` writes ``document_properties["base"]["id"]``, so ``base``
+        has to be a dict by the time a blank definition is returned. A schema
+        file may instead store it as a LIST of field descriptors -- that is the
+        shape of ``base.schema.json``, where ``base`` is
+        ``[{"name": "id", "default_value": ""}, ...]`` (``demoA.schema.json``
+        has no top-level ``base`` at all, which is why the list form is easy to
+        miss). Reading such a file raised
+        ``TypeError: list indices must be integers or slices, not str``.
+
+        Both schema-reading branches of ``read_blank_definition`` route through
+        here. DID-python#30 guarded only the ``database_schema`` branch, but a
+        corpus whose definition directories point straight at the schema files
+        is served by the flat-schema branch above it, so the crash survived.
+        """
+        if isinstance(base, list):
+            return Document._field_descriptors_to_defaults(base)
+        if isinstance(base, dict):
+            return base
+        return {}
+
+    @staticmethod
+    def _field_descriptors_to_defaults(descriptors):
+        """Convert a schema field-descriptor list to a {name: default_value} dict.
+
+        Each descriptor is a dict with at least a 'name' and (usually) a
+        'default_value'. Used to turn base.schema.json's 'base' list into a
+        blank base group the constructor can stamp id/datestamp onto.
+        """
+        defaults = {}
+        for field in descriptors:
+            if isinstance(field, dict) and "name" in field:
+                defaults[field["name"]] = field.get("default_value", "")
+        return defaults
 
     @staticmethod
     def _normalize_to_document_class(data):

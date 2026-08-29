@@ -110,3 +110,19 @@ jobs:
             nSkipped = sum([readResults.Incomplete]);
             fprintf("Results: %d passed, %d failed, %d skipped\n", nPassed, nFailed, nSkipped);
             assert(nFailed == 0, "readArtifacts tests failed");
+            % A skipped variant (e.g. the matlabArtifacts leg when Step 1 wrote
+            % its artifacts somewhere this step cannot see) must NOT report
+            % green: this gate asserted only on nFailed, so an all-skipped run
+            % passed and "symmetry tests green" meant only that MATLAB could
+            % read its own output. Fail when anything was skipped, and require
+            % at least one pass so an empty suite cannot slip through --
+            % TestSuite.fromPackage finding nothing yields 0/0/0, and MATLAB's
+            % all([]) is true, so the makeArtifacts assert above would not
+            % catch that on its own.
+            %
+            % Ported verbatim from DID-matlab .github/workflows/test-symmetry.yml
+            % (1ba2285), which hardened its copy of this gate while this mirror
+            % kept the old one. The Python readArtifact step above closes the
+            % same hole from the other side via DID_SYMMETRY_REQUIRE_ARTIFACTS.
+            assert(nSkipped == 0, "readArtifacts had skipped (Incomplete) variants - the cross-language leg did not run");
+            assert(nPassed > 0, "readArtifacts ran no passing tests");
