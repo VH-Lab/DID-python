@@ -453,7 +453,7 @@ class TestFileCacheOnOpen(TestOpenDocLocations):
 
     def test_the_second_open_does_not_retrieve_again(self):
         doc = self._remote_doc()
-        handler, calls = self._handler()
+        handler, _ = self._handler()
         self.db.open_doc(doc.id(), "filename1.ext", custom_file_handler=handler)
 
         # A handler that would fail if it were called at all. The open still
@@ -496,7 +496,7 @@ class TestFileCacheOnOpen(TestOpenDocLocations):
     def test_an_unusable_cache_does_not_break_the_open(self):
         """The cache is an optimization; losing it costs a re-fetch, not the file."""
         doc = self._remote_doc()
-        handler, calls = self._handler()
+        handler, _ = self._handler()
 
         with mock.patch.object(SQLiteDB, "_file_cache", staticmethod(lambda: None)):
             file_obj = self.db.open_doc(

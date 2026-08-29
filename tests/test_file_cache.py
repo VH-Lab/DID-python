@@ -42,26 +42,30 @@ def cache(cache_dir):
 
 
 class TestDatenum:
+    # The datetimes below are naive on purpose: a datenum is a local-time
+    # calendar number, matching MATLAB's now(), so a tz-aware value would be
+    # the wrong input. Hence the DTZ001 suppressions.
+
     def test_it_matches_matlabs_datenum(self):
         # datenum('01-Jan-2000') is 730486 and datenum('01-Jan-1970') is
         # 719529 in MATLAB. The cache stores these numbers as raw doubles,
         # so an offset error would silently reorder every eviction.
-        assert datenum(dt.datetime(2000, 1, 1)) == 730486.0
-        assert datenum(dt.datetime(1970, 1, 1)) == 719529.0
+        assert datenum(dt.datetime(2000, 1, 1)) == 730486.0  # noqa: DTZ001
+        assert datenum(dt.datetime(1970, 1, 1)) == 719529.0  # noqa: DTZ001
 
     def test_the_time_of_day_is_the_fraction(self):
-        assert datenum(dt.datetime(2000, 1, 1, 12)) == 730486.5
+        assert datenum(dt.datetime(2000, 1, 1, 12)) == 730486.5  # noqa: DTZ001
 
     def test_it_round_trips(self):
-        when = dt.datetime(2020, 6, 15, 13, 45, 30)
+        when = dt.datetime(2020, 6, 15, 13, 45, 30)  # noqa: DTZ001
         assert abs((datenum_to_datetime(datenum(when)) - when).total_seconds()) < 0.001
 
 
 class TestOnDiskFormat:
     def test_the_index_is_matlabs_binary_layout_not_json(self, cache):
-        raw = open(
-            os.path.join(cache.directory_name, FileCache.CACHE_INFO_FILE_NAME), "rb"
-        ).read()
+        info = os.path.join(cache.directory_name, FileCache.CACHE_INFO_FILE_NAME)
+        with open(info, "rb") as handle:
+            raw = handle.read()
         assert len(raw) == HEADER_SIZE
         assert struct.unpack("<H", raw[0:2])[0] == NAME_CHARACTERS
         assert struct.unpack("<QQQ", raw[2:26]) == (100000, 80000, 0)
@@ -146,7 +150,8 @@ class TestContents:
     def test_the_content_survives(self, cache, tmp_path):
         source = make_source(tmp_path, 7, 40)
         cache.add_file(source, name_of(7))
-        assert open(cache.full_path(name_of(7)), "rb").read() == bytes([7]) * 40
+        with open(cache.full_path(name_of(7)), "rb") as handle:
+            assert handle.read() == bytes([7]) * 40
 
     def test_a_name_of_the_wrong_length_is_refused(self, cache, tmp_path):
         with pytest.raises(ValueError, match="wrong number of characters"):

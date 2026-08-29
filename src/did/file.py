@@ -660,8 +660,7 @@ class BinaryTable:
             temp_name = self.temp_file_name()
             with open(temp_name, "wb") as dest:
                 dest.write(header)
-                for row_bytes in rows:
-                    dest.write(row_bytes)
+                dest.writelines(rows)
             os.replace(temp_name, self.file.fullpathfilename)
         finally:
             self.release_lock(lock_fid, key)
@@ -672,7 +671,7 @@ class BinaryTable:
         self,
         col,
         value,
-        sorted=False,  # noqa: A002 - MATLAB's name for this option
+        sorted=False,  # shadows the builtin deliberately: MATLAB's option name
         lower_bound=None,
         upper_bound=None,
         is_recurrent=False,
@@ -912,7 +911,11 @@ def datenum(when=None):
     anything else would order the cache by a number that is not a date, so
     the conversion belongs here rather than at each call site.
     """
-    when = datetime.now() if when is None else when
+    # Local time, deliberately: MATLAB's now() is local, and the two
+    # languages write last-access times into the same .fileCacheInfo. A
+    # UTC value here would sort Python's entries against MATLAB's by an
+    # offset of up to a day, which is exactly what eviction orders on.
+    when = datetime.now() if when is None else when  # noqa: DTZ005
     seconds = (
         when.hour * 3600 + when.minute * 60 + when.second + when.microsecond / 1000000.0
     )
