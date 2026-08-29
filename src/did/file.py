@@ -176,6 +176,77 @@ class Fileobj:
         self.fclose()
 
 
+# MATLAB writes its lock expiration with char(datetime(...)), whose month is
+# an English three-letter abbreviation. Parsing it with %b would make Python's
+# reading of it depend on the reader's locale, so the months are spelled out
+# here instead.
+_LOCK_MONTHS = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
+
+_MATLAB_LOCK_TIME = re.compile(
+    r"^(\d{1,2})-([A-Za-z]{3})-(\d{4})[ T](\d{1,2}):(\d{2}):(\d{2})(?:\.(\d+))?$"
+)
+
+
+def parse_lock_expiration(text):
+    """Parse a lock file's expiration line, in either language's format.
+
+    Both languages write UTC, but not the same way: Python writes ISO 8601
+    and MATLAB writes char(datetime(...)), which is "29-Aug-2026 14:35:12".
+    A reader that understands only its own format cannot tell an expired
+    lock from an unreadable one -- so a process that died holding the lock
+    wedges the other language out of a shared file permanently, which is
+    exactly the crash the one-hour expiry exists to recover from.
+
+    Raises ValueError if the text is in neither format.
+    """
+    text = text.strip()
+    # A trailing "Z" is valid ISO 8601 and is what a MATLAB writer using a
+    # UTCLeapSeconds datetime is obliged to emit -- that zone accepts no
+    # other display format. fromisoformat only learned to read it in 3.11,
+    # and this package supports 3.10, so strip it here rather than leaving
+    # the oldest supported Python unable to read such a lock. Both languages
+    # write UTC, so dropping the marker loses nothing.
+    if text.endswith(("Z", "z")):
+        text = text[:-1]
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
+
+    match = _MATLAB_LOCK_TIME.match(text)
+    if match is None:
+        raise ValueError(f'"{text}" is not a lock expiration time.')
+
+    day, month, year, hour, minute, second, fraction = match.groups()
+    month_number = _LOCK_MONTHS.get(month.lower())
+    if month_number is None:
+        raise ValueError(f'"{month}" is not a month.')
+    # Naive, like _utcnow(), because that is what this value is compared
+    # against; both languages write the expiry in UTC. Hence DTZ001.
+    return datetime(  # noqa: DTZ001
+        int(year),
+        month_number,
+        int(day),
+        int(hour),
+        int(minute),
+        int(second),
+        round(float("0." + fraction) * 1000000) if fraction else 0,
+    )
+
+
 def checkout_lock_file(filename, check_loops=30, throw_error=True, expiration=3600):
     """Try to establish control of the lock file named ``filename``.
 
@@ -207,8 +278,7 @@ def checkout_lock_file(filename, check_loops=30, throw_error=True, expiration=36
                 with open(lock_filename, "r") as f:
                     lines = f.readlines()
                     if len(lines) >= 1:
-                        expiration_time_str = lines[0].strip()
-                        expiration_time = datetime.fromisoformat(expiration_time_str)
+                        expiration_time = parse_lock_expiration(lines[0])
                         if _utcnow() > expiration_time:
                             # Lock expired, try to remove it
                             release_lock_file(
