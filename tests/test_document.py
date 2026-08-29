@@ -1,5 +1,4 @@
 import os
-import re
 import unittest
 from datetime import datetime, timezone
 
@@ -54,9 +53,7 @@ class TestDocument(unittest.TestCase):
         doc = Document("demoA")
         ts = doc.document_properties["base"]["datestamp"]
 
-        self.assertRegex(
-            ts, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$"
-        )
+        self.assertRegex(ts, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
         # The actual bug: the string must be an unambiguous UTC instant. Parsing
         # it must yield a timezone-aware datetime within a few seconds of now.
         parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))

@@ -6,8 +6,8 @@ str()-repr'd any list into a single column, so per-element fields were
 unsearchable and the stored string disagreed with DID-matlab.
 """
 
-from did.implementations.doc2sql import _flatten_dict, doc_to_sql
 from did.document import Document
+from did.implementations.doc2sql import _flatten_dict, doc_to_sql
 
 
 def _cols(items):
@@ -30,9 +30,7 @@ class TestFlattenStructArray:
         assert cols == {"channel___name": "ch1"}
 
     def test_nested_dict_within_element(self):
-        items = _flatten_dict(
-            {"channel": [{"loc": {"x": 1}}, {"loc": {"x": 2}}]}
-        )
+        items = _flatten_dict({"channel": [{"loc": {"x": 1}}, {"loc": {"x": 2}}]})
         cols = _cols(items)
         assert cols["channel___loc___x_1"] == 1
         assert cols["channel___loc___x_2"] == 2

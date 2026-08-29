@@ -112,7 +112,12 @@ class Database(abc.ABC):
     _ON_DUPLICATE_CHOICES = ("ignore", "warn", "error")
 
     def add_docs(
-        self, document_objs, branch_id=None, validate=True, OnDuplicate="error", **kwargs
+        self,
+        document_objs,
+        branch_id=None,
+        validate=True,
+        OnDuplicate="error",
+        **kwargs,
     ):
         if branch_id is None:
             branch_id = self.current_branch_id

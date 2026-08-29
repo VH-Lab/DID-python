@@ -17,10 +17,8 @@ symmetry job checks out the other's main branch.
 import json
 import os
 
-import pytest
-
 from did.implementations.sqlitedb import SQLiteDB
-from tests.symmetry.conftest import SYMMETRY_BASE
+from tests.symmetry.conftest import SYMMETRY_BASE, missing_artifact
 
 
 class TestReadFileDocument:
@@ -35,20 +33,22 @@ class TestReadFileDocument:
             "testFileDocumentArtifacts",
         )
         if not os.path.isdir(artifact_dir):
-            pytest.skip(
+            missing_artifact(
                 f"Artifact directory from {source_type} does not exist: {artifact_dir}"
             )
 
         manifest_file = os.path.join(artifact_dir, "manifest.json")
         if not os.path.isfile(manifest_file):
-            pytest.skip(f"manifest.json not found in {source_type} artifact directory.")
+            missing_artifact(
+                f"manifest.json not found in {source_type} artifact directory."
+            )
 
         with open(manifest_file, "r") as handle:
             manifest = json.load(handle)
 
         db_path = os.path.join(artifact_dir, manifest["dbFilename"])
         if not os.path.isfile(db_path):
-            pytest.skip(f"Database file not found: {db_path}")
+            missing_artifact(f"Database file not found: {db_path}")
 
         db = SQLiteDB(db_path)
         try:
