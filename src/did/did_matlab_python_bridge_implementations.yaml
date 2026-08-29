@@ -22,7 +22,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "bd25cd9"
+    matlab_last_sync_hash: "6edd765"
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
     inherits_matlab: "did.database"
@@ -48,6 +48,26 @@ classes:
       (absolute or db-relative) locations -- so there is nothing to port;
       see the not_applicable entry for ndi.cloud.api.files.getFile and the
       "Not Yet Ported" table in PORTING_INSTRUCTIONS.md.
+
+      MATLAB 6edd765 (2026-07-22) fixed two lifecycle defects on the add
+      path. Reviewed 2026-08-29; neither is present here, but the first
+      leaves a behavioral divergence worth recording:
+
+      (a) MATLAB's do_add_doc honored OnDuplicate='ignore'/'warn' by not
+      erroring, then reached the branch_docs INSERT anyway and threw on
+      PRIMARY KEY(branch_id,doc_idx). Python never had that failure --
+      SQLiteDB._do_add_doc catches sqlite3.IntegrityError around that
+      INSERT -- but it also has no OnDuplicate option at all, so it always
+      behaves as 'ignore'. A caller cannot ask Python to error or warn on a
+      duplicate the way MATLAB now can. Not ported: adding the option is a
+      small feature, not a bug fix, and no Python caller depends on it yet.
+
+      (b) MATLAB's add_docs('Validate',false) issued `pragma
+      journal_mode=OFF` and restored it only on the normal exit path, so a
+      throw in the document loop disabled rollback protection for the life
+      of the connection; 6edd765 restores it from an onCleanup. Python has
+      no such fast path -- it never changes journal_mode (grep confirms no
+      occurrence in did/) -- so there is nothing to restore.
 
     properties:
       - name: FileDir
@@ -295,7 +315,7 @@ classes:
   - name: doc2sql
     type: function
     matlab_path: "+did/+implementations/doc2sql.m"
-    matlab_last_sync_hash: "3aa892d"
+    matlab_last_sync_hash: "c618a05"
     python_path: "did/implementations/doc2sql.py"
     python_name: "doc_to_sql"
 
@@ -319,6 +339,22 @@ classes:
       doc2sql contains the critical MATLAB-Python bridge logic for
       serializing documents to SQL. Python version handles both native
       and MATLAB document_class formats. Synchronized 2026-03-25.
+
+      MATLAB c618a05 (2026-07-22) taught doc2sql to read did2-form
+      superclasses. Ported 2026-08-29. did1 documents carry a superclass
+      `.definition` path; did2 (V_delta / V_zeta) documents carry the name
+      directly in `.class_name` and have no `.definition`. MATLAB errored
+      outright on the did2 shape ("Unrecognized field name definition");
+      Python's _get_superclass_str silently dropped the entry and wrote an
+      empty meta.superclass column, so an isa() query returned a different
+      result set in each language with no error in either -- a silent
+      scientific divergence. _superclass_names_from now mirrors MATLAB's
+      array-level preference exactly: `definition` wherever any entry has
+      it, else `class_name`, else nothing. Deliberately NOT re-engineered
+      into a per-entry union, matching the MATLAB commit's own reasoning --
+      a MATLAB struct array cannot hold mixed fields, so the mixed shape
+      does not arise from MATLAB. Regression: tests/test_doc2sql_superclass.py
+      TestGetSuperclassStrDid2ClassName.
 
   # -----------------------------------------------------------------------
   # did.implementations.binarydoc_matfid
