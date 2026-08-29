@@ -17,6 +17,7 @@ turn, returning the first it can reach. Three things were wrong here before
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from did.database import FileAccessError
 from did.document import Document
@@ -395,3 +396,115 @@ class TestMatlabShapedDatabase(TestOpenDocLocations):
 
         with self.assertRaises(FileAccessError):
             self.db.open_doc(doc.id(), "filename1.ext")
+
+
+class TestFileCacheOnOpen(TestOpenDocLocations):
+    """A retrieved file goes into the file cache, and is served from it next time.
+
+    This is MATLAB's do_open_doc behaviour: it builds its candidate paths as
+    `<filecachepath>/<uid>` before `<FileDir>/<uid>`, and after a successful
+    retrieval it calls addFile(destPath, uid) and returns the cached copy.
+    Without it every remote file is fetched again on every open.
+    """
+
+    NDIC = "ndic://d-123/f-abc"
+    UID = "f" * 33  # the length of a did unique id, which is what the cache indexes
+
+    def _remote_doc(self):
+        doc = self._doc_with_locations(
+            [{"location": self.NDIC, "location_type": "ndicloud", "uid": self.UID}]
+        )
+        self.db.add_docs([doc], validate=False)
+        return doc
+
+    def _handler(self, content=b"downloaded", fail=False):
+        calls = []
+
+        def handler(dest_path, source_path):
+            calls.append(source_path)
+            if fail:
+                raise OSError("the network is gone")
+            with open(dest_path, "wb") as handle:
+                handle.write(content)
+
+        return handler, calls
+
+    def _cache(self):
+        from did.common import get_cache
+
+        return get_cache()
+
+    def test_a_retrieved_file_lands_in_the_cache(self):
+        doc = self._remote_doc()
+        handler, calls = self._handler()
+
+        file_obj = self.db.open_doc(
+            doc.id(), "filename1.ext", custom_file_handler=handler
+        )
+        self.assertEqual(len(calls), 1)
+
+        cache = self._cache()
+        self.assertTrue(cache.is_file(self.UID))
+        self.assertEqual(
+            os.path.abspath(file_obj.fullpathfilename),
+            os.path.abspath(cache.full_path(self.UID)),
+            "the returned file should be the cached copy, not the temp one",
+        )
+
+    def test_the_second_open_does_not_retrieve_again(self):
+        doc = self._remote_doc()
+        handler, calls = self._handler()
+        self.db.open_doc(doc.id(), "filename1.ext", custom_file_handler=handler)
+
+        # A handler that would fail if it were called at all. The open still
+        # succeeds, which it can only do from the cache.
+        failing, failing_calls = self._handler(fail=True)
+        file_obj = self.db.open_doc(
+            doc.id(), "filename1.ext", custom_file_handler=failing
+        )
+        self.assertEqual(failing_calls, [], "the cached copy should have been used")
+
+        file_obj.fopen()
+        self.assertEqual(file_obj.fread(), b"downloaded")
+        file_obj.fclose()
+
+    def test_reading_from_the_cache_marks_the_file_as_used(self):
+        doc = self._remote_doc()
+        handler, _ = self._handler()
+        self.db.open_doc(doc.id(), "filename1.ext", custom_file_handler=handler)
+
+        cache = self._cache()
+        before = cache.file_list()[2][0]
+        self.db.open_doc(doc.id(), "filename1.ext", custom_file_handler=handler)
+        after = cache.file_list()[2][0]
+        self.assertGreaterEqual(
+            after,
+            before,
+            "an open that hits the cache must touch the entry, or eviction "
+            "would drop exactly the files that are read most",
+        )
+
+    def test_clearing_the_cache_sends_the_next_open_back_to_the_handler(self):
+        doc = self._remote_doc()
+        handler, calls = self._handler()
+        self.db.open_doc(doc.id(), "filename1.ext", custom_file_handler=handler)
+        self._cache().clear()
+
+        self.db.open_doc(doc.id(), "filename1.ext", custom_file_handler=handler)
+        self.assertEqual(len(calls), 2)
+
+    def test_an_unusable_cache_does_not_break_the_open(self):
+        """The cache is an optimization; losing it costs a re-fetch, not the file."""
+        doc = self._remote_doc()
+        handler, calls = self._handler()
+
+        with mock.patch.object(SQLiteDB, "_file_cache", staticmethod(lambda: None)):
+            file_obj = self.db.open_doc(
+                doc.id(), "filename1.ext", custom_file_handler=handler
+            )
+            file_obj.fopen()
+            self.assertEqual(file_obj.fread(), b"downloaded")
+            file_obj.fclose()
+
+        # And the cache is back afterwards, so nothing leaks into other tests.
+        self.assertIsNotNone(SQLiteDB._file_cache())
