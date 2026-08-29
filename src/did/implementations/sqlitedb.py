@@ -1118,22 +1118,35 @@ class SQLiteDB(Database):
 
         if row:
             doc_idx = row["doc_idx"]
-            # Remove from branch_docs
-            cursor.execute(
-                "DELETE FROM branch_docs WHERE branch_id = ? AND doc_idx = ?",
-                (branch_id, doc_idx),
-            )
+            try:
+                # Remove from branch_docs
+                cursor.execute(
+                    "DELETE FROM branch_docs WHERE branch_id = ? AND doc_idx = ?",
+                    (branch_id, doc_idx),
+                )
 
-            # Optional: remove from docs and doc_data if no other branches reference it
-            cursor.execute(
-                "SELECT COUNT(*) FROM branch_docs WHERE doc_idx = ?", (doc_idx,)
-            )
-            count = cursor.fetchone()[0]
-            if count == 0:
-                cursor.execute("DELETE FROM doc_data WHERE doc_idx = ?", (doc_idx,))
-                cursor.execute("DELETE FROM docs WHERE doc_idx = ?", (doc_idx,))
+                # Optional: remove from docs, doc_data and files if no other
+                # branches reference it. The files rows have to go first: they
+                # carry FOREIGN KEY(doc_idx) REFERENCES docs(doc_idx), and with
+                # PRAGMA foreign_keys = ON the docs delete is refused while any
+                # of them survives -- so before this, no document carrying a
+                # file could be removed at all.
+                cursor.execute(
+                    "SELECT COUNT(*) FROM branch_docs WHERE doc_idx = ?", (doc_idx,)
+                )
+                count = cursor.fetchone()[0]
+                if count == 0:
+                    cursor.execute("DELETE FROM doc_data WHERE doc_idx = ?", (doc_idx,))
+                    cursor.execute("DELETE FROM files WHERE doc_idx = ?", (doc_idx,))
+                    cursor.execute("DELETE FROM docs WHERE doc_idx = ?", (doc_idx,))
 
-            self.dbid.commit()
+                self.dbid.commit()
+            except Exception:
+                # As in _do_add_doc: a failure part-way through must not leave
+                # the branch_docs delete sitting in an open transaction for the
+                # next commit on this connection to pick up.
+                self.dbid.rollback()
+                raise
         else:
             # Handle missing document
             on_missing = kwargs.get("OnMissing", "error").lower()
