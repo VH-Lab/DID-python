@@ -213,6 +213,14 @@ def parse_lock_expiration(text):
     Raises ValueError if the text is in neither format.
     """
     text = text.strip()
+    # A trailing "Z" is valid ISO 8601 and is what a MATLAB writer using a
+    # UTCLeapSeconds datetime is obliged to emit -- that zone accepts no
+    # other display format. fromisoformat only learned to read it in 3.11,
+    # and this package supports 3.10, so strip it here rather than leaving
+    # the oldest supported Python unable to read such a lock. Both languages
+    # write UTC, so dropping the marker loses nothing.
+    if text.endswith(("Z", "z")):
+        text = text[:-1]
     try:
         return datetime.fromisoformat(text)
     except ValueError:

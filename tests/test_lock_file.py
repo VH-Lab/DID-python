@@ -86,6 +86,21 @@ class TestParseLockExpiration:
             2026, 8, 29, 14, 35, 12
         )
 
+    def test_a_trailing_z_is_accepted(self):
+        # Valid ISO 8601, and what a MATLAB writer using a UTCLeapSeconds
+        # datetime must emit. fromisoformat only reads it from 3.11, and
+        # this package supports 3.10.
+        assert parse_lock_expiration(
+            "2026-08-29T14:35:12.123456Z"
+        ) == dt.datetime(  # noqa: DTZ001
+            2026, 8, 29, 14, 35, 12, 123456
+        )
+        assert parse_lock_expiration(
+            "2026-08-29T14:35:12Z"
+        ) == dt.datetime(  # noqa: DTZ001
+            2026, 8, 29, 14, 35, 12
+        )
+
     def test_a_single_digit_day_is_parsed(self):
         assert parse_lock_expiration(
             "1-Sep-2026 09:05:00"
