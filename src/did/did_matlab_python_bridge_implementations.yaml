@@ -22,7 +22,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "14439fb"
+    matlab_last_sync_hash: "49e4523"
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
     inherits_matlab: "did.database"
@@ -51,6 +51,7 @@ classes:
 
     properties:
       - name: FileDir
+        python_name: ~   # not ported
         type_matlab: "char"
         type_python: "(derived from connection path)"
         decision_log: >
@@ -58,6 +59,7 @@ classes:
           paths from the database connection string. Synchronized 2026-03-15.
 
       - name: fields_cache
+        python_name: _fields_cache
         type_matlab: "cell (protected)"
         type_python: "dict (private)"
         decision_log: >
@@ -66,6 +68,7 @@ classes:
 
     methods:
       - name: sqlitedb
+        python_name: __init__
         kind: constructor
         input_arguments:
           - name: filename
@@ -77,6 +80,7 @@ classes:
           Synchronized 2026-03-15.
 
       - name: do_run_sql_query
+        python_name: do_run_sql_query
         input_arguments:
           - name: query_str
             type_matlab: "char"
@@ -87,6 +91,49 @@ classes:
           Python uses parameterized queries. Synchronized 2026-03-15.
 
       - name: do_add_doc
+        python_name: _do_add_doc
+        out_of_sync: true
+        out_of_sync_reason: >
+          FOUND 2026-08-28, NOT YET FIXED. Python never populates the `files`
+          table, so a document's files are invisible to MATLAB.
+
+          MATLAB's do_add_doc walks doc_props.files.file_info and, for every
+          location, inserts a row into `files` (doc_idx, filename, uid,
+          orig_location, cached_location, type, parameters). Python's
+          _do_add_doc writes only docs.json_code and the branch_docs link. It
+          CREATES the files table, with matching columns, and never inserts a
+          row into it.
+
+          The break is one-directional, which is why nothing has caught it:
+
+          - MATLAB -> Python works. MATLAB writes both docs.json_code and the
+            files table, and Python's open_doc reads locations out of the
+            document JSON via Document.is_in_file_list.
+          - Python -> MATLAB is broken. MATLAB's do_open_doc selects
+            cached_location, orig_location, uid and type FROM docs, files. On a
+            Python-written database that join returns nothing, so EVERY file in
+            the document is unreachable from MATLAB -- including a plain local
+            file that exists on disk. It fails as DID:SQLITEDB:open, "The file
+            ... cannot be accessed".
+
+          Verified 2026-08-28 by adding a demoFile document with two local
+          files through Python: docs has 1 row, files has 0, Python's own
+          open_doc succeeds, and MATLAB's join returns no rows.
+
+          The symmetry suite does not cover file documents, only buildDatabase,
+          which is why this survived. Any fix should add that coverage.
+
+          The fix is mechanical -- mirror MATLAB's insert, one row per location
+          -- with one judgement call: Python does not ingest, so
+          cached_location would always be empty. That appears harmless, since
+          MATLAB builds its candidate paths from the uid and falls back to
+          orig_location for retrieval, but it should be confirmed against a
+          real MATLAB run.
+
+          Separately, Python has no ingestion at all: MATLAB copies or
+          retrieves a location marked ingest into FileDir and can delete the
+          original. Python does neither, so `ingest` and `delete_original` are
+          inert on the Python side.
         input_arguments:
           - name: document_obj
             type_matlab: "did.document"
@@ -99,6 +146,7 @@ classes:
           Synchronized 2026-03-15.
 
       - name: do_get_doc
+        python_name: _do_get_doc
         input_arguments:
           - name: document_id
             type_matlab: "char"
@@ -111,6 +159,7 @@ classes:
           did.document / Document object. Synchronized 2026-03-15.
 
       - name: do_remove_doc
+        python_name: _do_remove_doc
         input_arguments:
           - name: document_id
             type_matlab: "char"
@@ -121,6 +170,7 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: search
+        python_name: search
         input_arguments:
           - name: query_obj
             type_matlab: "did.query"
@@ -136,16 +186,23 @@ classes:
           complex queries. Synchronized 2026-03-15.
 
       - name: get_docs
+        python_name: get_docs
         decision_log: >
           Python adds bulk get_docs with OnMissing parameter.
           Synchronized 2026-03-16.
 
       - name: get_docs_by_branch
+        matlab_name: ~   # Python-only, no MATLAB counterpart
+        python_name: get_docs_by_branch
         decision_log: >
-          Python-only convenience method. Returns all documents in a
-          branch. Added 2026-03-16.
+          Python-only convenience method. Returns all documents in a branch.
+          Added 2026-03-16. Marked matlab_name: ~ on 2026-08-28 -- every other
+          member entry's `name` is the MATLAB name, so without the marker a
+          coverage check reads this as a bridge entry pointing at a MATLAB
+          method that does not exist.
 
       - name: open_doc
+        python_name: open_doc
         input_arguments:
           - name: doc_id
             type_matlab: "char"
@@ -153,18 +210,75 @@ classes:
           - name: filename
             type_matlab: "char"
             type_python: "str"
-        output_arguments:
-          - name: file_obj
-            type_matlab: "did.file.readonly_fileobj"
-            type_python: "ReadOnlyFileobj"
+          - name: customFileHandler
+            type_matlab: "function_handle (name-value)"
+            type_python: "callable (custom_file_handler=None)"
         decision_log: >
-          Both return a read-only file object. Synchronized 2026-03-15.
+          Reworked in BOTH repos 2026-08-28, in lockstep. Both walk the
+          document's locations, return the first that resolves to a readable
+          local file, hand any remote location to a caller-supplied retriever,
+          and raise when nothing can be reached.
 
-      - name: open_db / close_db
+          DID DOWNLOADS NOTHING ITSELF, in either language. Retrieval is
+          supplied through customFileHandler / custom_file_handler, called as
+          (destPath, sourcePath) and expected to produce a local file at
+          destPath; both check that it did. NDI-matlab already uses this hook,
+          passing a handler that resolves ndic://<datasetId>/<fileUid> by
+          calling getFileDetails to mint a fresh pre-signed URL and then
+          getFile to download it. Only ndic:// is supported for now; plain
+          http(s) URLs are deliberately not handled by DID.
+
+          MATLAB change: the 'url' branch, which called
+          ndi.cloud.api.files.getFile directly, was removed. It made DID depend
+          on NDI being on the path -- a lower-level package reaching for a
+          higher-level one -- for a case NDI already covers through the hook.
+          Every non-'file' type now goes to the handler.
+
+          Python changes, three quiet bugs plus the new hook:
+
+          1. locations["location"] was read directly, assuming a single dict.
+             Documents may carry several locations per file -- the shipped
+             demoFile.json template lists a local path AND a remote one for
+             each -- so any MATLAB-written document raised TypeError.
+          2. A remote location was rebased against the database directory like
+             a relative path, producing /db/dir/ndic://d-123/f-abc.
+          3. The resulting Fileobj was returned unopened. Fileobj.fopen()
+             swallows the OSError and leaves fid None, so a caller that did not
+             check fid read b"" and saw no error -- a missing file was
+             indistinguishable from an empty one.
+
+          Python raises FileAccessError, which carries MATLAB's identifier the
+          way ValidationError does and subclasses FileNotFoundError so older
+          callers keep working: FileRetrieval:UnsupportedType when a remote
+          location has no handler, FileRetrieval:CustomHandlerFailed when the
+          handler raises or produces no file, DID:SQLITEDB:open otherwise.
+
+          REMAINING DEVIATION: MATLAB adds the retrieved file to the file cache
+          and serves later opens from there; Python has no cache (see
+          fileCache), so it downloads to PathConstants.temppath and re-fetches
+          on every open.
+
+          STILL OUTSTANDING, both languages: do_add_doc's ingestion path also
+          calls ndi.cloud.api.files.getFile for a non-'file' location, so
+          DID-matlab's dependency on NDI is reduced but not gone. do_add_doc
+          takes no handler parameter, so closing it means plumbing one through
+          add_docs and the abstract base. Rarely hit, because ingest defaults
+          to 0 for url and ndicloud locations. See PORTING_INSTRUCTIONS.md.
+
+      - name: open_db
+        python_name: _open_db
         decision_log: >
-          MATLAB opens/closes mksqlite connection per operation.
-          Python keeps sqlite3 connection open for session lifetime.
-          Behavioral difference by design. Synchronized 2026-03-15.
+          MATLAB opens an mksqlite connection per operation; Python keeps one
+          sqlite3 connection open for the session lifetime. Behavioral
+          difference by design. Synchronized 2026-03-15. Split out of a
+          combined "open_db / close_db" entry 2026-08-28 so each method
+          resolves on its own.
+
+      - name: close_db
+        python_name: _close_db
+        decision_log: >
+          See open_db. Synchronized 2026-03-15. Split out of a combined
+          entry 2026-08-28.
 
     decision_log: >
       Core database operations are synchronized. MATLAB recently changed
@@ -186,7 +300,8 @@ classes:
     python_name: "doc_to_sql"
 
     methods:
-      - name: doc2sql / doc_to_sql
+      - name: doc2sql
+        python_name: doc_to_sql
         input_arguments:
           - name: doc
             type_matlab: "did.document"
@@ -224,16 +339,19 @@ classes:
 
     properties:
       - name: key
+        python_name: key
         type_matlab: "any"
         type_python: "str"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: doc_unique_id
+        python_name: doc_unique_id
         type_matlab: "any"
         type_python: "str"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: machineformat
+        python_name: machineformat
         type_matlab: "char"
         type_python: "str"
         decision_log: >
@@ -243,6 +361,7 @@ classes:
 
     methods:
       - name: binarydoc_matfid
+        python_name: __init__
         kind: constructor
         decision_log: >
           MATLAB: binarydoc_matfid(fileProps, matfidProps).
@@ -250,6 +369,7 @@ classes:
           Synchronized 2026-03-15.
 
       - name: fclose
+        python_name: fclose
         decision_log: >
           MATLAB resets permission to 'rb' after close (changed from 'r').
           Python closes file handle. Synchronized 2026-03-15.
@@ -270,11 +390,20 @@ classes:
     python_path: "(not separately implemented)"
     python_class: "(merged into Database)"
 
+    methods:
+      - name: alldocids
+        python_name: all_doc_ids
+        python_path: "did/database.py"
+        decision_log: >
+          sqldb's only method. Python has no sqldb layer, so it lives on
+          Database as all_doc_ids. Added to the bridge 2026-08-28 -- the
+          mapping was described in this entry's prose but had no method entry,
+          so a coverage check saw it as an unbridged public method.
+
     decision_log: >
       MATLAB has an intermediate abstract class sqldb between database
       and sqlitedb. Python merges this layer directly into Database
-      and SQLiteDB. The alldocids() method from sqldb is available
-      as Database.all_doc_ids() in Python. Synchronized 2026-03-15.
+      and SQLiteDB. Synchronized 2026-03-15.
 
   # -----------------------------------------------------------------------
   # did.implementations.matlabdumbjsondb
@@ -282,7 +411,23 @@ classes:
   - name: matlabdumbjsondb
     type: class
     matlab_path: "+did/+implementations/matlabdumbjsondb.m"
+    matlab_last_sync_hash: "13463d1"
     python_path: "(not applicable)"
+
+    properties:
+      - name: db
+        python_name: ~   # not ported
+        type_matlab: "did.file.dumbjsondb"
+        decision_log: >
+          The wrapped dumbjsondb handle. No Python counterpart, since the
+          whole class is unported. Added to the bridge 2026-08-28.
+
+    methods:
+      - name: alldocids
+        python_name: ~   # not ported
+        decision_log: >
+          No Python counterpart; the class is unported. Added to the bridge
+          2026-08-28.
 
     decision_log: >
       MATLAB-specific wrapper around dumbjsondb for MATLAB file I/O.
@@ -290,6 +435,10 @@ classes:
       2026-08-28 -- this previously read "Python implements DumbJsonDB
       directly in file.py", which overstated a dead-code stub; see the
       did.file.dumbjsondb entry in did_matlab_python_bridge_file.yaml.
+      A matlab_last_sync_hash was added 2026-08-28: the entry had none, and
+      without one it could never show drift -- the same blind spot that had
+      hidden dumbjsondb and fileCache. Unported does not have to mean
+      unwatched, so the file is tracked even though nothing is ported from it.
 
 # =========================================================================
 # Not applicable in Python

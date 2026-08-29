@@ -343,6 +343,13 @@ class SQLiteDB(Database):
             # Populate fields and doc_data tables (matching MATLAB's doc2sql behavior)
             self._populate_doc_data(cursor, doc_idx, document_obj)
 
+        # Record the document's file locations. MATLAB's do_open_doc resolves a
+        # file by querying `docs, files` -- it never reads the locations back
+        # out of the document JSON -- so without these rows every file in a
+        # Python-written document is unreachable from MATLAB, including a plain
+        # local file that exists on disk.
+        self._populate_files(cursor, doc_idx, document_obj)
+
         try:
             cursor.execute(
                 "INSERT INTO branch_docs (branch_id, doc_idx, timestamp) VALUES (?, ?, ?)",
@@ -353,6 +360,63 @@ class SQLiteDB(Database):
             if "FOREIGN KEY" in str(e):
                 raise ValueError(f"Branch '{branch_id}' does not exist.")
             # Ignore other integrity errors (duplicates)
+
+    @staticmethod
+    def _file_entries(document_obj):
+        """Yield (filename, location_entry) for every location of every file."""
+        files = document_obj.document_properties.get("files")
+        if not isinstance(files, dict):
+            return
+        file_info = files.get("file_info")
+        if isinstance(file_info, dict):
+            file_info = [file_info]
+        if not isinstance(file_info, list):
+            return
+
+        for info in file_info:
+            if not isinstance(info, dict):
+                continue
+            name = info.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            locations = info.get("locations")
+            if isinstance(locations, dict):
+                locations = [locations]
+            if not isinstance(locations, list):
+                continue
+            for entry in locations:
+                if isinstance(entry, dict) and entry.get("location"):
+                    yield name, entry
+
+    def _populate_files(self, cursor, doc_idx, document_obj):
+        """Insert one `files` row per file location, mirroring MATLAB.
+
+        Columns match MATLAB's insert exactly: doc_idx, filename, uid,
+        orig_location, cached_location, type, parameters.
+
+        cached_location is always empty here. MATLAB fills it when it ingests a
+        location into its FileDir; DID-python does no ingestion, so there is
+        never a cached copy to point at. That is a real difference in what the
+        two write, not a gap in this row -- see PORTING_INSTRUCTIONS.md.
+
+        INSERT OR IGNORE because a document added to a second branch reaches
+        this path again with the same (doc_idx, filename, uid) primary key.
+        """
+        for name, entry in self._file_entries(document_obj):
+            cursor.execute(
+                "INSERT OR IGNORE INTO files "
+                "(doc_idx, filename, uid, orig_location, cached_location, "
+                "type, parameters) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    doc_idx,
+                    name,
+                    str(entry.get("uid", "")),
+                    str(entry.get("location", "")),
+                    "",
+                    str(entry.get("location_type", "file")),
+                    str(entry.get("parameters", "")),
+                ),
+            )
 
     # --- SQL-based search (matching MATLAB's database.m) ---
 
@@ -642,7 +706,114 @@ class SQLiteDB(Database):
         doc_ids = self.get_doc_ids(branch_id)
         return self.get_docs(doc_ids, OnMissing="ignore")
 
-    def open_doc(self, doc_id, filename):
+    @staticmethod
+    def _is_remote_location(location, location_type=None):
+        """Is this location one that has to be retrieved rather than opened?
+
+        Anything carrying a URI scheme -- ndic://, https://, s3:// -- is
+        remote. DID retrieves none of them itself; see open_doc.
+        """
+        if str(location_type or "").lower() in ("url", "ndicloud"):
+            return True
+        return "://" in location
+
+    def _resolve_local(self, location):
+        """Absolute path for a local location, rebased against the db dir."""
+        if os.path.isabs(location):
+            return location
+        db_dir = os.path.dirname(os.path.abspath(self.connection))
+        return os.path.join(db_dir, location)
+
+    def _locations_from_files_table(self, doc_id, filename):
+        """Locations for one file, read from the `files` table.
+
+        This is where MATLAB keeps them, and it is the only place it looks:
+        do_open_doc selects cached_location, orig_location, uid and type from
+        `docs, files`. A MATLAB-written document that was ingested has had its
+        original deleted, so the document JSON's location no longer exists and
+        only these rows can find the file.
+
+        Returns a list shaped like the document's own locations, so both
+        sources feed the same resolution path.
+        """
+        try:
+            cursor = self.dbid.cursor()
+            rows = cursor.execute(
+                "SELECT f.uid, f.orig_location, f.cached_location, f.type "
+                "FROM docs d, files f "
+                "WHERE d.doc_id = ? AND f.doc_idx = d.doc_idx AND f.filename = ?",
+                (doc_id, filename),
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+
+        locations = []
+        for row in rows:
+            uid = row["uid"]
+            cached = row["cached_location"]
+            # MATLAB stores an ingested copy at <FileDir>/<uid>, where FileDir
+            # is <directory holding the .sqlite file>/files. It looks the copy
+            # up by uid rather than by cached_location, so mirror that first.
+            if uid:
+                locations.append(
+                    {
+                        "location": os.path.join(self._file_dir(), str(uid)),
+                        "location_type": "file",
+                    }
+                )
+            if cached:
+                locations.append({"location": cached, "location_type": "file"})
+            if row["orig_location"]:
+                locations.append(
+                    {
+                        "location": row["orig_location"],
+                        "location_type": row["type"] or "file",
+                        "uid": uid,
+                    }
+                )
+        return locations
+
+    def _file_dir(self):
+        """MATLAB's FileDir: `files/` beside the database file."""
+        return os.path.join(os.path.dirname(os.path.abspath(self.connection)), "files")
+
+    @staticmethod
+    def _valid_locations(info):
+        """The document's locations for one file, always as a list of dicts.
+
+        A document may list several locations for one file -- the shipped
+        demoFile.json template carries a local path and a remote one for each
+        -- and a single-location document stores a bare dict rather than a
+        one-element list.
+        """
+        locations = info.get("locations")
+        if isinstance(locations, dict):
+            locations = [locations]
+        elif not isinstance(locations, list):
+            return []
+        return [
+            entry
+            for entry in locations
+            if isinstance(entry, dict)
+            and isinstance(entry.get("location", ""), str)
+            and entry.get("location")
+        ]
+
+    def open_doc(self, doc_id, filename, custom_file_handler=None):
+        """Open a file belonging to a document.
+
+        Local locations are opened directly. A remote location is handed to
+        ``custom_file_handler(dest_path, source_path)``, which must produce a
+        local file at ``dest_path``; this mirrors MATLAB's ``customFileHandler``
+        name-value argument to ``do_open_doc``, and is how a downstream package
+        supplies retrieval without DID depending on it. DID itself downloads
+        nothing, in either language.
+
+        Raises FileAccessError -- which carries MATLAB's error identifier and
+        subclasses FileNotFoundError -- when no location can be reached.
+        """
+        from ..common import PathConstants
+        from ..database import FileAccessError
         from ..file import ReadOnlyFileobj
 
         doc = self.get_docs(doc_id)
@@ -650,17 +821,86 @@ class SQLiteDB(Database):
             raise ValueError(f"Document {doc_id} not found.")
 
         is_in, info, _ = doc.is_in_file_list(filename)
-        if is_in:
-            location = info["locations"]["location"]
+        if not is_in:
+            raise FileNotFoundError(f"File {filename} not found in document {doc_id}.")
 
-            # Rebase path if it's relative, assuming it's relative to the DB location
-            if not os.path.isabs(location):
-                db_dir = os.path.dirname(os.path.abspath(self.connection))
-                location = os.path.join(db_dir, location)
+        # The files table first, since that is the only place MATLAB records an
+        # ingested copy; then the document's own locations, which is all a
+        # database written before this table was populated will have.
+        locations = self._locations_from_files_table(doc_id, filename)
+        locations += self._valid_locations(info)
 
-            return ReadOnlyFileobj(location)
+        # First pass: anything already on disk, as MATLAB does before it tries
+        # to retrieve anything.
+        remote = []
+        for entry in locations:
+            location = entry["location"]
+            if self._is_remote_location(location, entry.get("location_type")):
+                remote.append(entry)
+                continue
+            resolved = self._resolve_local(location)
+            if os.path.isfile(resolved):
+                return ReadOnlyFileobj(resolved)
 
-        raise FileNotFoundError(f"File {filename} not found in document {doc_id}.")
+        # Second pass: hand each remote location to the caller's retriever.
+        if remote and custom_file_handler is not None:
+            temp_dir = PathConstants().temppath
+            failures = []
+            for entry in remote:
+                location = entry["location"]
+                uid = entry.get("uid") or os.path.basename(location) or "did_download"
+                dest_path = os.path.join(temp_dir, str(uid))
+
+                # Clear any earlier download at this path first. temppath
+                # persists between calls and uids are only unique per
+                # document, so without this a stale file would be served as
+                # though freshly retrieved -- and a handler that produced
+                # nothing would look like it had succeeded.
+                if os.path.exists(dest_path):
+                    try:
+                        os.remove(dest_path)
+                    except OSError as error:
+                        failures.append(
+                            f"{location}: cannot clear {dest_path}: {error}"
+                        )
+                        continue
+
+                try:
+                    custom_file_handler(dest_path, location)
+                except Exception as error:  # noqa: BLE001 - reported below
+                    failures.append(f"{location}: {error}")
+                    continue
+                if os.path.isfile(dest_path):
+                    # No file cache yet, so this is re-fetched on every open.
+                    # See "The file cache" in PORTING_INSTRUCTIONS.md.
+                    return ReadOnlyFileobj(dest_path)
+                failures.append(
+                    f"{location}: custom_file_handler did not produce a file "
+                    f'at "{dest_path}"'
+                )
+            raise FileAccessError(
+                "DID:SQLITEDB:FileRetrieval:CustomHandlerFailed",
+                f'The file "{filename}" in document "{doc_id}" could not be '
+                f"retrieved: " + "; ".join(failures),
+            )
+
+        # Nothing was reachable. Raise rather than hand back a Fileobj over a
+        # path that does not exist: Fileobj.fopen() swallows the OSError and
+        # leaves fid None, so a caller that does not check it reads b"" and
+        # sees no error at all.
+        if remote and len(remote) == len(locations):
+            raise FileAccessError(
+                "DID:SQLITEDB:FileRetrieval:UnsupportedType",
+                f'The file "{filename}" in document "{doc_id}" is only '
+                f'available remotely ({remote[0]["location"]}) and no '
+                f"custom_file_handler was supplied. DID does not download "
+                f"files itself; a downstream package supplies retrieval "
+                f"through custom_file_handler. See PORTING_INSTRUCTIONS.md.",
+            )
+        raise FileAccessError(
+            "DID:SQLITEDB:open",
+            f'The file "{filename}" in document "{doc_id}" cannot be accessed.',
+        )
 
     def _do_remove_doc(self, document_id, branch_id, **kwargs):
         cursor = self.dbid.cursor()

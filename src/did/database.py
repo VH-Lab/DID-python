@@ -1,6 +1,20 @@
 import abc
 
 
+class FileAccessError(FileNotFoundError):
+    """A document's file exists in the record but cannot be opened.
+
+    ``identifier`` carries MATLAB's error identifier for the same failure, as
+    ``ValidationError`` does, so both languages can be branched on with the
+    same strings. Subclasses FileNotFoundError so that callers written against
+    the older behavior keep working.
+    """
+
+    def __init__(self, identifier, message):
+        super().__init__(message)
+        self.identifier = identifier
+
+
 class Database(abc.ABC):
     def __init__(self, connection="", **kwargs):
         self.connection = connection

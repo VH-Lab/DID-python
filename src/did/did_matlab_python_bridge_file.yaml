@@ -43,11 +43,13 @@ classes:
 
     properties:
       - name: fullpathfilename
+        python_name: fullpathfilename
         type_matlab: "char"
         type_python: "str"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: fid
+        python_name: fid
         type_matlab: "double (MATLAB file ID)"
         type_python: "file object"
         decision_log: >
@@ -56,6 +58,7 @@ classes:
           Synchronized 2026-03-15.
 
       - name: permission
+        python_name: permission
         type_matlab: "char"
         type_python: "str"
         decision_log: >
@@ -64,6 +67,7 @@ classes:
           so effective mode is always binary. Behaviorally in sync.
 
       - name: machineformat
+        python_name: machineformat
         type_matlab: "char"
         type_python: "str"
         decision_log: >
@@ -72,6 +76,7 @@ classes:
 
     methods:
       - name: fileobj
+        python_name: __init__
         kind: constructor
         input_arguments:
           - name: fullpathfilename
@@ -89,12 +94,14 @@ classes:
           Synchronized 2026-03-15.
 
       - name: setproperties
+        python_name: set_properties
         decision_log: >
           MATLAB: setproperties(Name, Value, ...).
           Python: set_properties(fullpathfilename, permission, machineformat).
           Synchronized 2026-03-15.
 
       - name: fopen
+        python_name: fopen
         input_arguments:
           - name: permission
             type_matlab: "char"
@@ -108,9 +115,11 @@ classes:
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: fclose
+        python_name: fclose
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: fseek
+        python_name: fseek
         input_arguments:
           - name: offset
             type_matlab: "double"
@@ -124,15 +133,19 @@ classes:
           Synchronized 2026-03-15.
 
       - name: ftell
+        python_name: ftell
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: frewind
+        python_name: frewind
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: feof
+        python_name: feof
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: fwrite
+        python_name: fwrite
         input_arguments:
           - name: data
             type_matlab: "any"
@@ -150,6 +163,7 @@ classes:
           on read-only files. No Python change needed.
 
       - name: fread
+        python_name: fread
         input_arguments:
           - name: count
             type_matlab: "double"
@@ -160,28 +174,47 @@ classes:
         decision_log: >
           MATLAB fread() default precision changed: 'char' -> 'uint8'
           (commit 02c83c5). Python fread returns raw bytes, which is
-          equivalent to uint8. No Python change needed.
+          equivalent to uint8.
+
+          Deviation: MATLAB returns [data, count]; Python returns the data
+          alone, since len(data) is the count. Fixed 2026-08-28 -- the
+          unopened-file path returned the 2-tuple (b"", 0) while the success
+          path returned bytes, so the return type depended on whether the open
+          had succeeded. A caller doing fread().decode() got AttributeError on
+          a tuple, and one doing "data, count = fread()" unpacked correctly
+          only when the read happened to return exactly two bytes. Now b"" in
+          both cases.
+
+          Both languages read an unopened file as empty rather than raising
+          (MATLAB: data = [], count = 0 when fid < 0), so check fid to tell an
+          empty file from one that could not be opened.
 
       - name: fgetl
+        python_name: fgetl
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: fgets
+        python_name: fgets
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: ferror
+        python_name: ferror
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: fscanf
+        python_name: ~   # not ported
         decision_log: >
           Present in MATLAB. Not ported to Python.
 
       - name: fprintf
+        python_name: ~   # not ported
         decision_log: >
           MATLAB fprintf() permission check updated to check only
           first character of permission. Python does not implement
           fprintf (use Python print/write). Not applicable.
 
       - name: fileparts
+        python_name: fileparts
         decision_log: >
           MATLAB: [pathstr, name, ext] = fileparts().
           Python: fileparts() -> (str, str). Returns (dir, name).
@@ -215,6 +248,7 @@ classes:
 
     methods:
       - name: readonly_fileobj
+        python_name: __init__
         kind: constructor
         input_arguments:
           - name: options
@@ -226,6 +260,7 @@ classes:
           Synchronized 2026-03-15.
 
       - name: fopen
+        python_name: fopen
         input_arguments:
           - name: permission
             type_matlab: "char (forced to 'rb')"
@@ -243,6 +278,16 @@ classes:
   # -----------------------------------------------------------------------
   # did.file.binaryTable
   # -----------------------------------------------------------------------
+  # NOTE (2026-08-28, corrected): nothing in DID-PYTHON's src/ or tests/
+  # constructs a BinaryTable, which is why a stubbed read_row could sit under a
+  # "Synchronized" note unnoticed. That is a statement about the Python side
+  # only. In DID-matlab binaryTable is live: it is the storage engine behind
+  # did.file.fileCache, which builds one over the cache's .fileCacheInfo file
+  # and calls readHeader, writeHeader, getLock, findRow and releaseLock -- and
+  # fileCache is on the document-open path, since sqlitedb.do_open_doc consults
+  # the cache and calls touch() on a hit. So these entries describe a live
+  # MATLAB subsystem with an unexercised Python counterpart, not a subsystem
+  # that is dead in both languages.
   - name: binaryTable
     type: class
     matlab_path: "+did/+file/binaryTable.m"
@@ -258,11 +303,13 @@ classes:
 
     properties:
       - name: file
+        python_name: file
         type_matlab: "did.file.fileobj"
         type_python: "Fileobj"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: recordType
+        python_name: record_type
         type_matlab: "cell"
         type_python: "str"
         decision_log: >
@@ -271,11 +318,13 @@ classes:
           Synchronized 2026-03-15.
 
       - name: recordSize
+        python_name: record_size
         type_matlab: "uint16 vector"
         type_python: "list"
         decision_log: "Equivalent. Synchronized 2026-03-15."
 
       - name: elementsPerColumn
+        python_name: elements_per_column
         type_matlab: "uint16 vector"
         type_python: "int"
         decision_log: >
@@ -283,64 +332,128 @@ classes:
           Synchronized 2026-03-15.
 
       - name: headerSize
+        python_name: header_size
         type_matlab: "uint16"
         type_python: "int"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: hasLock
+        python_name: has_lock
         type_matlab: "logical"
         type_python: "bool"
         decision_log: "Exact match. Synchronized 2026-03-15."
 
     methods:
       - name: binaryTable
+        python_name: __init__
         kind: constructor
         decision_log: "Exact match. Synchronized 2026-03-15."
 
       - name: getSize
+        python_name: get_size
         decision_log: >
           MATLAB: getSize(). Python: get_size().
           Synchronized 2026-03-15.
 
       - name: readHeader
+        python_name: read_header
         decision_log: >
           MATLAB: readHeader(). Python: read_header().
           MATLAB now uses 'rb' permission for reading.
           Synchronized 2026-03-15.
 
       - name: writeHeader
+        python_name: write_header
         decision_log: >
           MATLAB: writeHeader(). Python: write_header().
           Synchronized 2026-03-15.
 
-      - name: readRow
+      - name: getLock
+        python_name: get_lock
         decision_log: >
-          MATLAB: readRow(row, col). Python: read_row(row, col).
-          MATLAB now uses 'rb' permission for reading.
-          Synchronized 2026-03-15.
+          Exact match; both take the multi-thread lock before a write.
+          Added to the bridge 2026-08-28 -- ported but previously untracked.
+
+      - name: releaseLock
+        python_name: release_lock
+        decision_log: >
+          Exact match. Added to the bridge 2026-08-28 -- ported but previously
+          untracked.
+
+      - name: lockFileName
+        python_name: lock_file_name
+        decision_log: >
+          Exact match. Added to the bridge 2026-08-28 -- ported but previously
+          untracked.
+
+      - name: tempFileName
+        python_name: temp_file_name
+        decision_log: >
+          Exact match. Added to the bridge 2026-08-28 -- ported but previously
+          untracked.
+
+      - name: rowSize
+        python_name: row_size
+        decision_log: >
+          Exact match; both sum the per-column byte sizes. Added to the bridge
+          2026-08-28 -- ported but previously untracked.
+
+      - name: compare
+        kind: static
+        python_name: ~   # not ported
+        decision_log: >
+          MATLAB static helper used by findRow to compare two values of the
+          table's record type. Not ported, because findRow is not ported.
+          Added to the bridge 2026-08-28 -- previously untracked.
+
+      - name: readRow
+        python_name: read_row
+        decision_log: >
+          Synchronized 2026-03-15; NOT synchronized in behavior, corrected
+          2026-08-28. MATLAB's readRow decodes the row into typed data using
+          the table's recordType and elementsPerColumn. Python's read_row seeks
+          to the right offset and then returns the raw bytes of a single
+          column: it never maps the MATLAB type strings onto struct formats and
+          ignores elements_per_column entirely. Its own comments say as much
+          ("Simplified implementation", "Placeholder for reading data"). The
+          two return different things for the same call.
+
+          Impact on Python callers is low only because nothing in DID-python
+          constructs a BinaryTable. It is not low in the abstract: MATLAB uses
+          binaryTable to read and write the file cache's on-disk format, so a
+          Python reader that returns undecoded bytes could not read a
+          MATLAB-written table. See the class-level note and the fileCache
+          entry.
 
       - name: insertRow
+        python_name: ~   # not ported
         decision_log: >
-          MATLAB: insertRow(). Python: (partial implementation).
-          MATLAB now uses 'rb' for read operations during insert.
-          Synchronized 2026-03-15.
+          Not implemented in Python. Corrected 2026-08-28: this previously read
+          "Python: (partial implementation)", but BinaryTable has no insert_row
+          at all -- there is nothing partial about it. MATLAB uses 'rb' for the
+          read operations during insert. See "Not Yet Ported" in
+          PORTING_INSTRUCTIONS.md.
 
       - name: deleteRow
+        python_name: ~   # not ported
         decision_log: >
           MATLAB: deleteRow(). Python: (not fully implemented).
           Synchronized 2026-03-15.
 
       - name: writeEntry
+        python_name: ~   # not ported
         decision_log: >
           MATLAB: writeEntry(). Python: (not fully implemented).
           Synchronized 2026-03-15.
 
       - name: writeTable
+        python_name: ~   # not ported
         decision_log: >
           MATLAB: writeTable(). Python: (not fully implemented).
           Synchronized 2026-03-15.
 
       - name: findRow
+        python_name: ~   # not ported
         decision_log: >
           MATLAB: findRow(). Python: (not fully implemented).
           Synchronized 2026-03-15.
@@ -363,39 +476,56 @@ classes:
     inherits_matlab: "handle"
     out_of_sync: true
     out_of_sync_reason: >
-      Not a MATLAB-side divergence -- MATLAB has not touched fileCache.m
-      since 3aa892d. Flagged because the Python side is a stub, and
-      because there are TWO unrelated classes named FileCache:
+      Not a MATLAB-side divergence -- MATLAB has not touched fileCache.m since
+      3aa892d. Three separate problems on the Python side, the third found
+      2026-08-28 and the most serious.
 
-        1. did/file.py:FileCache -- the one this entry maps. Implements
-           construction and .fileCacheInfo read/write only. Every cache
-           operation (addFile, removeFile, isFile, fileList,
-           resizeAndAdd, touch, clear) is missing, so nothing can be put
-           in the cache and nothing is ever evicted: maxSize and
-           reduceSize are stored but never enforced.
+      1. The Python class is a stub. It implements construction and
+         .fileCacheInfo read/write and nothing else: no addFile, removeFile,
+         isFile, fileList, resizeAndAdd, touch or clear. Nothing can be cached,
+         and maxSize/reduceSize are stored but never enforced.
 
-        2. did/common.py:FileCache -- a three-line placeholder holding
-           only (path, size), commented "Placeholder for fileCache
-           class".
+      2. It is duplicated. There are two unrelated classes named FileCache --
+         did/file.py:FileCache (the stub above) and did/common.py:FileCache (a
+         three-line placeholder holding only path and size). did.common.
+         get_cache() returns the common.py placeholder, so the object
+         DID-python hands callers is the emptier of the two, where MATLAB's
+         getCache() returns a working did.file.fileCache.
 
-      did.common.get_cache() returns the common.py placeholder, not the
-      file.py class, so the object DID-python actually hands callers is
-      the emptier of the two. MATLAB's did.common.getCache() returns a
-      real did.file.fileCache. See the getCache entry in
-      did_matlab_python_bridge_util.yaml.
+      3. THE ON-DISK FORMATS ARE INCOMPATIBLE UNDER THE SAME FILENAME. Both
+         languages call the cache index ".fileCacheInfo". MATLAB writes it
+         through binaryTable as a fixed binary layout: a 26-byte header
+         (fileNameCharacters as uint16, then maxSize, reduceSize and
+         currentSize as uint64) followed by fixed-width rows of
+         {char[fileNameCharacters], double, uint64} -- filename, last-accessed
+         time, size. Python writes JSON. Neither can read the other's file:
+         Python's _load_properties would raise on MATLAB's binary, and MATLAB's
+         readHeader would misparse Python's JSON.
 
-      Resolving this means collapsing the two classes into one and
-      implementing the cache operations. Tracked in the "Not Yet Ported"
-      table in PORTING_INSTRUCTIONS.md.
+      This matters because MATLAB's cache is not a side feature: sqlitedb.
+      do_open_doc consults filecachepath when opening a document's binary file
+      and calls touch() on a hit.
+
+      The two languages do not collide today only because their filecachepath
+      values differ -- see the PathConstants.filecachepath entry in
+      did_matlab_python_bridge_util.yaml. That is the accident keeping this
+      latent, not a design.
+
+      ORDER OF WORK: align the format BEFORE aligning the path. Making the
+      paths agree first -- which looks like a one-line fix and which the bridge
+      previously implied was already true -- would point both languages at one
+      directory in which each corrupts the other's index.
 
     properties:
       - name: directoryName
+        python_name: directory_name
         type_matlab: "char"
         type_python: "str"
         python_name: "directory_name"
         decision_log: "Exact match."
 
       - name: fileNameCharacters
+        python_name: file_name_characters
         type_matlab: "uint16"
         type_python: "int"
         python_name: "file_name_characters"
@@ -404,6 +534,7 @@ classes:
           validator; Python does not validate.
 
       - name: maxSize
+        python_name: max_size
         type_matlab: "uint64"
         type_python: "float"
         python_name: "max_size"
@@ -412,6 +543,7 @@ classes:
           validator; Python does not validate.
 
       - name: reduceSize
+        python_name: reduce_size
         type_matlab: "uint64"
         type_python: "float"
         python_name: "reduce_size"
@@ -421,12 +553,14 @@ classes:
           set_properties().
 
       - name: currentSize
+        python_name: current_size
         type_matlab: "uint64"
         type_python: "float"
         python_name: "current_size"
         decision_log: "Exact match."
 
       - name: binaryTable
+        python_name: ~   # not ported
         type_matlab: "did.file.binaryTable"
         type_python: "(not implemented)"
         decision_log: >
@@ -435,6 +569,7 @@ classes:
           a 'files' key. Deviation by design.
 
       - name: cacheInfoFileName
+        python_name: CACHE_INFO_FILE_NAME
         type_matlab: "constant char"
         type_python: "class constant str"
         python_name: "CACHE_INFO_FILE_NAME"
@@ -442,6 +577,7 @@ classes:
 
     methods:
       - name: fileCache
+        python_name: __init__
         kind: constructor
         decision_log: >
           MATLAB: fileCache(directoryName, fileNameCharacters, maxSize,
@@ -451,10 +587,12 @@ classes:
           initialize one.
 
       - name: setProperties
+        python_name: set_properties
         python_name: "set_properties"
         decision_log: "Equivalent; both write the info file."
 
       - name: getProperties
+        python_name: ~   # not ported
         python_name: "_load_properties"
         decision_log: >
           MATLAB returns a struct of cache info. Python's counterpart
@@ -462,30 +600,38 @@ classes:
           returning it.
 
       - name: addFile
+        python_name: ~   # not ported
         decision_log: "Present in MATLAB. Not implemented in Python."
 
       - name: removeFile
+        python_name: ~   # not ported
         decision_log: "Present in MATLAB. Not implemented in Python."
 
       - name: clear
+        python_name: ~   # not ported
         decision_log: "Present in MATLAB. Not implemented in Python."
 
       - name: isFile
+        python_name: ~   # not ported
         decision_log: "Present in MATLAB. Not implemented in Python."
 
       - name: fileList
+        python_name: ~   # not ported
         decision_log: "Present in MATLAB. Not implemented in Python."
 
       - name: resizeAndAdd
+        python_name: ~   # not ported
         decision_log: >
           Present in MATLAB -- evicts by ascending last-access time
           until the cache is under reduceSize, then adds. Not
           implemented in Python, so the Python cache never evicts.
 
       - name: touch
+        python_name: ~   # not ported
         decision_log: "Present in MATLAB. Not implemented in Python."
 
       - name: infoFileName
+        python_name: _info_file_name
         python_name: "_info_file_name"
         decision_log: "Exact match."
 

@@ -32,33 +32,50 @@ If the command produces output, the MATLAB file has changed since the last port.
 
 ### Bulk drift check
 
-Run this to check all bridge files at once:
+`bin/check_bridge_coverage.py` runs the drift check over every bridge entry,
+along with the coverage checks below:
 
 ```bash
-cd /path/to/DID-matlab
-for yaml in /path/to/DID-python/src/did/did_matlab_python_bridge*.yaml; do
-    echo "=== $(basename $yaml) ==="
-    # Extract matlab_path and matlab_last_sync_hash pairs
-    python3 -c "
-import yaml, sys
-with open('$yaml') as f:
-    data = yaml.safe_load(f)
-for section in ['classes', 'functions']:
-    for item in data.get(section, []):
-        path = item.get('matlab_path', '')
-        sync_hash = item.get('matlab_last_sync_hash', '')
-        name = item.get('name', '')
-        if path and sync_hash:
-            print(f'{name}|src/did/{path}|{sync_hash}')
-" | while IFS='|' read name path hash; do
-        changes=$(git log --oneline "$hash"..HEAD -- "$path" 2>/dev/null)
-        if [ -n "$changes" ]; then
-            echo "  DRIFT: $name ($path)"
-            echo "$changes" | sed 's/^/    /'
-        fi
-    done
-done
+python bin/check_bridge_coverage.py --matlab-repo /path/to/DID-matlab
 ```
+
+It defaults to `../DID-matlab`, and also reads `DID_MATLAB_REPO`. Use
+`--check` to run one check at a time (`file`, `hash`, `drift`, `member`,
+`missing`); it exits non-zero if anything is reported.
+
+### What the coverage checks are for
+
+A drift check only sees a MATLAB file that some bridge entry names *and* gives
+a `matlab_last_sync_hash`. Anything else is invisible: a MATLAB change to it
+will never show up. The script checks that the bridge has no such blind spots.
+
+| Check | What it enforces |
+|---|---|
+| `file` | Every `.m` file under `DID-matlab/src/did` is either tracked by an entry or listed under `not_applicable`; every `.py` module under `src/did` is some entry's `python_path`. Both `matlab_path` and `python_path` point at files that exist. |
+| `hash` | Every entry with a `matlab_path` has a `matlab_last_sync_hash`, and that hash is a real commit. An entry without one can never show drift. |
+| `drift` | No MATLAB commits touch a tracked file after its sync hash. |
+| `member` | Every method/property entry names a symbol that exists in the MATLAB class (or one it inherits from), and its `python_name` exists in the Python class. |
+| `missing` | Every public MATLAB method and property has a bridge entry. Protected, private and `delete` members are skipped as implementation detail. |
+
+CI runs `file`, `hash`, `member` and `missing` as gating checks, and `drift`
+non-gating: drift turns red when DID-matlab moves, which no commit here causes
+and none can fix until someone does the port.
+
+### Member entry conventions
+
+The `member` check relies on two fields, both required for it to mean anything:
+
+- **`python_name`** — the Python identifier, or `~` when the member is not
+  ported. Without it the mapping is prose only and nothing can verify it.
+- **`python_path`** — only when the counterpart lives outside the entry's own
+  `python_path`. `database.validate_doc_vs_schema` maps to `did/validate.py`,
+  for example.
+- **`matlab_name: ~`** — for a Python-only member. Every member's `name` is the
+  MATLAB name, so a Python-only addition needs the marker or it reads as an
+  entry pointing at a MATLAB method that does not exist.
+
+One entry must describe one member. A combined `name: "a / b / c"` hides
+whether `b` and `c` are bridged at all.
 
 ## Porting a MATLAB Change to Python
 
@@ -134,6 +151,18 @@ If MATLAB is available, run the full 3-step symmetry cycle:
 | `properties` | No | List of property mappings |
 | `methods` | No | List of method mappings |
 
+Each entry in `methods` / `properties` takes:
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | Yes | MATLAB method/property name. One entry per member — never `"a / b"` |
+| `python_name` | Yes | Python identifier, or `~` when not ported |
+| `matlab_name` | No | `~` marks a Python-only member with no MATLAB counterpart |
+| `python_path` | No | Only when the counterpart lives outside the entry's `python_path` |
+| `kind` | No | `constructor`, `static` or `hidden` |
+| `decision_log` | Yes | Deviations, sync date, rationale |
+| `input_arguments` / `output_arguments` | No | Argument type mappings |
+
 ## Adding a New MATLAB File
 
 When a new file is added to DID-matlab that needs a Python counterpart:
@@ -146,6 +175,8 @@ When a new file is added to DID-matlab that needs a Python counterpart:
 ## Current Sync Status
 
 Last drift check: **2026-08-28**, against DID-matlab `83646a7` (2026-07-25).
+Run `python bin/check_bridge_coverage.py` to re-check; it currently reports
+zero problems across all five checks.
 
 Three bridge entries showed drift; each was investigated and resolved as
 described below. All other entries are clean.
@@ -195,56 +226,80 @@ Python had **no document-vs-schema validation at all**, so there was nothing to
 port the change into. Rather than record a permanent gap, the validation
 subsystem was ported (2026-08-28). See *Validation* below.
 
-### Bridge coverage gaps found and fixed
+### Bridge coverage audit, 2026-08-28
 
-A drift check only covers files that have a bridge entry with a sync hash, so
-coverage was audited in both directions on 2026-08-28.
+Coverage was audited in both directions and is now enforced by
+`bin/check_bridge_coverage.py` (above), which reports zero problems against
+DID-matlab `83646a7`. The audit found the bridge described the port accurately
+in prose but was not *checkable*, and had several blind spots.
 
-**Python side: complete.** Every module under `src/did/` is referenced by some
-bridge entry's `python_path`, except the three `__init__.py` package markers
-(two empty, one re-exporting `did.util`).
+**No drift.** Every tracked entry is current against MATLAB `83646a7`.
 
-**MATLAB side: two files were invisible to the drift check.** `dumbjsondb.m`
-and `fileCache.m` sat in `not_applicable` in `bridge_file.yaml`, which means no
-`matlab_last_sync_hash` and therefore no drift detection — while their own
-rationales asserted that Python equivalents exist. Both rationales were wrong,
-in opposite directions:
+**Blind spots closed:**
 
-- **`dumbjsondb`** — stays `not_applicable`, rationale corrected. DID-python's
-  backend is SQLiteDB and there is no plan to port the JSON-file document
-  store. The `DumbJsonDB` class in `file.py` arrived with the initial bulk port
-  commit (`97ba45c`) and is dead code: nothing in `src/` or `tests/` imports or
-  exercises it, and it has no binary-file, search, remove, clear, `alldocids`,
-  or metadata support. It is a vestigial stub, not a port, and the old
-  rationale ("has a Python equivalent") overstated it. Either delete the class
-  or, if a JSON backend is ever wanted, promote it to a tracked entry and port
-  it properly.
-- **`fileCache`** — promoted to a tracked class entry, `out_of_sync: true`.
-  Not a MATLAB divergence (`fileCache.m` is unchanged since `3aa892d`); the
-  Python side is a stub, and it is duplicated. There are two unrelated classes
-  named `FileCache`: `file.py:FileCache` implements construction plus
-  `.fileCacheInfo` read/write and nothing else — no `addFile`, `removeFile`,
-  `isFile`, `fileList`, `resizeAndAdd`, `touch`, or `clear`, so nothing can be
-  cached and `maxSize`/`reduceSize` are stored but never enforced — while
-  `common.py:FileCache` is a three-line placeholder holding only
-  `(path, size)`. **`did.common.get_cache()` returns the `common.py`
-  placeholder**, so the object DID-python hands callers is the emptier of the
-  two, where MATLAB's `getCache()` returns a working `did.file.fileCache`.
-  Fixing this means collapsing the two classes and implementing the cache
-  operations.
+- **`validate.py` was not referenced by any entry.** The largest recent port —
+  the whole validation subsystem — had no `python_path` pointing at it. It is
+  now reached through `python_path` on the `database` method entries that map
+  into it (`get_document_schema`, `validate_doc_vs_schema`,
+  `validate_field_type_and_value`, `checkfiles`, `isfilenamematch`,
+  `canfindonefile`). The claim in the previous audit that every Python module
+  was referenced stopped being true when `validate.py` was added.
+- **`matlabdumbjsondb` had no `matlab_last_sync_hash`** — the same blind spot
+  found in `dumbjsondb` and `fileCache` last time, missed because that audit
+  checked the `not_applicable` lists but not tracked entries with a missing
+  hash. It is tracked now; unported does not have to mean unwatched.
+- **`Contents.m`** was already excused but the coverage check did not recognize
+  the entry: `not_applicable` names appear bare (`Contents.m`), by stem, and
+  dotted (`did.file.dumbjsondb`), and the matcher handled only the last two.
 
-Two further entries were making claims that did not hold and were corrected:
+**Ported but untracked.** Real ported code no bridge entry mentioned, so a
+MATLAB change to any of it would have gone unnoticed:
 
-- `getCache` in `bridge_util.yaml` read "Exact match"; the function shape
-  matches but the returned object does not (see above).
-- The `did.datastructures.table_cross_join (duplicate)` entry in
-  `bridge_util.yaml` claimed MATLAB has `tableCrossJoin` in both
-  `+did/+datastructures/` and `+did/+db/`. It exists only in `+did/+db/`;
-  there is no duplicate.
+| Member | Python counterpart |
+|---|---|
+| `binaryTable.getLock` / `releaseLock` / `lockFileName` / `tempFileName` / `rowSize` | `get_lock` / `release_lock` / `lock_file_name` / `temp_file_name` / `row_size` |
+| `query.searchcellarray2searchstructure` | `search_cell_array_to_search_structure` |
+| `query.searchstruct` | `Query._create_search_structure` |
+| `sqldb.alldocids` | `Database.all_doc_ids` |
+| all six `PathConstants` properties | `PATH`, `DEFPATH`, `DEFINITIONS`, `temppath`, `filecachepath`, `preferences` |
 
-The remaining unbridged MATLAB files are correctly out of scope: `filesep.m`
-and `toolboxdir.m` (`not_applicable` entries, MATLAB-only utilities) and
-`Contents.m` (a MATLAB toolbox version listing, not code).
+Writing these up surfaced two deviations that had never been recorded.
+`search_cell_array_to_search_structure` is a simplification: MATLAB dispatches
+on the value's MATLAB class, while Python picks `exact_number` for an int or
+float and `regexp` for everything else, so a cell/list, struct/dict or logical
+that MATLAB handles falls through to `regexp`. And `PathConstants` enforces
+writability with a `mustBeWritable` property validator in MATLAB, checked once
+at class load, versus a `@property` calling `must_be_writable()` on every read
+in Python.
+
+**Unported and untracked.** Public MATLAB API with no Python counterpart *and*
+no bridge entry, so the gap was recorded nowhere:
+
+- `database.get_preference_names` / `get_preference` / `set_preference`. Python
+  has the `preferences` dict but no accessors, so preferences can only be
+  reached by touching the attribute directly. Added to *Not Yet Ported* below.
+- `database.findfilematch`. No port needed — `check_files` does the same
+  matching inline through `is_filename_match` — but that reasoning was written
+  down nowhere.
+- `binaryTable.compare`, and MATLAB's Hidden singular-form aliases
+  (`add_doc`, `get_doc`, `remove_doc`, `display_branch`, `get_parent_branch`).
+
+**Entries corrected:**
+
+- `binaryTable.insertRow` claimed "Python: (partial implementation)". There is
+  no `insert_row` in `BinaryTable` at all.
+- Three entries packed several members into one `name` field
+  (`checkfiles / isfilenamematch / canfindonefile`, `open_db / close_db`,
+  `doc2sql / doc_to_sql`) — the last of which was not even two MATLAB methods
+  but a MATLAB name and a Python name in one string. All are now one entry per
+  member.
+- `sqlitedb.get_docs_by_branch` is Python-only and is marked `matlab_name: ~`.
+
+**Checked and correct:** all 52 tracked entries are current; the symmetry test
+suites correspond one-to-one (`tests/symmetry/{make,read}_artifacts/database/`
+against `tests_symmetry/+did/+symmetry/+{make,read}Artifacts/+database/`); and
+`filesep.m`, `toolboxdir.m` and `dumbjsondb.m` remain correctly
+`not_applicable`.
 
 ### Previously resolved (no Python changes needed)
 
@@ -357,13 +412,481 @@ document entry in `bridge.yaml`.)
 | MATLAB feature | Bridge file | Priority |
 |---|---|---|
 | `database.exist_doc` | bridge.yaml | Medium |
+| `database.get_preference` / `set_preference` / `get_preference_names` — Python has the `preferences` dict but no accessors for it | bridge.yaml | Medium |
 | `binaryTable` write methods | bridge_file.yaml | Medium |
-| `fileCache` cache operations (`addFile`, `removeFile`, `isFile`, `fileList`, `resizeAndAdd`, `touch`, `clear`) — and collapsing the duplicate `FileCache` in `common.py` and `file.py` so `get_cache()` returns a working cache | bridge_file.yaml | Medium |
+| `fileCache` — cache operations, the duplicate `FileCache` in `common.py` vs `file.py`, **and an incompatible on-disk format**; see "The file cache" below | bridge_file.yaml | **Medium-High** |
 | Remote (URL) file locations in `open_doc` — MATLAB uses `ndi.cloud.api.files.getFile`; Python would need `requests`/`urllib` | bridge_implementations.yaml | Low |
 | `database.freeze_branch` | bridge.yaml | Low |
 | `database.is_branch_editable` | bridge.yaml | Low |
 | `database.display_branches` | bridge.yaml | Low |
 | `database.close_doc` | bridge.yaml | Low |
-| `document.dependency_value_n` | bridge.yaml | Low |
-| `document.add_dependency_value_n` | bridge.yaml | Low |
-| `document.remove_dependency_value_n` | bridge.yaml | Low |
+| `binaryTable.compare` (only needed by `findRow`, also unported) | bridge_file.yaml | Low |
+| `query.searchcellarray2searchstructure` handles only numbers and strings; MATLAB also handles cells, structs and logicals | bridge.yaml | Low |
+
+### Enumerated dependency lists (`name_1`, `name_2`, ...) — ported 2026-08-28
+
+`dependency_value_n`, `add_dependency_value_n` and `remove_dependency_value_n`
+were listed as Low priority. That was wrong. They were ported on 2026-08-28
+after testing showed the missing half was the *write* side, and that it failed
+silently:
+
+1. **Reading**: `dependency_value('item')` raised on a document holding
+   `item_1`, `item_2`, `item_3` — a caller had to guess suffixes and probe.
+2. **Writing**: the only way to append was
+   `set_dependency_value(name, value, error_if_not_found=False)`, which wrote
+   an entry named literally `item`, not `item_4`.
+3. **Neither validator caught it.** The schema declares the un-enumerated stem
+   and `_strip_enumeration_suffix('item')` returns `'item'`, so the malformed
+   entry matched the stem. Building both documents and running `validate_docs`
+   confirmed: the well-formed list and the corrupted one *both* pass.
+4. **MATLAB then could not see it.** `dependency_value_n` stops at the first
+   gap, so the entry Python wrote was invisible — silent cross-language data
+   loss on an ordinary call, with no error on either side.
+
+Two things changed alongside the port. `set_dependency_value` now refuses to
+append a stem-named entry when an enumerated list exists, pointing the caller
+at `add_dependency_value_n` — a deliberate divergence, since MATLAB appends
+without complaint and that is how the corruption arose. And matching in
+`dependency_value` / `set_dependency_value` is now case-insensitive, mirroring
+MATLAB's `strcmpi`; it had been case-sensitive, so a MATLAB-written `Item_1`
+was unreachable from Python by `item_1`. Coverage is in
+`tests/test_dependency_lists.py` (23 tests); MATLAB has none for these methods.
+
+## Re-audit of the remaining Low-priority items, 2026-08-28
+
+Every remaining item was retested rather than taken on trust, since the
+enumerated-lists entry had been mis-ranked. The rankings below now rest on
+evidence.
+
+### Confirmed Low, with the evidence that was missing
+
+- **`freeze_branch` / `is_branch_editable`** — MATLAB's `frozen_branch_ids` is
+  an in-memory property never written to the database, enforced in exactly one
+  place (`delete_branch`). A freeze does not survive a session and cannot cross
+  languages, so this is an absent feature, not a divergence. The sub-branch
+  half of `is_branch_editable` is upheld in Python by a SQLite FOREIGN KEY
+  anyway; what is missing is the ability to *ask* before trying.
+- **`close_doc`** — a thin delegate to `do_close_doc`. Python's file objects
+  close on garbage collection.
+- **`display_branches` / `display_branch`** — display helpers, no data effect.
+- **`fileobj.fscanf` / `fprintf`** — Python uses native file I/O instead.
+
+### Re-ranked: `document.eq` is not "not yet ported", it is **do not port**
+
+MATLAB's `eq` compares `document_properties.did_document.id`. No such field
+exists anywhere in either repo — documents carry `base.id` — so calling it on a
+real document raises "Reference to non-existent field". It is dead code, like
+`document.validate`, and listing it as "not yet ported" invited someone to port
+a bug. Noted for Python callers: with no `__eq__`, `doc_a == doc_b` falls back
+to identity, so two `Document` objects holding the same `base.id` compare
+unequal. If an id comparison is ever wanted, write it against `base.id`.
+
+### New: methods marked "Exact match" whose Python side is a stub
+
+These are **not** on any gap list, because the methods exist in both languages.
+The `member` coverage check cannot catch them either — it verifies that a
+counterpart exists, not that it does the same thing. Four `Database` methods
+carry a `# Validation logic would go here` placeholder where MATLAB validates:
+
+| Method | What actually happens |
+|---|---|
+| `delete_branch` | **Deleting a non-existent branch is a silent no-op.** No schema backstop, because there is no row to constrain. The sub-branch guard exists only as a FOREIGN KEY, raising `sqlite3.IntegrityError` where MATLAB raises `DID:Database:ParentBranch`. |
+| `set_branch` | Accepts a branch that does not exist; the error surfaces later at `add_docs`. MATLAB fails fast. Fail-deferred, not fail-silent. |
+| `add_branch` | Duplicate id and missing parent are caught by UNIQUE / FOREIGN KEY constraints, so data stays correct but the error type differs. |
+| `get_doc_ids` | Same placeholder; MATLAB validates the branch id first. |
+
+Also `BinaryTable.read_row`, marked "Synchronized": MATLAB decodes the row
+using `recordType` and `elementsPerColumn`, while Python returns the raw bytes
+of one column and does neither. And `Document.set_properties` describes itself
+as "a simplified way to set properties" under a parity claim; treat it as
+unverified.
+
+Nothing in **DID-python's** `src/` or `tests/` constructs a `BinaryTable`, a
+`FileCache` or a `DumbJsonDB`, which is why a stubbed `read_row` could sit
+under a "Synchronized" note unnoticed. That is a fact about the Python side
+only — in DID-matlab two of the three are live. See below.
+
+### Cross-cutting: the error identifier asymmetry
+
+Porting validation deliberately gave `ValidationError` an `.identifier`
+carrying MATLAB's error id, so both languages branch on the same strings. That
+pattern only half-exists: the branch and database operations above raise bare
+`ValueError` or `sqlite3.IntegrityError` with no identifier, so a caller cannot
+branch on `DID:Database:ParentBranch` the way it can on
+`DID:Database:ValidationDependsOn`. Worth closing as one piece of work rather
+than method by method.
+
+### Suggested next step
+
+Port `validate_branch_id` / `validate_doc_id` and call them from the four
+stubbed methods, raising an identifier-carrying error as the validation port
+does. That closes the one genuinely silent failure (`delete_branch`), converts
+three constraint errors into MATLAB-matching identifiers, and makes
+`set_branch` fail fast — in one change with one set of tests.
+
+## The file cache — corrected 2026-08-28
+
+An earlier note in this document said `BinaryTable`, `FileCache` and
+`DumbJsonDB` were "dead code". That is true of **DID-python only**. Checking
+DID-matlab shows two of the three are live there, which changes the
+assessment:
+
+- **`binaryTable` is the storage engine behind `fileCache`.** `fileCache.m`
+  constructs one over the cache index and calls `readHeader`, `writeHeader`,
+  `getLock`, `findRow` and `releaseLock` — several of which were among the
+  untracked methods this audit added.
+- **`fileCache` is on the document-open path.** `sqlitedb.do_open_doc`
+  consults `filecachepath` when opening a document's binary file and calls
+  `didCache.touch()` on a hit. It is not a side feature.
+- **`dumbjsondb`** backs `matlabdumbjsondb`, an alternative database backend
+  that DID-python deliberately does not implement. That one really is out of
+  scope on both sides.
+
+### The part that is a trap
+
+Both languages call the cache index `.fileCacheInfo`. They write different
+things into it:
+
+| | MATLAB | Python |
+|---|---|---|
+| Format | binary, via `binaryTable` | JSON |
+| Header | 26 bytes: `fileNameCharacters` (uint16), then `maxSize`, `reduceSize`, `currentSize` (uint64) | JSON keys |
+| Rows | fixed-width `{char[n], double, uint64}` — filename, last-accessed, size | a `files` object |
+
+Neither can read the other's file. They do not collide today only because
+`PathConstants.filecachepath` resolves differently: MATLAB uses
+`fullfile(userpath, ...)`, and `userpath` is not the home directory (typically
+`<home>/Documents/MATLAB`), while Python uses `Path.home()`. That divergence
+was itself mis-recorded in the bridge as a mere validation-style difference
+until 2026-08-28. (The `userpath` default is quoted from its documentation;
+this audit could not run MATLAB to confirm it.)
+
+**So the order of work matters.** Aligning the paths looks like a one-line fix
+and is the obvious first move — and it is the wrong one. It would point both
+languages at a single directory in which each corrupts the other's index.
+Align the format first, then the path.
+
+The Python-side cache is dead code today, so nothing is broken right now. The
+risk is entirely in what a reasonable next change would do.
+
+## What actually happens across languages on the same dataset
+
+Traced 2026-08-28, prompted by the question "if MATLAB caches files for a
+dataset and Python then opens it, do the caches conflict?". Short answer: no,
+not today — but for a worse reason than compatibility.
+
+**Python has no cache on the read path at all.** `SQLiteDB.open_doc` resolves
+the location directly (absolute, or relative to the database directory) and
+returns a `ReadOnlyFileobj`. It never calls `get_cache()` and never looks at
+`filecachepath`. MATLAB's `do_open_doc` consults the cache and calls `touch()`
+on a hit. So the two never meet: MATLAB maintains a cache Python does not read
+or write, and Python re-resolves every file.
+
+That means the practical consequence is lost caching, not corruption. The
+corruption scenario needs the two to share a directory, which today they do
+not — and which is exactly why the paths must not be "fixed" first. See "The
+file cache" above.
+
+One caveat: MATLAB's `filecachepath` is `fullfile(userpath, ...)`, and
+`userpath` is user-configurable. If it were ever set to the home directory —
+or left empty, which makes MATLAB's path *relative* and resolved against the
+current working directory — the two could land in the same place without
+anyone intending it.
+
+### Remote (URL) file locations — fixed in both repos, 2026-08-28
+
+**Decision: a URL location behaves exactly as a `mustbenotempty == 0` file
+does.** Validation does no network I/O; a non-local location is admitted and
+its reachability is evaluated when the file is read.
+
+The old behavior, and why it was wrong. `canfindonefile` singled out `http(s)`
+and tried to HEAD-check it, so a file the schema marked `mustbenotempty` and
+hosted at a URL was rejected as "Missing file" — and `add_docs` then wrote
+**nothing**, not a partial document. Two things were wrong with that:
+
+1. **The branch had never worked.** MATLAB's `canfindonefile` called
+   `req.send(url)` where `url` is never assigned anywhere in `database.m`. The
+   error was swallowed by a bare `catch`, so the URL branch could never report
+   found. Python had mirrored the resulting behavior.
+2. **It was inconsistent.** `s3://`, `ftp://` and every other non-local scheme
+   were accepted without any check. Only `http(s)` was rejected.
+
+The pre-check was therefore **removed rather than repaired**. Repairing it
+would have put a network round-trip inside validation and required a URL
+download path in DID-python to match. The shipped `demoFile.json` template
+carries `location_type: "url"` entries, so remote locations are a first-class
+part of the document format; rejecting them was never the intent.
+
+Both repos changed in lockstep:
+
+- `DID-matlab` — `src/did/+did/database.m`, `canfindonefile`: the broken
+  `elseif startsWith(fileLocation, 'http')` branch removed, so a non-local
+  location falls through to the existing not-pre-checked path.
+- `DID-python` — `src/did/validate.py`, `can_find_one_file`: the
+  `startsWith('http')` special case removed, same result.
+
+Neither repo had a test covering this. Coverage is now in
+`tests/test_validation.py:TestRemoteFileLocations` (7 tests): URL findability,
+parity with other non-local schemes, an empty location list, a required
+URL-hosted file passing `check_files`, the document being addable, and the URL
+surviving the round-trip through SQLite. **MATLAB still has no test for it** —
+worth adding on that side.
+
+Behavior now, measured:
+
+| Schema | Location | Result |
+|---|---|---|
+| `mustbenotempty: 1` or `0` | `https://…`, `s3://…`, other non-local | Valid, not pre-checked |
+| any | local path that exists | Valid |
+| any | no locations at all | Not findable |
+
+The stored link was never at risk in any of this: a document that gets in
+round-trips its locations verbatim through SQLite, URL included. The failure
+was only ever about admission.
+
+## Where does the remote-file download live?
+
+Traced 2026-08-28. DID-python has no download path, so a remote file is
+unreachable from Python. Looking at how MATLAB does it answers where the
+Python equivalent belongs — and the answer is probably *not* DID-python.
+
+`sqlitedb.do_open_doc` dispatches on the location's `type`:
+
+| type | MATLAB does |
+|---|---|
+| `file` | `copyfile(sourcePath, destPath)` |
+| `url` | **`ndi.cloud.api.files.getFile(sourcePath, destPath)`** |
+| anything else | calls a caller-supplied `customFileHandler(destPath, sourcePath)`, or errors `DID:SQLITEDB:FileRetrieval:UnsupportedType` |
+
+then adds the result to the file cache and returns a `readonly_fileobj` over
+the cached copy.
+
+Two things follow.
+
+**1. DID-matlab depends on NDI.** The `url` branch calls
+`ndi.cloud.api.files.getFile` directly — a function that lives in NDI-matlab,
+not here. So DID-matlab needs NDI on the path to open a remote file, which is
+a layering inversion: the lower-level package calling the higher-level one.
+Worth resolving before mirroring it into Python. The cleanest fix on the
+MATLAB side is to route `url` through `customFileHandler` too, so NDI supplies
+the downloader rather than DID reaching for it.
+
+**2. `customFileHandler` is the extension point, and Python has none.**
+`do_open_doc` accepts it as a name-value pair, so a downstream package can
+supply file retrieval without DID knowing anything about it. DID-python's
+`open_doc(doc_id, filename)` takes no such parameter and no `**kwargs`, so
+there is nowhere for a downstream package to hook in.
+
+So the likely shape of the Python work is *not* "add `requests` to
+DID-python". It is:
+
+1. Give `open_doc` a `custom_file_handler` parameter mirroring MATLAB's, so a
+   downstream package (NDI-python) can supply the downloader. This keeps the
+   network dependency out of DID-python entirely.
+2. Decide whether DID-python should have a built-in `url` handler at all, or
+   whether — as the layering suggests — every remote fetch should go through
+   the hook, including in MATLAB.
+3. The cache (see above) only becomes worth building once something can
+   actually download, since its purpose is to avoid re-fetching.
+
+### How NDI-matlab actually does it (read from VH-Lab/ndi-matlab, 2026-08-28)
+
+The hook is real and already in use. `ndi.database.implementations.database.
+didsqlite` calls:
+
+```matlab
+db.open_doc(ndi_document_id, filename, 'customFileHandler', @download_file_from_cloud)
+```
+
+so NDI supplies retrieval through DID's extension point rather than DID
+knowing anything about the cloud. NDI defines three location types
+(`ndi.document.add_file`): `file`, `url` for plain `http(s)://`, and
+**`ndicloud`** for `ndic://<datasetId>/<fileUid>`. Its handler accepts exactly
+`(destPath, sourcePath)`, and for an `ndic://` path it:
+
+1. splits out `datasetId` and `fileUid`;
+2. calls `ndi.cloud.api.files.getFileDetails(datasetId, fileUid)` to mint a
+   **fresh pre-signed `downloadUrl`**;
+3. calls `ndi.cloud.api.files.getFile(fileUrl, destPath, 'useCurl', true)`.
+
+That is why documents store `ndic://…` rather than a URL: a pre-signed URL
+expires, so the durable identifier is stored and the URL is minted at read
+time.
+
+**So the answer to "does the downloader need the dataset ID?" is: it depends
+which half.** `getFile(downloadURL, downloadedFile)` needs nothing but a URL
+and a destination — `useCurl` already defaults to true. But *obtaining a valid
+URL* for an `ndic://` location needs the dataset ID, the file UID and cloud
+authentication. Only the plain `url` type is fetchable from the URL alone.
+
+Which makes DID-matlab's own `url` branch the one piece that is misplaced: a
+plain `https://` location needs no dataset ID and no auth, yet DID reaches up
+into `ndi.cloud.api.files.getFile` to fetch it. Giving DID-matlab a small
+generic downloader for that branch would remove DID's dependency on NDI
+entirely, leaving NDI responsible only for `ndicloud`, which it already
+handles through the hook.
+
+Such a downloader is not a one-liner. NDI's curl path carries four details
+that were clearly learned the hard way, and all four would have to come with
+it:
+
+- `-H "Accept-Encoding: identity"` — the payloads are already-compressed
+  archives, and letting the gateway compress them again produced corrupt files
+  on both macOS and Linux (`websave` auto-decompresses and botches them).
+- `-f` — so an HTTP error is a non-zero exit rather than a server error body
+  written into the destination file.
+- `assertSafeCurlArgs` (87 lines) — the URL is server-supplied and
+  interpolated into a `system()` command inside double quotes, which in sh do
+  **not** neutralise `` ` `` or `$`. This is a shell-injection guard.
+- `ndi.common.systemCurlEnvPrefix` (68 lines) — resets `LD_LIBRARY_PATH` so
+  the OS curl loads OS libraries rather than MATLAB's bundled ones, which a
+  MATLAB upgrade can otherwise break.
+
+**Do not copy the last two.** Duplicating a shell-injection guard across two
+repositories means a fix to one silently fails to reach the other. Both are
+generic utilities that belong in the lower layer: move them down into
+DID-matlab (`did.file.assertSafeCurlArgs`, `did.common.systemCurlEnvPrefix`)
+and have NDI call DID's copies, keeping only the cloud-API-specific parts.
+
+**Still not verified: NDI-python.** The above was read from VH-Lab/ndi-matlab.
+NDI-python is in the WalthamDataScience organization and was not examined, so
+nothing here should be read as a claim about it. If it mirrors NDI-matlab's
+design, DID-python needs the `custom_file_handler` parameter before NDI-python
+has anywhere to hook.
+
+### open_doc, fixed 2026-08-28
+
+Three quiet bugs were fixed in `SQLiteDB.open_doc` along the way:
+
+- `locations["location"]` was read directly, assuming a single dict. Documents
+  may carry several locations per file — the shipped `demoFile.json` template
+  lists a local path *and* a URL for each — so **any MATLAB-written document
+  raised `TypeError: list indices must be integers`**. It now walks the
+  locations in turn and returns the first that resolves, as MATLAB does.
+- A URL was rebased against the database directory like a relative path,
+  producing `/db/dir/https://example.org/data/thing.bin`.
+- The resulting `Fileobj` was returned unopened. `Fileobj.fopen()` swallows
+  the `OSError` and leaves `fid` None, so a caller that did not check `fid`
+  read `b""` and saw no error — a missing file was indistinguishable from an
+  empty one.
+
+`open_doc` now raises `FileAccessError`, which carries MATLAB's identifier the
+way `ValidationError` does and subclasses `FileNotFoundError` so existing
+callers keep working:
+`DID:SQLITEDB:FileRetrieval:UnsupportedType` when the only locations are
+remote, `DID:SQLITEDB:open` otherwise.
+
+Two things surfaced while fixing it, both now corrected:
+
+- **`Fileobj.fread` returned different types on success and failure** — `bytes`
+  when the file was open, the 2-tuple `(b"", 0)` when it was not. A caller
+  doing `fread().decode()` got `AttributeError` on a tuple; one doing
+  `data, count = fread()` unpacked correctly only when the read returned
+  exactly two bytes. Now `b""` in both cases.
+- **`tests/test_file_document.py` was asserting success on a file that could
+  never be opened.** It wrote its fixture into the working directory while a
+  relative location resolves against the *database* directory, and only
+  checked `isinstance(file_obj, ReadOnlyFileobj)` — which the old silent
+  behavior always satisfied. Fixture corrected and the test now reads the
+  content back.
+
+Coverage: `tests/test_open_doc_locations.py` (8 tests).
+
+## File retrieval: the hook, implemented 2026-08-28
+
+**Policy: only `ndic://` is supported. DID does not download anything itself,
+in either language, and plain `http(s)` URLs are deliberately not handled.**
+Retrieval is supplied by the caller through a handler, which is how NDI
+already does it.
+
+Both repos now behave the same way. `open_doc` walks the document's locations,
+returns the first that resolves to a readable local file, and hands any remote
+location to the handler:
+
+| | MATLAB | Python |
+|---|---|---|
+| Parameter | `'customFileHandler', @fn` (name-value) | `custom_file_handler=fn` |
+| Called as | `fn(destPath, sourcePath)` | `fn(dest_path, source_path)` |
+| Contract | must produce a file at `destPath` | same, and it is checked |
+| No handler, remote location | `DID:SQLITEDB:FileRetrieval:UnsupportedType` | same identifier, via `FileAccessError` |
+| Handler failed | `…:CustomHandlerFailed` | same identifier |
+
+**MATLAB change**: the `url` branch of `do_open_doc`, which called
+`ndi.cloud.api.files.getFile` directly, was removed. It made DID depend on NDI
+being on the path — a lower-level package reaching for a higher-level one —
+for a case NDI already covers through the hook. Every non-`file` type now goes
+to the handler.
+
+**Python change**: `open_doc` gained the `custom_file_handler` parameter, so
+NDI-python has somewhere to supply retrieval without DID acquiring a network
+dependency.
+
+### Two deviations that remain
+
+- **No cache.** MATLAB adds the retrieved file to the file cache and serves
+  later opens from there. Python has none (see "The file cache"), so it
+  downloads into `PathConstants.temppath` and **re-fetches on every open**.
+  This is the concrete cost of the missing cache, and the reason to build it
+  now that something can actually download.
+- **`do_add_doc` still calls into NDI.** DID-matlab's *ingestion* path
+  (`do_add_doc`, not `do_open_doc`) also calls
+  `ndi.cloud.api.files.getFile` for a non-`file` location, so DID-matlab's
+  dependency on NDI is reduced but **not gone**. `do_add_doc` takes no handler
+  parameter, so closing it means plumbing one through `add_docs` and the
+  abstract base — a real API change, not done here. It is rarely reached,
+  because `ingest` defaults to 0 for `url` and `ndicloud` locations, which is
+  presumably why it went unnoticed.
+
+### A hazard the tests caught
+
+`temppath` persists between calls and a location's `uid` is unique per
+document, not globally. The first implementation checked only whether a file
+existed at the destination after the handler ran — so a leftover download from
+an earlier open made a handler that produced *nothing* look like it had
+succeeded, and would have served one document's bytes for another. The
+destination is now cleared before the handler is invoked. Covered by
+`test_a_stale_download_is_not_served_as_fresh` and
+`test_a_fresh_download_replaces_a_stale_one`.
+
+Coverage: `tests/test_open_doc_locations.py`, 23 tests. MATLAB has none for
+this path.
+
+## Files added by Python are invisible to MATLAB (found 2026-08-28, NOT fixed)
+
+The most serious symmetry break found in this audit, and it is one-directional,
+which is why nothing caught it.
+
+MATLAB's `do_add_doc` walks `doc_props.files.file_info` and inserts a row into
+the **`files` table** for every location: `doc_idx, filename, uid,
+orig_location, cached_location, type, parameters`. Python's `_do_add_doc`
+writes only `docs.json_code` and the `branch_docs` link. It *creates* the
+`files` table, with matching columns, and never inserts a row.
+
+- **MATLAB → Python works.** MATLAB writes both `docs.json_code` and `files`;
+  Python's `open_doc` reads locations out of the document JSON.
+- **Python → MATLAB is broken.** MATLAB's `do_open_doc` selects from
+  `docs, files`. On a Python-written database that join returns nothing, so
+  **every file in the document is unreachable from MATLAB** — including a
+  plain local file sitting on disk. It surfaces as `DID:SQLITEDB:open`, "The
+  file … cannot be accessed".
+
+Verified by adding a `demoFile` document with two local files through Python:
+`docs` has 1 row, `files` has 0, Python's own `open_doc` succeeds, and
+MATLAB's join returns nothing.
+
+**Why the symmetry tests miss it**: the suite covers `buildDatabase` only, with
+no file-bearing documents. Any fix should add that coverage — it is the case
+the tests exist to catch.
+
+**The fix is mechanical** — mirror MATLAB's insert, one row per location — with
+one judgement call. Python does not ingest, so `cached_location` would always
+be empty. That appears harmless, since MATLAB builds its candidate paths from
+the `uid` and falls back to `orig_location` for retrieval, but it wants
+confirming against a real MATLAB run.
+
+**Related, and larger**: Python has no ingestion at all. MATLAB copies or
+retrieves a location marked `ingest` into `FileDir`, and can delete the
+original afterwards. Python does neither, so `ingest` and `delete_original`
+are inert on the Python side. `add_docs(**kwargs)` already forwards
+`custom_file_handler` through to `_do_add_doc`, so the parameter arrives — but
+there is nothing there to use it yet.

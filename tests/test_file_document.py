@@ -40,8 +40,12 @@ class TestFileDocument(unittest.TestCase):
         Document.set_schema_path(schema_path)
         doc = Document("demoFile")
 
-        # Create a dummy file to add
-        dummy_file_path = "dummy_file.txt"
+        # Create a dummy file to add. A relative location is resolved against
+        # the database's directory (see test_path_rebasing), so the file has to
+        # live there -- this previously wrote into the working directory and
+        # the test still passed, because open_doc handed back a Fileobj over a
+        # path that did not exist and the assertion only checked its type.
+        dummy_file_path = os.path.join(os.path.dirname(self.db_path), "dummy_file.txt")
         with open(dummy_file_path, "w") as f:
             f.write("This is a test file.")
 
@@ -54,6 +58,13 @@ class TestFileDocument(unittest.TestCase):
         # Open the file from the document
         file_obj = self.db.open_doc(doc.id(), "test_file.txt")
         self.assertIsInstance(file_obj, ReadOnlyFileobj)
+
+        # Read it back, so the test fails if the file cannot actually be opened
+        file_obj.fopen()
+        self.assertIsNotNone(file_obj.fid, "the file could not be opened")
+        data = file_obj.fread()
+        file_obj.fclose()
+        self.assertEqual(data, b"This is a test file.")
 
         # Clean up the dummy file
         os.remove(dummy_file_path)

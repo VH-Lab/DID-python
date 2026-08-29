@@ -135,9 +135,20 @@ class Fileobj:
         return 0
 
     def fread(self, count=-1):
+        """Read up to ``count`` bytes, or the rest of the file if count < 0.
+
+        Returns ``bytes``. MATLAB's fread returns ``[data, count]``; Python
+        returns the data alone, since ``len(data)`` is the count.
+
+        An unopened file reads as empty, mirroring MATLAB, whose fread returns
+        ``data = []`` and ``count = 0`` when fid < 0 rather than raising. Note
+        that Fileobj.fopen() likewise does not raise on a missing file -- it
+        leaves fid None -- so check fid if you need to tell "empty file" from
+        "could not open".
+        """
         if self.fid:
             return self.fid.read(count)
-        return b"", 0
+        return b""
 
     def fgetl(self):
         if self.fid:
