@@ -689,7 +689,7 @@ functions:
   - name: checkout_lock_file
     type: function
     matlab_path: "+did/+file/checkout_lock_file.m"
-    matlab_last_sync_hash: "d56cc25"
+    matlab_last_sync_hash: "9010a73"
     python_path: "did/file.py"
     python_name: "checkout_lock_file"
     decision_log: >
