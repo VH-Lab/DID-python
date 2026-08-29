@@ -689,7 +689,7 @@ functions:
   - name: checkout_lock_file
     type: function
     matlab_path: "+did/+file/checkout_lock_file.m"
-    matlab_last_sync_hash: "3aa892d"
+    matlab_last_sync_hash: "df15818"
     python_path: "did/file.py"
     python_name: "checkout_lock_file"
     decision_log: >
@@ -704,6 +704,40 @@ functions:
       The contents had to be aligned too, and that is tracked separately --
       see the parse_lock_expiration entry below. Both write the expiry as ISO
       8601 and both read either format.
+
+  - name: lock_expiration_time
+    type: function
+    matlab_path: "+did/+file/lock_expiration_time.m"
+    matlab_last_sync_hash: "df15818"
+    python_path: "did/file.py"
+    python_name: "parse_lock_expiration"
+    decision_log: >
+      Both parse a lock file's expiration line, and both accept either
+      language's format.
+
+      They had to, because the two wrote different ones. MATLAB wrote
+      char(datetime(...)) -- "29-Aug-2026 14:35:12" -- which
+      datetime.fromisoformat cannot read; Python swallowed the resulting
+      ValueError and fell through to "wait and retry", so a lock it could not
+      parse was indistinguishable from a lock that never expires. A MATLAB
+      process that died holding the file cache's lock shut Python out of that
+      cache permanently, which is exactly the crash the one-hour expiry
+      exists to survive. It failed safe -- neither language stole the other's
+      lock -- but not live.
+
+      Both now write ISO 8601. MATLAB's old output was locale-dependent as
+      well, so even MATLAB-to-MATLAB was fragile across locales, and its
+      parse failure landed in a bare try/end that made it silent.
+
+      Two deliberate differences in shape, not behaviour: MATLAB returns Inf
+      for text it cannot parse, the sentinel CHECKOUT_LOCK_FILE already waits
+      on, where Python raises ValueError, which its caller catches to the same
+      effect. And Python strips a trailing "Z" before parsing -- valid ISO
+      8601, and what a MATLAB writer using a UTCLeapSeconds datetime is
+      obliged to emit -- because datetime.fromisoformat only accepts one from
+      Python 3.11 and this package supports 3.10.
+
+      Added in DID-matlab#159 and DID-python#34, 2026-08-29.
 
   - name: release_lock_file
     type: function

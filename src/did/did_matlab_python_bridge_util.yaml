@@ -315,10 +315,31 @@ functions:
 # did.common — Path constants and cache
 # =========================================================================
 
+  - name: userPathOrDefault
+    type: function
+    matlab_path: "+did/+common/userPathOrDefault.m"
+    matlab_last_sync_hash: "6cec046"
+    python_path: "did/common.py"
+    python_name: ~   # not ported
+    decision_log: >
+      MATLAB-only, and deliberately so. It returns USERPATH(), or MATLAB's
+      documented default <home>/Documents/MATLAB when that is empty -- which
+      it is on any installation that cannot find a personal folder, such as a
+      CI runner. FULLFILE('', 'a', 'b') is the RELATIVE path 'a/b', so every
+      path constant built on an empty userpath resolved against the current
+      working directory: filecachepath named a different directory in each
+      session and nothing cached in it was ever found again.
+
+      Python has no counterpart because it has no userpath: PathConstants
+      builds its paths from Path.home() directly, which is always absolute.
+      The function exists to give MATLAB the guarantee Python already had.
+
+      Added in DID-matlab#159, 2026-08-29.
+
   - name: PathConstants
     type: class
     matlab_path: "+did/+common/PathConstants.m"
-    matlab_last_sync_hash: "3aa892d"
+    matlab_last_sync_hash: "6cec046"
     python_path: "did/common.py"
     python_class: "PathConstants"
 
