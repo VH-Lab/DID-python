@@ -278,16 +278,16 @@ classes:
   # -----------------------------------------------------------------------
   # did.file.binaryTable
   # -----------------------------------------------------------------------
-  # NOTE (2026-08-28, corrected): nothing in DID-PYTHON's src/ or tests/
-  # constructs a BinaryTable, which is why a stubbed read_row could sit under a
-  # "Synchronized" note unnoticed. That is a statement about the Python side
-  # only. In DID-matlab binaryTable is live: it is the storage engine behind
-  # did.file.fileCache, which builds one over the cache's .fileCacheInfo file
-  # and calls readHeader, writeHeader, getLock, findRow and releaseLock -- and
-  # fileCache is on the document-open path, since sqlitedb.do_open_doc consults
-  # the cache and calls touch() on a hit. So these entries describe a live
-  # MATLAB subsystem with an unexercised Python counterpart, not a subsystem
-  # that is dead in both languages.
+  # NOTE (2026-08-29): ported. binaryTable is the storage engine behind
+  # did.file.fileCache, which builds one over the cache's .fileCacheInfo file,
+  # and fileCache is on the document-open path: sqlitedb.do_open_doc consults
+  # the cache and touches what it reads. Python's version was construction plus
+  # a "Simplified implementation" of read_row that returned undecoded bytes and
+  # ignored elements_per_column, with the write path absent entirely; it is now
+  # a full typed implementation over the same little-endian layout, so a table
+  # written by either language is readable by the other. Pinned by
+  # tests/test_binary_table.py, which asserts the byte layout and not only the
+  # round trip.
   - name: binaryTable
     type: class
     matlab_path: "+did/+file/binaryTable.m"
@@ -298,8 +298,8 @@ classes:
     out_of_sync: false
     out_of_sync_reason: >
       MATLAB changed read permissions from 'r' to 'rb' (6 occurrences,
-      commit 2786be2). Python BinaryTable uses Fileobj which already
-      opens in binary mode (fopen appends 'b'). Behaviorally in sync.
+      commit 2786be2). Python opens every table file in binary mode, so this
+      is behaviorally in sync.
 
     properties:
       - name: file
@@ -311,25 +311,32 @@ classes:
       - name: recordType
         python_name: record_type
         type_matlab: "cell"
-        type_python: "str"
+        type_python: "list[str]"
         decision_log: >
-          MATLAB: cell array of type strings.
-          Python: single string. Simplified representation.
-          Synchronized 2026-03-15.
+          A MATLAB precision string per column ('char', 'double', 'uint64',
+          ...). Corrected 2026-08-29: the bridge previously described the
+          Python side as "a single string, simplified representation", which
+          was a description of the stub. It is a per-column list in both
+          languages, and the constructor now rejects a type it cannot encode.
 
       - name: recordSize
         python_name: record_size
         type_matlab: "uint16 vector"
-        type_python: "list"
-        decision_log: "Equivalent. Synchronized 2026-03-15."
+        type_python: "list[int]"
+        decision_log: >
+          Byte width per column. Python additionally checks each entry against
+          the column's type and element count at construction, since a
+          contradiction there misplaces every row boundary in the file
+          silently.
 
       - name: elementsPerColumn
         python_name: elements_per_column
         type_matlab: "uint16 vector"
-        type_python: "int"
+        type_python: "list[int]"
         decision_log: >
-          MATLAB: vector (per-column). Python: single int.
-          Synchronized 2026-03-15.
+          Elements per column. Corrected 2026-08-29: previously recorded as a
+          single int on the Python side, which described the stub -- the stub
+          ignored this value entirely.
 
       - name: headerSize
         python_name: header_size
@@ -347,122 +354,126 @@ classes:
       - name: binaryTable
         python_name: __init__
         kind: constructor
-        decision_log: "Exact match. Synchronized 2026-03-15."
+        decision_log: >
+          Same five arguments in the same order. Python validates the column
+          descriptions against each other; MATLAB does not.
 
       - name: getSize
         python_name: get_size
-        decision_log: >
-          MATLAB: getSize(). Python: get_size().
-          Synchronized 2026-03-15.
+        decision_log: "Both return (rows, columns, data bytes)."
 
       - name: readHeader
         python_name: read_header
         decision_log: >
-          MATLAB: readHeader(). Python: read_header().
-          MATLAB now uses 'rb' permission for reading.
-          Synchronized 2026-03-15.
+          Both return the header bytes and both return empty for a file that
+          does not exist, rather than raising -- MATLAB because fopen leaves
+          fid < 0, Python explicitly.
 
       - name: writeHeader
         python_name: write_header
         decision_log: >
-          MATLAB: writeHeader(). Python: write_header().
-          Synchronized 2026-03-15.
+          Both write over the start of the file and touch nothing past the
+          data given. Both create the file when it is absent ('w' in MATLAB,
+          "wb" in Python); Python then pads a new file out to header_size, or
+          row 1 would begin before the header ended.
 
       - name: getLock
         python_name: get_lock
         decision_log: >
-          Exact match; both take the multi-thread lock before a write.
-          Added to the bridge 2026-08-28 -- ported but previously untracked.
+          Exact match, re-entrant the same way: a nested call returns an empty
+          key and the matching release is a no-op, so the outermost caller
+          owns the lock.
 
       - name: releaseLock
         python_name: release_lock
-        decision_log: >
-          Exact match. Added to the bridge 2026-08-28 -- ported but previously
-          untracked.
+        decision_log: "Exact match."
 
       - name: lockFileName
         python_name: lock_file_name
         decision_log: >
-          Exact match. Added to the bridge 2026-08-28 -- ported but previously
-          untracked.
+          Both return "<file>-lock". Corrected 2026-08-29: Python returned
+          "<file>.lock", so two languages guarding one table checked out two
+          different lock files and excluded each other not at all. See the
+          checkout_lock_file entry.
 
       - name: tempFileName
         python_name: temp_file_name
         decision_log: >
-          Exact match. Added to the bridge 2026-08-28 -- ported but previously
-          untracked.
+          Both return "<file>-temp". Same correction as lockFileName.
 
       - name: rowSize
         python_name: row_size
-        decision_log: >
-          Exact match; both sum the per-column byte sizes. Added to the bridge
-          2026-08-28 -- ported but previously untracked.
+        decision_log: "Both sum the per-column byte sizes."
 
       - name: compare
         kind: static
-        python_name: ~   # not ported
+        python_name: compare
         decision_log: >
-          MATLAB static helper used by findRow to compare two values of the
-          table's record type. Not ported, because findRow is not ported.
-          Added to the bridge 2026-08-28 -- previously untracked.
+          Both return 1 when the first value sorts first, -1 when it sorts
+          last, and 0 for equal; numbers compare numerically, text
+          alphabetically, and a cell/list by its first entry. Ported
+          2026-08-29 along with findRow, which is its only caller.
 
       - name: readRow
         python_name: read_row
         decision_log: >
-          Synchronized 2026-03-15; NOT synchronized in behavior, corrected
-          2026-08-28. MATLAB's readRow decodes the row into typed data using
-          the table's recordType and elementsPerColumn. Python's read_row seeks
-          to the right offset and then returns the raw bytes of a single
-          column: it never maps the MATLAB type strings onto struct formats and
-          ignores elements_per_column entirely. Its own comments say as much
-          ("Simplified implementation", "Placeholder for reading data"). The
-          two return different things for the same call.
+          Ported 2026-08-29. Both decode a column into typed values using
+          recordType and elementsPerColumn: a 'char' column comes back as
+          text, a numeric column with one element per row as a number, and
+          with several as a list. Both accept a row number, a list of them, or
+          "all rows" -- MATLAB spells that Inf, Python accepts None or
+          math.inf.
 
-          Impact on Python callers is low only because nothing in DID-python
-          constructs a BinaryTable. It is not low in the abstract: MATLAB uses
-          binaryTable to read and write the file cache's on-disk format, so a
-          Python reader that returns undecoded bytes could not read a
-          MATLAB-written table. See the class-level note and the fileCache
-          entry.
+          Python returns a single value for a single row and a list otherwise;
+          MATLAB returns an array whose rows are the rows requested. Same
+          content, shaped the way each language would shape it.
 
       - name: insertRow
-        python_name: ~   # not ported
+        python_name: insert_row
         decision_log: >
-          Not implemented in Python. Corrected 2026-08-28: this previously read
-          "Python: (partial implementation)", but BinaryTable has no insert_row
-          at all -- there is nothing partial about it. MATLAB uses 'rb' for the
-          read operations during insert. See "Not Yet Ported" in
-          PORTING_INSTRUCTIONS.md.
+          Ported 2026-08-29. Both append when the insertion point is the last
+          row and otherwise splice through a temp file in 1 MB chunks.
+
+          Deliberate divergence: MATLAB's bound check is insertAfter > r+1,
+          which admits r+1 and then takes the copy branch, writing the new row
+          past the end of the data and corrupting the table. Python refuses
+          anything past r. Filed against DID-matlab.
 
       - name: deleteRow
-        python_name: ~   # not ported
+        python_name: delete_row
         decision_log: >
-          MATLAB: deleteRow(). Python: (not fully implemented).
-          Synchronized 2026-03-15.
+          Ported 2026-08-29. Both copy around the deleted row through a temp
+          file. Python's bound check refuses row > rows; MATLAB's admits r+1,
+          the same off-by-one as insertRow.
 
       - name: writeEntry
-        python_name: ~   # not ported
+        python_name: write_entry
         decision_log: >
-          MATLAB: writeEntry(). Python: (not fully implemented).
-          Synchronized 2026-03-15.
+          Ported 2026-08-29. Both overwrite one entry in place and both reject
+          a value of the wrong type or the wrong element count.
 
       - name: writeTable
-        python_name: ~   # not ported
+        python_name: write_table
         decision_log: >
-          MATLAB: writeTable(). Python: (not fully implemented).
-          Synchronized 2026-03-15.
+          Ported 2026-08-29. Both replace every row and carry the header
+          over unchanged.
 
       - name: findRow
-        python_name: ~   # not ported
+        python_name: find_row
         decision_log: >
-          MATLAB: findRow(). Python: (not fully implemented).
-          Synchronized 2026-03-15.
+          Ported 2026-08-29, including the binary search. Both return
+          (row, wouldBe): row is the 1-based row or 0 when absent, and wouldBe
+          is the row to insert *after* -- exactly what insertRow takes -- when
+          searching a sorted column, or NaN otherwise. The recursion, the
+          bounds arithmetic and the lastmove condition follow MATLAB's, so the
+          two agree on where a missing value belongs and not merely on whether
+          it is present.
 
     decision_log: >
-      OUT OF SYNC. Python BinaryTable has basic read functionality but
-      is missing several write methods (insertRow, deleteRow, writeEntry,
-      writeTable, findRow). MATLAB also changed all read permissions to
-      'rb'. Partial port — needs completion.
+      SYNCHRONIZED 2026-08-29. Previously a partial port: read_row returned
+      raw bytes and insertRow, deleteRow, writeEntry, writeTable, findRow and
+      compare were absent. The full typed path is now present in both
+      languages over one shared little-endian on-disk layout.
 
   # -----------------------------------------------------------------------
   # did.file.fileCache
@@ -474,105 +485,99 @@ classes:
     python_path: "did/file.py"
     python_class: "FileCache"
     inherits_matlab: "handle"
-    out_of_sync: true
+    out_of_sync: false
     out_of_sync_reason: >
-      Not a MATLAB-side divergence -- MATLAB has not touched fileCache.m since
-      3aa892d. Three separate problems on the Python side, the third found
-      2026-08-28 and the most serious.
+      RESOLVED 2026-08-29. All three problems recorded here on 2026-08-28 are
+      fixed; kept as the record of what was wrong and what closed it.
 
-      1. The Python class is a stub. It implements construction and
-         .fileCacheInfo read/write and nothing else: no addFile, removeFile,
-         isFile, fileList, resizeAndAdd, touch or clear. Nothing can be cached,
-         and maxSize/reduceSize are stored but never enforced.
+      1. The Python class was a stub -- construction and info-file read/write
+         and nothing else, with no addFile, removeFile, isFile, fileList,
+         resizeAndAdd, touch or clear, so nothing could be cached and
+         maxSize/reduceSize were stored but never enforced. All of them are
+         now ported, eviction included.
 
-      2. It is duplicated. There are two unrelated classes named FileCache --
-         did/file.py:FileCache (the stub above) and did/common.py:FileCache (a
-         three-line placeholder holding only path and size). did.common.
-         get_cache() returns the common.py placeholder, so the object
-         DID-python hands callers is the emptier of the two, where MATLAB's
-         getCache() returns a working did.file.fileCache.
+      2. It was duplicated. Two unrelated classes were named FileCache --
+         did/file.py:FileCache and a three-line did/common.py:FileCache
+         holding a path and a number -- and did.common.get_cache() returned
+         the emptier one. The common.py class is gone; get_cache() returns
+         did.file.FileCache, as MATLAB's did.common.getCache() returns a
+         did.file.fileCache.
 
-      3. THE ON-DISK FORMATS ARE INCOMPATIBLE UNDER THE SAME FILENAME. Both
-         languages call the cache index ".fileCacheInfo". MATLAB writes it
-         through binaryTable as a fixed binary layout: a 26-byte header
-         (fileNameCharacters as uint16, then maxSize, reduceSize and
-         currentSize as uint64) followed by fixed-width rows of
-         {char[fileNameCharacters], double, uint64} -- filename, last-accessed
-         time, size. Python writes JSON. Neither can read the other's file:
-         Python's _load_properties would raise on MATLAB's binary, and MATLAB's
-         readHeader would misparse Python's JSON.
+      3. THE ON-DISK FORMATS WERE INCOMPATIBLE UNDER THE SAME FILENAME.
+         Both languages call the index ".fileCacheInfo"; MATLAB wrote
+         binaryTable's fixed binary layout and Python wrote JSON, so neither
+         could read the other's file. Python now writes MATLAB's layout: a
+         26-byte header (fileNameCharacters as uint16, then maxSize,
+         reduceSize and currentSize as uint64) followed by fixed-width rows of
+         {char[fileNameCharacters], double, uint64} -- name, last-accessed
+         time as a MATLAB datenum, size. tests/test_file_cache.py builds that
+         file byte by byte, without going through FileCache, and reads it back
+         through FileCache.
 
       This matters because MATLAB's cache is not a side feature: sqlitedb.
-      do_open_doc consults filecachepath when opening a document's binary file
-      and calls touch() on a hit.
+      do_open_doc consults filecachepath when opening a document's file and
+      touches what it finds. Python's open_doc now does the same.
 
-      The two languages do not collide today only because their filecachepath
-      values differ -- see the PathConstants.filecachepath entry in
-      did_matlab_python_bridge_util.yaml. That is the accident keeping this
-      latent, not a design.
-
-      ORDER OF WORK: align the format BEFORE aligning the path. Making the
-      paths agree first -- which looks like a one-line fix and which the bridge
-      previously implied was already true -- would point both languages at one
-      directory in which each corrupts the other's index.
+      Ordering note, now discharged: the format had to be aligned before the
+      path. PathConstants.filecachepath still differs between the languages
+      (see did_matlab_python_bridge_util.yaml); aligning it first would have
+      pointed both at one directory in which each corrupted the other's index.
+      With the formats agreed, that path change is now safe to make.
 
     properties:
       - name: directoryName
         python_name: directory_name
         type_matlab: "char"
         type_python: "str"
-        python_name: "directory_name"
-        decision_log: "Exact match."
+        decision_log: "Exact match; must be an existing directory in both."
 
       - name: fileNameCharacters
         python_name: file_name_characters
-        type_matlab: "uint16"
-        type_python: "int"
-        python_name: "file_name_characters"
+        type_matlab: "uint16 >= 32"
+        type_python: "int >= 32"
         decision_log: >
-          Both default to 32. MATLAB enforces >= 32 via a property
-          validator; Python does not validate.
+          The fixed width of every name in the cache, which is what makes the
+          index rows fixed-width. Both refuse a value below 32, both refuse to
+          change it on an existing cache, and both take 33 from getCache --
+          the length of a did unique id.
 
       - name: maxSize
         python_name: max_size
-        type_matlab: "uint64"
-        type_python: "float"
-        python_name: "max_size"
+        type_matlab: "uint64 >= 1000"
+        type_python: "int >= 1000"
         decision_log: >
-          Both default to 100e9. MATLAB enforces >= 1000 via a property
-          validator; Python does not validate.
+          Both default to 100e9 and both enforce the lower bound -- MATLAB
+          through a property validator, Python in set_properties.
 
       - name: reduceSize
         python_name: reduce_size
-        type_matlab: "uint64"
-        type_python: "float"
-        python_name: "reduce_size"
+        type_matlab: "uint64 >= 800"
+        type_python: "int >= 800"
         decision_log: >
-          Both default to 80e9. MATLAB enforces >= 800 via a property
-          validator; Python checks only reduce_size < max_size in
-          set_properties().
+          Both default to 80e9, both enforce the lower bound, and both require
+          reduceSize < maxSize.
 
       - name: currentSize
         python_name: current_size
         type_matlab: "uint64"
-        type_python: "float"
-        python_name: "current_size"
-        decision_log: "Exact match."
+        type_python: "int"
+        decision_log: "Exact match; stored in the info-file header in both."
 
       - name: binaryTable
-        python_name: ~   # not ported
+        python_name: binary_table
         type_matlab: "did.file.binaryTable"
-        type_python: "(not implemented)"
+        type_python: "BinaryTable"
         decision_log: >
-          MATLAB backs the cache catalog with a binaryTable. Python
-          stores the catalog in the same JSON info file instead, under
-          a 'files' key. Deviation by design.
+          Corrected 2026-08-29. Python backed the index with JSON under a
+          'files' key -- recorded here as "deviation by design", which
+          understated it: the two languages could not read each other's index.
+          Python now builds a BinaryTable over the same file with the same
+          column description.
 
       - name: cacheInfoFileName
         python_name: CACHE_INFO_FILE_NAME
         type_matlab: "constant char"
         type_python: "class constant str"
-        python_name: "CACHE_INFO_FILE_NAME"
         decision_log: "Both are '.fileCacheInfo'."
 
     methods:
@@ -582,73 +587,91 @@ classes:
         decision_log: >
           MATLAB: fileCache(directoryName, fileNameCharacters, maxSize,
           reduceSize). Python: FileCache(directory_name,
-          file_name_characters=32, max_size=100e9, reduce_size=80e9).
-          Both load an existing .fileCacheInfo if present, otherwise
-          initialize one.
+          file_name_characters=None, max_size=None, reduce_size=None). The
+          None defaults reproduce MATLAB's nargin checks: an existing cache
+          keeps its stored settings and only an argument actually passed
+          overrides them, so re-opening a cache does not silently resize it.
+          Both refuse to change fileNameCharacters on an existing cache.
 
       - name: setProperties
         python_name: set_properties
-        python_name: "set_properties"
-        decision_log: "Equivalent; both write the info file."
+        decision_log: >
+          Both write the size limits into the info-file header and both keep
+          the stored fileNameCharacters when the file already exists.
 
       - name: getProperties
-        python_name: ~   # not ported
-        python_name: "_load_properties"
+        python_name: get_properties
         decision_log: >
-          MATLAB returns a struct of cache info. Python's counterpart
-          loads the info file into instance attributes rather than
-          returning it.
+          Corrected 2026-08-29. Both now read the header and return the four
+          values -- MATLAB as a struct, Python as a dict with MATLAB's field
+          names. The previous Python counterpart, _load_properties, parsed
+          JSON into instance attributes and returned nothing.
 
       - name: addFile
-        python_name: ~   # not ported
-        decision_log: "Present in MATLAB. Not implemented in Python."
+        python_name: add_file
+        decision_log: >
+          Ported 2026-08-29. Both move the file in by default and copy on
+          request (MATLAB 'copy',true; Python copy=True), both refuse a name
+          whose length is not fileNameCharacters, and both refuse a name
+          already in the cache.
 
       - name: removeFile
-        python_name: ~   # not ported
-        decision_log: "Present in MATLAB. Not implemented in Python."
+        python_name: remove_file
+        decision_log: >
+          Ported 2026-08-29. Both drop the row, subtract its size from
+          currentSize, and delete the file.
 
       - name: clear
-        python_name: ~   # not ported
-        decision_log: "Present in MATLAB. Not implemented in Python."
+        python_name: clear
+        decision_log: >
+          Ported 2026-08-29. Both empty the index, reset currentSize and
+          delete the files, listing the directory rather than the index.
 
       - name: isFile
-        python_name: ~   # not ported
-        decision_log: "Present in MATLAB. Not implemented in Python."
+        python_name: is_file
+        decision_log: "Ported 2026-08-29. Both search the index by name."
 
       - name: fileList
-        python_name: ~   # not ported
-        decision_log: "Present in MATLAB. Not implemented in Python."
+        python_name: file_list
+        decision_log: >
+          Ported 2026-08-29. Both return names, sizes and last-access times,
+          from the index by default and from a directory listing when asked
+          (MATLAB useCatalog, Python use_catalog), in which case last-access
+          is NaN in both.
 
       - name: resizeAndAdd
-        python_name: ~   # not ported
+        python_name: resize_and_add
         decision_log: >
-          Present in MATLAB -- evicts by ascending last-access time
-          until the cache is under reduceSize, then adds. Not
-          implemented in Python, so the Python cache never evicts.
+          Ported 2026-08-29, including the eviction arithmetic: least recently
+          accessed first, deleting until the total would sit under reduceSize,
+          then rewriting the index sorted by name. Both refuse an addition
+          larger than the whole cache.
+
+          Two deliberate divergences. MATLAB indexes its row-building cell
+          with the loop variable rather than the column (data_here{i} where
+          data_here{1} is meant), so adding more than one file at once builds
+          a malformed row; Python builds one row per file. And Python refuses
+          to add a name already present, where MATLAB proceeds with the NaN
+          wouldBe that findRow returns for a name it found. Both filed against
+          DID-matlab.
 
       - name: touch
-        python_name: ~   # not ported
-        decision_log: "Present in MATLAB. Not implemented in Python."
+        python_name: touch
+        decision_log: >
+          Ported 2026-08-29. Both update the last-access time and report
+          whether the name was in the index.
 
       - name: infoFileName
         python_name: _info_file_name
-        python_name: "_info_file_name"
         decision_log: "Exact match."
 
     decision_log: >
-      STUB. Promoted from not_applicable to a tracked entry on
-      2026-08-28: a FileCache class does exist in Python, so
-      classifying it "not applicable" both overstated the port and left
-      MATLAB changes to fileCache.m invisible to the drift check. What
-      exists is construction plus info-file read/write and nothing else,
-      split across two same-named classes (see out_of_sync_reason). Sync
-      hash set to 3aa892d, the commit the original bulk port (97ba45c)
-      was taken from -- MATLAB has not changed this file since, so the
-      gap is in the port, not in drift.
+      SYNCHRONIZED 2026-08-29. Was a stub with an incompatible on-disk format
+      and a duplicate class shadowing it; is now a full port over MATLAB's
+      binary .fileCacheInfo layout, wired into open_doc the way MATLAB wires
+      it into do_open_doc. Sync hash unchanged at 3aa892d -- MATLAB has not
+      touched fileCache.m, so the gap was always in the port, not in drift.
 
-# =========================================================================
-# File utility functions
-# =========================================================================
 functions:
 
   - name: mustBeValidPermission
@@ -669,7 +692,14 @@ functions:
     matlab_last_sync_hash: "3aa892d"
     python_path: "did/file.py"
     python_name: "checkout_lock_file"
-    decision_log: "Exact match. Synchronized 2026-03-15."
+    decision_log: >
+      Corrected 2026-08-29. Both take the name of the lock file itself -- the
+      MATLAB docstring's own example passes "myfile.txt-lock". Python appended
+      ".lock" to whatever it was given, so a MATLAB process guarding a file
+      contended for "<file>-lock" while a Python process guarding the same
+      file contended for "<file>.lock": the two never excluded each other,
+      which is exactly the case the lock exists for now that both languages
+      share a file cache directory.
 
   - name: release_lock_file
     type: function
@@ -677,7 +707,9 @@ functions:
     matlab_last_sync_hash: "3aa892d"
     python_path: "did/file.py"
     python_name: "release_lock_file"
-    decision_log: "Exact match. Synchronized 2026-03-15."
+    decision_log: >
+      Same correction as checkout_lock_file: the argument is the lock file,
+      not the file being protected.
 
   - name: fileid_value
     type: function

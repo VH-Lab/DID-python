@@ -73,22 +73,25 @@ class PathConstants:
         return self._preferences_path
 
 
-# Placeholder for fileCache class
-class FileCache:
-    def __init__(self, path, size):
-        self.path = path
-        self.size = size
-
-
 _cached_cache = None
 
 
 def get_cache():
-    """
-    Returns a persistent cache object.
+    """Return the process-wide did.file.FileCache, creating it on first use.
+
+    33 characters is the length of a did unique id, which is the name every
+    file takes inside the cache. It matches MATLAB's did.common.getCache(),
+    so a cache written by one language is readable by the other.
+
+    There used to be a second, unrelated class named FileCache in this
+    module -- three lines holding a path and a number -- and this function
+    returned that one, so DID-python handed callers an object that could not
+    cache anything. It is gone; did.file.FileCache is the only FileCache.
     """
     global _cached_cache
     if _cached_cache is None:
+        from .file import FileCache
+
         path_constants = PathConstants()
         _cached_cache = FileCache(path_constants.filecachepath, 33)
     return _cached_cache

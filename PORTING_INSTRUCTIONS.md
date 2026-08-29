@@ -407,20 +407,19 @@ Coverage is in `tests/test_validation.py` (34 tests), mirroring MATLAB's
 These MATLAB features do not yet have Python counterparts. (Schema
 validation was ported 2026-08-28 and is no longer listed; MATLAB's
 `document.validate` is dead code and is deliberately not ported — see the
-document entry in `bridge.yaml`.)
+document entry in `bridge.yaml`. `binaryTable`'s write path, `binaryTable.
+compare` and `fileCache` were ported 2026-08-29 and are no longer listed — see
+"The file cache" below.)
 
 | MATLAB feature | Bridge file | Priority |
 |---|---|---|
 | `database.exist_doc` | bridge.yaml | Medium |
 | `database.get_preference` / `set_preference` / `get_preference_names` — Python has the `preferences` dict but no accessors for it | bridge.yaml | Medium |
-| `binaryTable` write methods | bridge_file.yaml | Medium |
-| `fileCache` — cache operations, the duplicate `FileCache` in `common.py` vs `file.py`, **and an incompatible on-disk format**; see "The file cache" below | bridge_file.yaml | **Medium-High** |
 | Remote (URL) file locations in `open_doc` — MATLAB uses `ndi.cloud.api.files.getFile`; Python would need `requests`/`urllib` | bridge_implementations.yaml | Low |
 | `database.freeze_branch` | bridge.yaml | Low |
 | `database.is_branch_editable` | bridge.yaml | Low |
 | `database.display_branches` | bridge.yaml | Low |
 | `database.close_doc` | bridge.yaml | Low |
-| `binaryTable.compare` (only needed by `findRow`, also unported) | bridge_file.yaml | Low |
 | `query.searchcellarray2searchstructure` handles only numbers and strings; MATLAB also handles cells, structs and logicals | bridge.yaml | Low |
 
 ### Enumerated dependency lists (`name_1`, `name_2`, ...) — ported 2026-08-28
@@ -495,16 +494,18 @@ carry a `# Validation logic would go here` placeholder where MATLAB validates:
 | `add_branch` | Duplicate id and missing parent are caught by UNIQUE / FOREIGN KEY constraints, so data stays correct but the error type differs. |
 | `get_doc_ids` | Same placeholder; MATLAB validates the branch id first. |
 
-Also `BinaryTable.read_row`, marked "Synchronized": MATLAB decodes the row
-using `recordType` and `elementsPerColumn`, while Python returns the raw bytes
-of one column and does neither. And `Document.set_properties` describes itself
-as "a simplified way to set properties" under a parity claim; treat it as
-unverified.
+`Document.set_properties` describes itself as "a simplified way to set
+properties" under a parity claim; treat it as unverified.
 
-Nothing in **DID-python's** `src/` or `tests/` constructs a `BinaryTable`, a
-`FileCache` or a `DumbJsonDB`, which is why a stubbed `read_row` could sit
-under a "Synchronized" note unnoticed. That is a fact about the Python side
-only — in DID-matlab two of the three are live. See below.
+`BinaryTable.read_row` was in this list too — marked "Synchronized" while
+returning the raw bytes of one column and decoding nothing. It was ported
+properly on 2026-08-29 along with the rest of `BinaryTable` and `FileCache`;
+see "The file cache" below. It could sit under a parity claim unnoticed
+because nothing in **DID-python's** `src/` or `tests/` constructed a
+`BinaryTable`, a `FileCache` or a `DumbJsonDB`. That was a fact about the
+Python side only — in DID-matlab two of the three were live — and it is why
+the port came with tests that pin the byte layout rather than the round trip.
+`DumbJsonDB` remains unexercised by design.
 
 ### Cross-cutting: the error identifier asymmetry
 
@@ -524,17 +525,16 @@ does. That closes the one genuinely silent failure (`delete_branch`), converts
 three constraint errors into MATLAB-matching identifiers, and makes
 `set_branch` fail fast — in one change with one set of tests.
 
-## The file cache — corrected 2026-08-28
+## The file cache — ported 2026-08-29
 
-An earlier note in this document said `BinaryTable`, `FileCache` and
-`DumbJsonDB` were "dead code". That is true of **DID-python only**. Checking
-DID-matlab shows two of the three are live there, which changes the
-assessment:
+An earlier note in this document called `BinaryTable`, `FileCache` and
+`DumbJsonDB` "dead code". That was true of **DID-python only**. In DID-matlab
+two of the three are live, which is what made this worth porting rather than
+deleting:
 
 - **`binaryTable` is the storage engine behind `fileCache`.** `fileCache.m`
   constructs one over the cache index and calls `readHeader`, `writeHeader`,
-  `getLock`, `findRow` and `releaseLock` — several of which were among the
-  untracked methods this audit added.
+  `getLock`, `findRow` and `releaseLock`.
 - **`fileCache` is on the document-open path.** `sqlitedb.do_open_doc`
   consults `filecachepath` when opening a document's binary file and calls
   `didCache.touch()` on a hit. It is not a side feature.
@@ -542,56 +542,81 @@ assessment:
   that DID-python deliberately does not implement. That one really is out of
   scope on both sides.
 
-### The part that is a trap
+### What was wrong
 
-Both languages call the cache index `.fileCacheInfo`. They write different
-things into it:
+Both languages call the cache index `.fileCacheInfo`, in a directory named by
+`PathConstants.filecachepath`. They wrote different things into it:
 
-| | MATLAB | Python |
+| | MATLAB | Python (before) |
 |---|---|---|
 | Format | binary, via `binaryTable` | JSON |
 | Header | 26 bytes: `fileNameCharacters` (uint16), then `maxSize`, `reduceSize`, `currentSize` (uint64) | JSON keys |
-| Rows | fixed-width `{char[n], double, uint64}` — filename, last-accessed, size | a `files` object |
+| Rows | fixed-width `{char[n], double, uint64}` — filename, last-accessed, size | a `files` object that was never written to |
 
-Neither can read the other's file. They do not collide today only because
-`PathConstants.filecachepath` resolves differently: MATLAB uses
-`fullfile(userpath, ...)`, and `userpath` is not the home directory (typically
-`<home>/Documents/MATLAB`), while Python uses `Path.home()`. That divergence
-was itself mis-recorded in the bridge as a mere validation-style difference
-until 2026-08-28. (The `userpath` default is quoted from its documentation;
-this audit could not run MATLAB to confirm it.)
+Neither could read the other's file. They did not collide only because
+`filecachepath` resolves differently: MATLAB uses `fullfile(userpath, ...)`
+and Python uses `Path.home()`. On top of that, Python's `FileCache` was a stub
+(construction and info-file read/write, nothing else), there were *two*
+unrelated classes named `FileCache` — one in `file.py`, one in `common.py` —
+and `get_cache()` returned the emptier of the two.
 
-**So the order of work matters.** Aligning the paths looks like a one-line fix
-and is the obvious first move — and it is the wrong one. It would point both
-languages at a single directory in which each corrupts the other's index.
-Align the format first, then the path.
+**The order of work mattered.** Aligning the paths looks like a one-line fix
+and was the wrong first move: it would have pointed both languages at one
+directory in which each corrupted the other's index. Format first, then path.
 
-The Python-side cache is dead code today, so nothing is broken right now. The
-risk is entirely in what a reasonable next change would do.
+### What is there now
+
+- `BinaryTable` decodes and encodes typed values over MATLAB's little-endian
+  layout: `read_row`, `insert_row`, `delete_row`, `write_entry`,
+  `write_table`, `find_row` (binary search included) and `compare`.
+- `FileCache` implements `add_file`, `remove_file`, `is_file`, `file_list`,
+  `resize_and_add` (least-recently-used eviction), `touch` and `clear` over a
+  `BinaryTable`, writing MATLAB's binary `.fileCacheInfo` rather than JSON.
+  Last-access times are MATLAB datenums; `did.file.datenum` computes them.
+- The duplicate `common.py:FileCache` is gone. `get_cache()` returns a
+  `did.file.FileCache` at `filecachepath`, as MATLAB's `getCache()` returns a
+  `did.file.fileCache`.
+- `SQLiteDB.open_doc` consults the cache before other locations, touches what
+  it finds there, and puts a retrieved file into it — the same shape as
+  `do_open_doc`. A cache that cannot be opened degrades to `None` and the open
+  proceeds without it: the cache is an optimization, and losing it should cost
+  a re-fetch, not the file.
+- The lock file is `<file>-lock` in both languages. Python's
+  `checkout_lock_file` used to append `.lock` to whatever it was given, so two
+  processes guarding one file took two different locks and excluded each other
+  not at all — harmless while the caches were separate, not harmless now.
+
+Tests: `tests/test_binary_table.py` and `tests/test_file_cache.py` assert the
+byte layout, not only the round trip (a round trip would pass just as happily
+on a format MATLAB cannot read); `tests/test_open_doc_locations.py` has a
+`TestFileCacheOnOpen` class whose second-open test uses a handler that raises,
+so the open can only succeed from the cache.
+
+### Still open: the path
+
+`PathConstants.filecachepath` still differs — MATLAB `fullfile(userpath, ...)`,
+Python `Path.home()/Documents/DID/fileCache`. With the formats agreed, making
+them match is now safe, but it is a separate change. Note that `userpath` is
+user-configurable and can be empty (on a headless runner it is), which makes
+MATLAB's path *relative* and resolved against the current working directory —
+the CI symmetry run shows exactly that warning. Worth settling deliberately
+rather than by defaulting.
 
 ## What actually happens across languages on the same dataset
 
 Traced 2026-08-28, prompted by the question "if MATLAB caches files for a
-dataset and Python then opens it, do the caches conflict?". Short answer: no,
-not today — but for a worse reason than compatibility.
+dataset and Python then opens it, do the caches conflict?" — and revisited
+2026-08-29 when the cache was ported.
 
-**Python has no cache on the read path at all.** `SQLiteDB.open_doc` resolves
-the location directly (absolute, or relative to the database directory) and
-returns a `ReadOnlyFileobj`. It never calls `get_cache()` and never looks at
-`filecachepath`. MATLAB's `do_open_doc` consults the cache and calls `touch()`
-on a hit. So the two never meet: MATLAB maintains a cache Python does not read
-or write, and Python re-resolves every file.
+**Before the port, Python had no cache on the read path at all.**
+`SQLiteDB.open_doc` resolved the location directly and never called
+`get_cache()`. So the two never met: MATLAB maintained a cache Python neither
+read nor wrote, and Python re-resolved every file. The practical consequence
+was lost caching, not corruption — the corruption scenario needed the two to
+share a directory, which is why the paths must not have been "fixed" first.
 
-That means the practical consequence is lost caching, not corruption. The
-corruption scenario needs the two to share a directory, which today they do
-not — and which is exactly why the paths must not be "fixed" first. See "The
-file cache" above.
-
-One caveat: MATLAB's `filecachepath` is `fullfile(userpath, ...)`, and
-`userpath` is user-configurable. If it were ever set to the home directory —
-or left empty, which makes MATLAB's path *relative* and resolved against the
-current working directory — the two could land in the same place without
-anyone intending it.
+**Now** both languages read and write the same format, so sharing a directory
+is safe and the remaining difference is the path itself (above).
 
 ### Remote (URL) file locations — fixed in both repos, 2026-08-28
 
@@ -823,11 +848,10 @@ dependency.
 
 ### Two deviations that remain
 
-- **No cache.** MATLAB adds the retrieved file to the file cache and serves
-  later opens from there. Python has none (see "The file cache"), so it
-  downloads into `PathConstants.temppath` and **re-fetches on every open**.
-  This is the concrete cost of the missing cache, and the reason to build it
-  now that something can actually download.
+- **~~No cache.~~ Closed 2026-08-29.** Python used to download into
+  `PathConstants.temppath` and re-fetch on every open. It now does what MATLAB
+  does: a retrieved file goes into the file cache under its uid, and a later
+  open is served from there. See "The file cache".
 - **`do_add_doc` still calls into NDI.** DID-matlab's *ingestion* path
   (`do_add_doc`, not `do_open_doc`) also calls
   `ndi.cloud.api.files.getFile` for a non-`file` location, so DID-matlab's

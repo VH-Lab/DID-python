@@ -1,6 +1,8 @@
+import contextlib
 import os
 import re as _re
 import sqlite3
+import struct
 
 from ..database import Database
 
@@ -747,18 +749,34 @@ class SQLiteDB(Database):
         except sqlite3.Error:
             return []
 
+        cache = self._file_cache()
+
         locations = []
         for row in rows:
             uid = row["uid"]
             cached = row["cached_location"]
+            # The global file cache comes first, as it does in MATLAB's
+            # do_open_doc: a file retrieved from a remote location once is
+            # kept there under its uid, so a second open of the same document
+            # does not fetch it again.
+            if uid and cache is not None:
+                locations.append(
+                    {
+                        "location": cache.full_path(str(uid)),
+                        "location_type": "file",
+                        "uid": uid,
+                        "in_file_cache": True,
+                    }
+                )
             # MATLAB stores an ingested copy at <FileDir>/<uid>, where FileDir
             # is <directory holding the .sqlite file>/files. It looks the copy
-            # up by uid rather than by cached_location, so mirror that first.
+            # up by uid rather than by cached_location, so mirror that next.
             if uid:
                 locations.append(
                     {
                         "location": os.path.join(self._file_dir(), str(uid)),
                         "location_type": "file",
+                        "uid": uid,
                     }
                 )
             if cached:
@@ -776,6 +794,23 @@ class SQLiteDB(Database):
     def _file_dir(self):
         """MATLAB's FileDir: `files/` beside the database file."""
         return os.path.join(os.path.dirname(os.path.abspath(self.connection)), "files")
+
+    @staticmethod
+    def _file_cache():
+        """The process-wide file cache, or None if it cannot be opened.
+
+        MATLAB's do_open_doc calls did.common.getCache() unconditionally.
+        Here a cache that cannot be created -- an unwritable home directory,
+        a corrupt .fileCacheInfo -- must not make documents unopenable, since
+        the cache is an optimization: without it every remote file is simply
+        fetched again. So this degrades to None and open_doc carries on.
+        """
+        from ..common import get_cache
+
+        try:
+            return get_cache()
+        except (OSError, ValueError, struct.error):
+            return None
 
     @staticmethod
     def _valid_locations(info):
@@ -840,6 +875,13 @@ class SQLiteDB(Database):
                 continue
             resolved = self._resolve_local(location)
             if os.path.isfile(resolved):
+                if entry.get("in_file_cache"):
+                    # Record the use, or the cache would evict what is read
+                    # most as though it had never been read at all.
+                    cache = self._file_cache()
+                    if cache is not None:
+                        with contextlib.suppress(OSError, ValueError):
+                            cache.touch(str(entry["uid"]))
                 return ReadOnlyFileobj(resolved)
 
         # Second pass: hand each remote location to the caller's retriever.
@@ -871,9 +913,8 @@ class SQLiteDB(Database):
                     failures.append(f"{location}: {error}")
                     continue
                 if os.path.isfile(dest_path):
-                    # No file cache yet, so this is re-fetched on every open.
-                    # See "The file cache" in PORTING_INSTRUCTIONS.md.
-                    return ReadOnlyFileobj(dest_path)
+                    cached_path = self._add_to_file_cache(dest_path, uid)
+                    return ReadOnlyFileobj(cached_path or dest_path)
                 failures.append(
                     f"{location}: custom_file_handler did not produce a file "
                     f'at "{dest_path}"'
@@ -901,6 +942,30 @@ class SQLiteDB(Database):
             "DID:SQLITEDB:open",
             f'The file "{filename}" in document "{doc_id}" cannot be accessed.',
         )
+
+    def _add_to_file_cache(self, source_path, uid):
+        """Move a freshly retrieved file into the file cache.
+
+        Returns its path inside the cache, or None if it could not be cached
+        -- in which case the caller keeps using the file where it landed.
+        Failing to cache is never a reason to fail the open: the file was
+        retrieved, and the only cost is retrieving it again next time.
+        """
+        cache = self._file_cache()
+        if cache is None or not uid:
+            return None
+        name = str(uid)
+        if len(name) != cache.file_name_characters:
+            # The cache's rows are fixed-width, so a uid of another length
+            # cannot be indexed. Nothing is lost but the caching.
+            return None
+        try:
+            if cache.is_file(name):
+                cache.remove_file(name)
+            cache.add_file(source_path, name)
+        except (OSError, ValueError, struct.error):
+            return None
+        return cache.full_path(name)
 
     def _do_remove_doc(self, document_id, branch_id, **kwargs):
         cursor = self.dbid.cursor()
