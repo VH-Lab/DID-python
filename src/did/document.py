@@ -1,4 +1,3 @@
-import json
 import os
 from datetime import datetime, timezone
 
@@ -187,13 +186,15 @@ class Document:
         ``did.document.readjsonfilelocation`` (minus the URL case, which
         DID-python has no download path for).
         """
-        from .validate import resolve_definition_path
+        from .validate import loads_matlab_json, resolve_definition_path
 
         path = resolve_definition_path(json_file_location_string)
         if path is None:
             return None
+        # loads_matlab_json, not json.load: a definition written by MATLAB may
+        # carry the bare Inf / -Inf tokens jsondecode accepts. See its comment.
         with open(path, "r") as f:
-            return json.load(f)
+            return loads_matlab_json(f.read())
 
     @staticmethod
     def read_blank_definition(json_file_location_string):
@@ -224,8 +225,10 @@ class Document:
         schema_path = os.path.join(PathConstants.DEFPATH, "database_schema")
         filepath = os.path.join(schema_path, f"{json_file_location_string}.schema.json")
         if os.path.exists(filepath):
+            from .validate import loads_matlab_json
+
             with open(filepath, "r") as f:
-                data = json.load(f)
+                data = loads_matlab_json(f.read())
                 data["base"] = Document._blank_base_group(data.get("base"))
                 return Document._normalize_to_document_class(data)
 

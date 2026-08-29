@@ -149,13 +149,52 @@ def resolve_definition_path(location_string):
     return None
 
 
+# MATLAB's jsondecode accepts the bare tokens ``Inf``, ``-Inf`` and ``NaN``
+# where JSON proper has no literal for them, and definition files in the wild
+# use them: NDI-matlab writes ``"parameters": [-Inf,Inf,0]`` for a double field
+# with no bounds, and NDIcalc-vis-matlab writes ``[NaN,NaN]``. Python's json
+# accepts ``Infinity``/``-Infinity``/``NaN`` but not ``Inf``, so every such file
+# was unreadable here -- ``DID:Database:ValidationFileBad`` -- while MATLAB read
+# it and validated against it happily.
+#
+# Widening ``Inf`` to ``Infinity`` outside of strings is enough to close the
+# gap. The alternative, rewriting the shared JSON to a finite bound, would
+# change what those schemas mean in the language that can already read them.
+#
+# ``\bInf\b`` cannot match inside ``Infinity`` (the trailing boundary fails
+# against ``i``) or inside a word like ``Info``, and a preceding ``-`` is left
+# alone, so ``-Inf`` becomes ``-Infinity``. The string alternative comes first
+# so that ``Inf`` inside a documentation string is matched as part of that
+# string and returned untouched.
+_MATLAB_INF = re.compile(r'"(?:[^"\\]|\\.)*"|\bInf\b')
+
+
+def _widen_matlab_inf(match):
+    text = match.group(0)
+    return text if text.startswith('"') else "Infinity"
+
+
+def loads_matlab_json(text):
+    """``json.loads``, but tolerating MATLAB's bare ``Inf`` / ``-Inf``.
+
+    ``NaN`` needs no help: Python's json already accepts it. Raises
+    ``ValueError`` like ``json.loads`` if the text is not JSON for any other
+    reason.
+    """
+    import json
+
+    try:
+        return json.loads(text)
+    except ValueError:
+        return json.loads(_MATLAB_INF.sub(_widen_matlab_inf, text))
+
+
 def get_document_schema(schema_filename):
     """Read and parse the JSON at a ``$PATH``-style location.
 
     Mirrors MATLAB ``database.get_document_schema``: used both for validation
     schemas and (during superclass recursion) for document definitions.
     """
-    import json
 
     path = resolve_definition_path(schema_filename)
     if path is None:
@@ -174,7 +213,7 @@ def get_document_schema(schema_filename):
         )
 
     try:
-        return json.loads(text)
+        return loads_matlab_json(text)
     except ValueError:
         _raise(
             "DID:Database:ValidationFileBad",
