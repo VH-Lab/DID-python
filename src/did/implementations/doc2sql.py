@@ -43,56 +43,60 @@ def _get_class_name(doc_props):
     return get_field(doc_props, ["document_class.class_name", "ndi_document.type"])
 
 
+def _superclass_names_from(superclasses):
+    """Bare superclass names from one ``superclasses`` collection.
+
+    Mirrors MATLAB ``doc2sql``'s array-level preference (DID-matlab c618a05):
+    a did1-form collection carries ``definition`` (a ``$DIDDOCUMENT/base.json``
+    path, from which the name is the stripped basename); a did2-form collection
+    (V_delta / V_zeta) carries the superclass name directly in ``class_name``
+    and has no ``definition``. MATLAB reads ``{superclass.definition}`` across
+    the whole struct array, so the choice is made once for the collection, not
+    per entry -- ``definition`` wins wherever any entry has it.
+    """
+    if isinstance(superclasses, dict):
+        # MATLAB's jsonencode unwraps a single-element cell array into a scalar.
+        superclasses = [superclasses]
+    if not isinstance(superclasses, list) or not superclasses:
+        return []
+
+    dicts = [sc for sc in superclasses if isinstance(sc, dict)]
+    key = None
+    if any("definition" in sc for sc in dicts):
+        key = "definition"
+    elif any("class_name" in sc for sc in dicts):
+        key = "class_name"
+
+    names = []
+    for sc in superclasses:
+        if isinstance(sc, str):
+            names.append(sc)
+        elif isinstance(sc, dict) and key is not None and key in sc:
+            name = re.sub(r".+/", "", str(sc[key]))
+            names.append(re.sub(r"\..+$", "", name))
+    return names
+
+
 def _get_superclass_str(doc_props):
     """Extract superclass string matching MATLAB's doc2sql format.
 
     MATLAB produces comma-space separated, sorted unique superclass names.
-    For MATLAB-style definitions like "$PATH/base.json", strip path and extension.
-    For DID-python style ["base", "demoA"], use directly.
+    For MATLAB-style definitions like "$PATH/base.json", strip path and
+    extension; for a did2 ``{"class_name": "base"}`` entry take the name as
+    given; for DID-python style ["base", "demoA"], use directly.
     """
     # DID-python schema format: top-level 'superclasses' list of strings
     if "superclasses" in doc_props and isinstance(
         doc_props["superclasses"], (list, dict)
     ):
-        superclasses = doc_props["superclasses"]
-        # Normalize bare dict to a single-element list (MATLAB's jsonencode
-        # unwraps single-element cell arrays into scalars).
-        if isinstance(superclasses, dict):
-            superclasses = [superclasses]
-        if not superclasses:
-            return ""
-        names = []
-        for sc in superclasses:
-            if isinstance(sc, str):
-                names.append(sc)
-            elif isinstance(sc, dict) and "definition" in sc:
-                # MATLAB-style: extract name from definition path
-                defn = sc["definition"]
-                name = re.sub(r".+/", "", defn)
-                name = re.sub(r"\..+$", "", name)
-                names.append(name)
-        names = sorted(set(names))
-        return ", ".join(names)
+        names = _superclass_names_from(doc_props["superclasses"])
+        return ", ".join(sorted(set(names)))
 
     # NDI / MATLAB format: document_class.superclasses
-    superclasses = get_field(doc_props, ["document_class.superclasses"])
-    # Normalize bare dict (single superclass from MATLAB's jsonencode)
-    if isinstance(superclasses, dict):
-        superclasses = [superclasses]
-    if isinstance(superclasses, list):
-        names = []
-        for sc in superclasses:
-            if isinstance(sc, dict) and "definition" in sc:
-                defn = sc["definition"]
-                name = re.sub(r".+/", "", defn)
-                name = re.sub(r"\..+$", "", name)
-                names.append(name)
-            elif isinstance(sc, str):
-                names.append(sc)
-        names = sorted(set(names))
-        return ", ".join(names)
-
-    return ""
+    names = _superclass_names_from(
+        get_field(doc_props, ["document_class.superclasses"])
+    )
+    return ", ".join(sorted(set(names)))
 
 
 def _serialize_depends_on(doc_props):
