@@ -315,6 +315,32 @@ functions:
 # did.common — Path constants and cache
 # =========================================================================
 
+  - name: homeDirectory
+    type: function
+    matlab_path: "+did/+common/homeDirectory.m"
+    matlab_last_sync_hash: "d7ac853"
+    python_path: "did/common.py"
+    python_name: ~   # not ported
+    decision_log: >
+      MATLAB-only, and the reason the two languages name one file cache.
+      It returns USERPROFILE on Windows and HOME elsewhere -- exactly what
+      Python's pathlib.Path.home() resolves -- so
+      PathConstants.filecachepath is <home>/Documents/DID/fileCache in both
+      languages by construction rather than by two string literals that
+      happen to agree.
+
+      Python needs no counterpart: Path.home() is the standard library's
+      own version of this, and PathConstants builds on it directly.
+
+      Added in DID-matlab#160, 2026-08-29, which pointed MATLAB's cache at
+      the same directory as Python's. That was held back until the two
+      could safely share one: until DID-python#33 they wrote incompatible
+      .fileCacheInfo formats under the same name, and until DID-matlab#159
+      neither could expire a lock the other left behind.
+
+      The symmetry pair did.symmetry.*.common.pathAgreement checks the two
+      languages against each other, which is what keeps this entry honest.
+
   - name: userPathOrDefault
     type: function
     matlab_path: "+did/+common/userPathOrDefault.m"
@@ -339,7 +365,7 @@ functions:
   - name: PathConstants
     type: class
     matlab_path: "+did/+common/PathConstants.m"
-    matlab_last_sync_hash: "6cec046"
+    matlab_last_sync_hash: "d56cc25"
     python_path: "did/common.py"
     python_class: "PathConstants"
 

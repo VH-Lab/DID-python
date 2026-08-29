@@ -689,7 +689,7 @@ functions:
   - name: checkout_lock_file
     type: function
     matlab_path: "+did/+file/checkout_lock_file.m"
-    matlab_last_sync_hash: "df15818"
+    matlab_last_sync_hash: "d56cc25"
     python_path: "did/file.py"
     python_name: "checkout_lock_file"
     decision_log: >
@@ -704,6 +704,36 @@ functions:
       The contents had to be aligned too, and that is tracked separately --
       see the parse_lock_expiration entry below. Both write the expiry as ISO
       8601 and both read either format.
+
+  - name: lock_file_key
+    type: function
+    matlab_path: "+did/+file/lock_file_key.m"
+    matlab_last_sync_hash: "d56cc25"
+    python_path: "did/file.py"
+    python_name: ~   # not ported
+    decision_log: >
+      MATLAB-only, and deliberately so. It returns the key recorded in a
+      lock file, and CHECKOUT_LOCK_FILE uses it to confirm, after writing,
+      that the key which survived is its own.
+
+      MATLAB needs that check because FOPEN(...,'wt') does not fail if
+      another process created the file between the ISFILE test in the wait
+      loop and the open, so two MATLAB processes could both write a lock and
+      both believe they held it. Python needs no equivalent: its
+      checkout_lock_file creates the file with open(..., "x"), which is
+      atomic, so it cannot be in that position.
+
+      Known and accepted: this does not resolve the same race BETWEEN the
+      languages. MATLAB's 'wt' truncates a lock Python created atomically,
+      and the read-back then legitimately finds MATLAB's own key. Closing
+      that needs create-exclusive semantics, which MATLAB's FOPEN does not
+      offer -- the options are a Java dependency in a low-level file utility
+      or an on-disk protocol change Python would have to adopt too, and
+      neither is a good trade for a window a few statements wide against a
+      scheme that has run simultaneous MATLAB processes for years without
+      trouble. See "The file cache" in PORTING_INSTRUCTIONS.md.
+
+      Added in DID-matlab#160, 2026-08-29.
 
   - name: lock_expiration_time
     type: function
