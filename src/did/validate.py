@@ -822,32 +822,59 @@ def _validate_depends_on(
 
     # Every declared dependency that must have a value must have one, and every
     # non-empty dependency value must resolve to a known document id.
+    #
+    # Matched on doc_names_alt, the enumeration-stripped names, not on the
+    # document's raw names. The schema declares "syncrule_id" while the
+    # document holds "syncrule_id_1", so matching the raw names never found
+    # the entry: value stayed None, _is_empty(None) was true, and BOTH checks
+    # below were skipped. An enumerated dependency could name a document that
+    # exists nowhere -- in no database and in no batch -- and still validate.
+    #
+    # An enumerated dependency may legitimately carry several entries
+    # (syncrule_id_1, syncrule_id_2), which is exactly the assumption the old
+    # one-match lookup broke, so every entry sharing a stem is checked.
     for index, item_name in enumerate(expected_names):
-        value = None
-        for dependency in depends:
-            if str(dependency.get("name", "")).lower() == str(item_name).lower():
-                value = dependency.get("value")
-                break
+        matches = [
+            (doc_names[i], dependency)
+            for i, dependency in enumerate(depends)
+            if doc_names_alt_lower[i] == str(item_name).lower()
+        ]
 
-        if is_required[index]:
+        if not matches:
+            # Nothing in the document under this name. Only a required
+            # dependency is an error here; the presence check above has
+            # already passed for the optional case.
             _assert(
-                not _is_empty(value),
+                not is_required[index],
                 "DID:Database:ValidationDependEmpty",
                 f'Empty dependency found for "{item_name}" in {doc_name}',
             )
+            continue
 
-        if not _is_empty(value):
-            _assert(
-                isinstance(value, str),
-                "DID:Database:ValidationDependNotACharacterArray",
-                f'Non-character dependency value entered for "{item_name}" in {doc_name}',
-            )
-            _assert(
-                value.lower() in all_ids,
-                "DID:Database:ValidationDependency",
-                f'Dependent doc ID "{value}" ({item_name}) of {doc_name} not found '
-                f"in the database or input docs",
-            )
+        for this_name, dependency in matches:
+            value = dependency.get("value")
+            # Report the document's own name for the entry ("syncrule_id_2"),
+            # which says which of several enumerated entries is at fault.
+            if is_required[index]:
+                _assert(
+                    not _is_empty(value),
+                    "DID:Database:ValidationDependEmpty",
+                    f'Empty dependency found for "{this_name}" in {doc_name}',
+                )
+
+            if not _is_empty(value):
+                _assert(
+                    isinstance(value, str),
+                    "DID:Database:ValidationDependNotACharacterArray",
+                    f'Non-character dependency value entered for "{this_name}" '
+                    f"in {doc_name}",
+                )
+                _assert(
+                    value.lower() in all_ids,
+                    "DID:Database:ValidationDependency",
+                    f'Dependent doc ID "{value}" ({this_name}) of {doc_name} not '
+                    f"found in the database or input docs",
+                )
 
 
 def _validate_files(doc_props, expected, doc_name, is_superclass):

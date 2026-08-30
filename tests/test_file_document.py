@@ -7,6 +7,16 @@ from did.implementations.sqlitedb import SQLiteDB
 from tests.helpers import make_doc_tree
 
 
+def doc_uid(doc, filename="test_file.txt"):
+    """The uid of a document's first location for `filename`."""
+    is_in, info, _ = doc.is_in_file_list(filename)
+    assert is_in
+    locations = info["locations"]
+    if isinstance(locations, dict):
+        locations = [locations]
+    return str(locations[0]["uid"])
+
+
 class TestFileDocument(unittest.TestCase):
     DB_FILENAME = "test_file_document.sqlite"
 
@@ -49,11 +59,22 @@ class TestFileDocument(unittest.TestCase):
         with open(dummy_file_path, "w") as f:
             f.write("This is a test file.")
 
-        # Add the file to the document
+        # Add the file to the document. add_file defaults a local path to
+        # ingest=1, delete_original=1.
         doc.add_file("test_file.txt", dummy_file_path)
 
         # Add the document to the database
         self.db._do_add_doc(doc, "a")
+
+        # Ingestion moved it: the copy lives at <db dir>/files/<uid> and the
+        # original is gone, exactly as MATLAB's do_add_doc leaves it.
+        self.assertFalse(
+            os.path.exists(dummy_file_path),
+            "delete_original should have removed the original after ingestion",
+        )
+        exists, ingested = self.db.exist_doc(doc.id(), "test_file.txt")
+        self.assertTrue(exists, "the ingested copy should be findable")
+        self.assertEqual(ingested, os.path.join(self.db._file_dir(), doc_uid(doc)))
 
         # Open the file from the document
         file_obj = self.db.open_doc(doc.id(), "test_file.txt")
@@ -65,9 +86,6 @@ class TestFileDocument(unittest.TestCase):
         data = file_obj.fread()
         file_obj.fclose()
         self.assertEqual(data, b"This is a test file.")
-
-        # Clean up the dummy file
-        os.remove(dummy_file_path)
 
 
 if __name__ == "__main__":

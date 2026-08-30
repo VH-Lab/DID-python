@@ -441,12 +441,13 @@ as a document with an attached file refusing to be removed.
 The other two are the rows added to the table above. Both are genuinely
 missing, not merely unreachable:
 
-- **Cached files.** Local ingestion is still not implemented here, so a
-  document added from Python usually has an empty `cached_location` and nothing
-  to clean up. But remote ingestion *is* implemented (DID-python#42), it writes
-  to `FileDir/<uid>`, and MATLAB `d7ac853` pointed both languages at one shared
-  cache directory. A removal from Python therefore orphans a file that a
-  removal from MATLAB would have deleted.
+- **Cached files.** Both ingestion paths are implemented here now — remote in
+  DID-python#42, local in DID-python#45 — so any location marked `ingest` is
+  copied to `FileDir/<uid>` and recorded in `cached_location`, exactly as in
+  MATLAB. `d7ac853` pointed both languages at one shared cache directory. A
+  removal from Python therefore leaves a file behind that the same removal from
+  MATLAB deletes, in a directory both of them read. This is the more pressing
+  of the two rows: it now applies to ordinary documents, not just remote ones.
 - **Retired ids.** MATLAB records the id in a `deleted_docs` table and raises
   `DID:SQLITEDB:DELETED_DOC` on a re-add. Nothing stops the same re-add here.
 
@@ -999,23 +1000,21 @@ difference. A `fileDocument` symmetry pair was added alongside the fix.
    locations without one collapsed into a single row: **adding two files to a
    document produced exactly one row.**
 
-`cached_location` is written when a location marked `ingest` is retrieved
-through `custom_file_handler` (see "exist_doc and ingestion at add time"), and
-is otherwise empty — including for a *local* location marked `ingest`, which
-Python does not copy into `FileDir`. That last case is a real difference in
-what the two write, not a gap in the row.
+`cached_location` is written whenever a location marked `ingest` is ingested —
+a local one copied, a non-local one retrieved through `custom_file_handler`
+(see "exist_doc and ingestion at add time") — and is empty otherwise. Both
+languages now write the same thing here.
 
 **Known remaining divergence**: MATLAB's `add_file` errors when the name is not
 declared in the class's `file_list`; Python appends instead. Left alone as a
 separate behavioral decision.
 
-**Related, and partly closed**: Python ingests a *remote* location marked
-`ingest` through `custom_file_handler` as of 2026-08-30. It still does not
-ingest a *local* one: MATLAB copies such a location into `FileDir` and, when
-`delete_original` is set, deletes the source. So for a local location `ingest`
-and `delete_original` remain inert on the Python side. `delete_original` never
-applies to the remote path — MATLAB explicitly skips deletion for a location
-containing `://`, since a remote location is not ours to remove.
+**Related, and now closed**: Python ingests both halves as of 2026-08-30 — a
+remote location marked `ingest` through `custom_file_handler` (#42) and a local
+one by copying it into `FileDir`, honoring `delete_original` (#45). Neither
+flag is inert any more. `delete_original` never applies to the remote path —
+MATLAB explicitly skips deletion for a location containing `://`, since a
+remote location is not ours to remove.
 
 ## exist_doc and ingestion at add time — ported 2026-08-30
 
@@ -1064,10 +1063,10 @@ and `cached_location` is empty, so the filesystem decides.
 
 MATLAB's `do_add_doc` walks every location whose `ingest` flag is set and puts
 a copy at `<FileDir>/<uid>`. A `'file'` location is copied; anything else goes
-to `options.customFileHandler(destPath, sourcePath)`. Python now does the same
-for the non-local case, threaded `add_docs` → `_do_add_doc` →
-`_populate_files` → `_ingest_location`, and records the result in
-`files.cached_location` — which is where both languages then look for it.
+to `options.customFileHandler(destPath, sourcePath)`. Python now does both,
+threaded `add_docs` → `_do_add_doc` → `_populate_files` → `_ingest_location`,
+and records the result in `files.cached_location` — which is where both
+languages then look for it.
 
 The parameter is spelled `custom_file_handler`, matching `open_doc`'s
 parameter for the identical contract rather than MATLAB's `customFileHandler`;
@@ -1082,13 +1081,88 @@ would lose a document MATLAB is willing to store. The missing-handler warning
 carries the same explanation `open_doc`'s error does, so the case is never
 *silently* skipped.
 
-One Python addition: an existing file at `<FileDir>/<uid>` is removed before
-the handler runs, as `open_doc` already does for its download. Without it a
-handler that produced nothing would be indistinguishable from one that
-succeeded, and a stale file would be recorded as this document's ingested copy.
+### The local half, added 2026-08-30 (#45)
 
-Coverage: `tests/test_exist_doc.py` (24 tests) and
-`tests/test_add_docs_file_handler.py` (12 tests).
+The `'file'` branch of the same loop: a local location marked `ingest` is
+copied to `<FileDir>/<uid>` with `shutil.copyfile` where MATLAB uses
+`copyfile(..., 'f')`, and on success `delete_original` deletes the source.
+`Document.add_file` defaults **both flags on** for a local path, so this is the
+ordinary path for a locally added file — after this change, adding a document
+with a local file moves that file into the database's `files/` directory, as it
+always has in MATLAB.
+
+`delete_original` is honored only on the success branch, as MATLAB does: a copy
+that failed leaves the original alone. It never applies to a remote location.
+
+Two Python additions, both guarding against losing a file:
+
+- An existing file at `<FileDir>/<uid>` is removed before the handler runs, as
+  `open_doc` already does for its download. Without it a handler that produced
+  nothing would be indistinguishable from one that succeeded, and a stale file
+  would be recorded as this document's ingested copy.
+- A local location that already **is** `<FileDir>/<uid>` is left alone rather
+  than copied onto itself. Re-adding a document whose location was rewritten to
+  its ingested path reaches this, and honoring `delete_original` there would
+  delete the only copy. MATLAB would warn on the failed `copyfile` and skip the
+  delete; Python keeps the copy and records it.
+
+A relative local location is resolved against the database directory before
+copying — the same rebasing `open_doc` does — so a document written with a
+relative path is not ingested from the process's working directory.
+
+Coverage: `tests/test_exist_doc.py` (24 tests),
+`tests/test_add_docs_file_handler.py` (12 tests) and
+`tests/test_add_docs_local_ingest.py` (10 tests).
+
+## The symmetry suite now validates, not just round-trips — 2026-08-30
+
+Until now the cross-language suite proved only that each language can **read**
+the other's database. It never proved either language considers the other's
+documents **schema-valid**, because validation lives in `add_docs` and each
+language calls `add_docs` only on documents it created itself during
+`makeArtifacts`. `readArtifacts` opened the other language's file, re-summarized
+it and compared summaries — the validator never ran.
+
+That gap is not hypothetical. Every Python document id was a UUID4 where
+`base.schema.json` types `base.id` as `did_uid`, so MATLAB's `add_docs` would
+have rejected all of them; the suite was green throughout, and it took someone
+reading the code to notice (DID-python#27). See DID-python#28 / DID-matlab#155.
+
+Both `readArtifacts` halves now run their own validator over whatever the other
+language wrote, as Step 5:
+
+| | file | call |
+|---|---|---|
+| Python | `tests/symmetry/read_artifacts/database/test_build_database.py` | `db.validate_docs(live_docs)` |
+| MATLAB | `tests_symmetry/+did/+symmetry/+readArtifacts/+database/buildDatabase.m` | `db.validate_docs(liveDocs)` |
+
+A failure is reported with the language, the branch, and MATLAB's error
+identifier, so a red run says which document rule the other language broke.
+
+Verified here by rewriting one document's `base.id` to a UUID4 in a Python
+artifact database and re-running: the gate fails with
+`DID:Database:ValidationFieldUID`, which is exactly the defect that went
+unnoticed before.
+
+### What this cannot check without MATLAB
+
+The real gate only runs where both languages are installed — the symmetry CI
+job. `tests/symmetry/test_matlab_shaped_document_validates.py` is the local
+proxy: it builds documents in the shape MATLAB writes them (a `did_uid` id, a
+`T`-separated `Z`-suffixed datestamp) and holds Python's validator to accepting
+them. It is a proxy, not a replacement — it cannot notice a MATLAB output shape
+nobody thought to write down here.
+
+### The datestamp instance is already closed
+
+DID-python#28 raised a second, unconfirmed instance: Python wrote
+`base.datestamp` as a space-separated `str(datetime.utcnow())`, and MATLAB
+validates that field with `java.time.LocalDateTime.parse`, whose
+`ISO_LOCAL_DATE_TIME` **requires** the `T` separator — so MATLAB would have
+rejected every Python document on that field too. That was fixed on 2026-08-29,
+before the gate existed: `document._utc_timestamp()` emits
+`%Y-%m-%dT%H:%M:%S.%fZ` truncated to milliseconds. The proxy test above pins the
+format so it stays fixed.
 
 ## The fileDocument symmetry pair, added 2026-08-29
 

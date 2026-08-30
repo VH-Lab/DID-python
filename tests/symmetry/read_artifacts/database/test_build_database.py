@@ -5,6 +5,12 @@ Mirrors DID-matlab's tests/+did/+symmetry/+readArtifacts/+database/buildDatabase
 This test is parameterized over SOURCE_TYPES (matlabArtifacts, pythonArtifacts).
 It reads artifacts produced by either the Python makeArtifact test above or by
 the MATLAB makeArtifact test, then validates them against a live database summary.
+
+It also runs Python's own schema validator over whatever the other language
+wrote (DID-python#28). Round-tripping a database proves each language can read
+the other's bytes; it does not prove either considers the other's documents
+schema-valid, because validation lives in add_docs and each language only ever
+calls add_docs on documents it created itself.
 """
 
 import json
@@ -12,6 +18,7 @@ import os
 
 from did.implementations.sqlitedb import SQLiteDB
 from did.util import compare_database_summary, database_summary
+from did.validate import ValidationError
 from tests.symmetry.conftest import SYMMETRY_BASE, missing_artifact
 
 
@@ -88,6 +95,7 @@ class TestReadBuildDatabase:
 
             # Verify each saved document exists in the live database
             saved_docs = saved_branch.get("documents", [])
+            live_docs = []
             for saved_doc in saved_docs:
                 expected_id = saved_doc["id"]
                 doc = db.get_docs(expected_id, OnMissing="ignore")
@@ -97,6 +105,7 @@ class TestReadBuildDatabase:
                 )
 
                 if doc is not None:
+                    live_docs.append(doc)
                     actual_props = doc.document_properties
                     actual_class = actual_props.get("document_class", {}).get(
                         "class_name", ""
@@ -105,5 +114,27 @@ class TestReadBuildDatabase:
                         f"Class name mismatch for doc {expected_id} "
                         f"in branch {branch_name} from {source_type}"
                     )
+
+            # Step 5: run OUR schema validator over documents the other
+            # language wrote.
+            #
+            # Without this the suite only ever proved each language can READ
+            # the other's database. Validation lives in add_docs, and each
+            # language calls add_docs only on documents it created itself
+            # during makeArtifacts -- so a document one language writes could
+            # be schema-invalid under the other's validator with the suite
+            # staying green. That is not hypothetical: every Python document
+            # id was a UUID4 where base.schema.json types base.id as did_uid,
+            # so MATLAB's add_docs would have rejected all of them, and this
+            # suite noticed nothing until someone read the code. See
+            # DID-python#28 / DID-matlab#155.
+            try:
+                db.validate_docs(live_docs)
+            except ValidationError as error:
+                raise AssertionError(
+                    f"Documents written by {source_type} do not pass this "
+                    f"language's schema validator, in branch {branch_name}: "
+                    f"[{error.identifier}] {error}"
+                ) from error
 
         db._close_db()

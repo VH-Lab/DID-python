@@ -37,8 +37,8 @@ class TestExistDoc(unittest.TestCase):
 
     def _doc_with_locations(self, locations):
         doc = Document("demoFile", **{"demoFile.value": 1})
-        doc.add_file("filename1.ext", "placeholder")
-        doc.add_file("filename2.ext", "placeholder")
+        doc.add_file("filename1.ext", "placeholder", ingest=0, delete_original=0)
+        doc.add_file("filename2.ext", "placeholder", ingest=0, delete_original=0)
         is_in, info, _ = doc.is_in_file_list("filename1.ext")
         self.assertTrue(is_in)
         info["locations"] = locations
