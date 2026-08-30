@@ -1082,6 +1082,56 @@ Coverage: `tests/test_exist_doc.py` (24 tests),
 `tests/test_add_docs_file_handler.py` (12 tests) and
 `tests/test_add_docs_local_ingest.py` (10 tests).
 
+## The symmetry suite now validates, not just round-trips — 2026-08-30
+
+Until now the cross-language suite proved only that each language can **read**
+the other's database. It never proved either language considers the other's
+documents **schema-valid**, because validation lives in `add_docs` and each
+language calls `add_docs` only on documents it created itself during
+`makeArtifacts`. `readArtifacts` opened the other language's file, re-summarized
+it and compared summaries — the validator never ran.
+
+That gap is not hypothetical. Every Python document id was a UUID4 where
+`base.schema.json` types `base.id` as `did_uid`, so MATLAB's `add_docs` would
+have rejected all of them; the suite was green throughout, and it took someone
+reading the code to notice (DID-python#27). See DID-python#28 / DID-matlab#155.
+
+Both `readArtifacts` halves now run their own validator over whatever the other
+language wrote, as Step 5:
+
+| | file | call |
+|---|---|---|
+| Python | `tests/symmetry/read_artifacts/database/test_build_database.py` | `db.validate_docs(live_docs)` |
+| MATLAB | `tests_symmetry/+did/+symmetry/+readArtifacts/+database/buildDatabase.m` | `db.validate_docs(liveDocs)` |
+
+A failure is reported with the language, the branch, and MATLAB's error
+identifier, so a red run says which document rule the other language broke.
+
+Verified here by rewriting one document's `base.id` to a UUID4 in a Python
+artifact database and re-running: the gate fails with
+`DID:Database:ValidationFieldUID`, which is exactly the defect that went
+unnoticed before.
+
+### What this cannot check without MATLAB
+
+The real gate only runs where both languages are installed — the symmetry CI
+job. `tests/symmetry/test_matlab_shaped_document_validates.py` is the local
+proxy: it builds documents in the shape MATLAB writes them (a `did_uid` id, a
+`T`-separated `Z`-suffixed datestamp) and holds Python's validator to accepting
+them. It is a proxy, not a replacement — it cannot notice a MATLAB output shape
+nobody thought to write down here.
+
+### The datestamp instance is already closed
+
+DID-python#28 raised a second, unconfirmed instance: Python wrote
+`base.datestamp` as a space-separated `str(datetime.utcnow())`, and MATLAB
+validates that field with `java.time.LocalDateTime.parse`, whose
+`ISO_LOCAL_DATE_TIME` **requires** the `T` separator — so MATLAB would have
+rejected every Python document on that field too. That was fixed on 2026-08-29,
+before the gate existed: `document._utc_timestamp()` emits
+`%Y-%m-%dT%H:%M:%S.%fZ` truncated to milliseconds. The proxy test above pins the
+format so it stays fixed.
+
 ## The fileDocument symmetry pair, added 2026-08-29
 
 `buildDatabase` exercises documents but never files. `fileDocument` exercises
