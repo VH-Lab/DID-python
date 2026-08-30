@@ -226,9 +226,87 @@ class Database(abc.ABC):
     def _do_remove_doc(self, document_id, branch_id, **kwargs):
         pass
 
-    def delete_branch(self, branch_id):
-        # Validation logic would go here
+    def _validate_branch_id(self, branch_id, check_existence=True):
+        """Mirror of MATLAB's validate_branch_id.
+
+        Returns (branch_id, branch_ids) so a caller that needs the full list -
+        delete_branch, to pick the next current branch - does not query twice.
+        """
+        if not isinstance(branch_id, str) or not branch_id:
+            raise ValueError("Branch ID must be a non-empty string")
+        branch_ids = self.all_branch_ids()
+        if check_existence and branch_id not in branch_ids:
+            raise ValueError(f'Branch ID "{branch_id}" does not exist in the database')
+        return branch_id, branch_ids
+
+    def freeze_branch(self, branch_id=None):
+        """Mark a branch as protected from modification.
+
+        Mirrors MATLAB's freeze_branch, including its scope: frozen_branch_ids
+        is an in-memory property that is never written to the database, so a
+        freeze lasts only for this object's lifetime and is invisible to any
+        other process or to MATLAB. It is enforced in exactly one place,
+        delete_branch, in both languages.
+        """
+        if not branch_id:
+            branch_id = self.current_branch_id
+        branch_id, _ = self._validate_branch_id(branch_id)
+        if branch_id not in self.frozen_branch_ids:
+            self.frozen_branch_ids.append(branch_id)
+
+    def is_branch_editable(self, branch_id=None):
+        """True if the branch is neither frozen nor a parent of another branch.
+
+        Mirrors MATLAB's is_branch_editable: the two conditions delete_branch
+        refuses on, made available to ask about beforehand.
+        """
+        if not branch_id:
+            branch_id = self.current_branch_id
+        branch_id, _ = self._validate_branch_id(branch_id)
+        return branch_id not in self.frozen_branch_ids and not self.get_sub_branches(
+            branch_id
+        )
+
+    def delete_branch(self, branch_id=None):
+        """Delete a branch, refusing the cases MATLAB refuses.
+
+        Previously this was a bare delegate with a "validation logic would go
+        here" placeholder, so all three of MATLAB's guards were missing:
+        deleting a branch that does not exist was a silent no-op, deleting a
+        parent branch surfaced as a raw sqlite3.IntegrityError from the
+        FOREIGN KEY rather than a described error, and a frozen branch was not
+        refused at all. It also left current_branch_id naming a branch that no
+        longer exists, so the next add_branch inherited a deleted parent and
+        failed on the same FOREIGN KEY.
+
+        If BRANCH_ID is empty or not given, the current branch is used.
+        """
+        if not branch_id:
+            branch_id = self.current_branch_id
+        branch_id, branch_ids = self._validate_branch_id(branch_id)
+
+        if branch_id in self.frozen_branch_ids:
+            raise ValueError(f'Branch id "{branch_id}" is frozen and cannot be deleted')
+        if self.get_sub_branches(branch_id):
+            raise ValueError(
+                f'Branch id "{branch_id}" has sub-branches and cannot be deleted'
+            )
+
         self._do_delete_branch(branch_id)
+
+        # MATLAB drops branch_id from frozen_branch_ids here. That is
+        # unreachable in both languages -- the frozen guard above has already
+        # refused -- so it is not mirrored.
+
+        # If the deleted branch was the current one, fall back as MATLAB does:
+        # to the first of the branch ids read before the delete, or to none if
+        # that was the branch just deleted. Both languages read those ids with
+        # the same unordered `SELECT DISTINCT branch_id FROM branches`, so the
+        # fallback picks the same branch in both.
+        if self.current_branch_id == branch_id:
+            self.current_branch_id = branch_ids[0] if branch_ids else ""
+            if self.current_branch_id == branch_id:
+                self.current_branch_id = ""
 
     @abc.abstractmethod
     def _do_delete_branch(self, branch_id):
