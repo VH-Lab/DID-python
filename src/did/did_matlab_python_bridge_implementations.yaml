@@ -202,7 +202,21 @@ classes:
           - name: branch_id
             type_matlab: "char"
             type_python: "str"
-        decision_log: "Exact match. Synchronized 2026-03-15."
+        decision_log: >
+          NOT an exact match; recorded 2026-08-29, correcting the previous
+          "Exact match. Synchronized 2026-03-15." MATLAB deletes only the
+          branch_docs row and leaves the docs and doc_data rows in place,
+          behind a commented-out block and a "% TODO - remove all document
+          records if no branch references remain?". Python implements that
+          TODO: when the last branch reference goes, it deletes the doc_data,
+          files and docs rows too.
+          The divergence is deliberate -- an unreferenced document should not
+          keep occupying the database -- but it is the reason the files table
+          broke only Python. MATLAB never deletes the docs row its
+          FOREIGN KEY(doc_idx) points at, so it cannot hit the constraint;
+          Python does, and had to learn to clear the files rows first.
+          If MATLAB ever implements its TODO it needs the same three deletes
+          in the same order.
 
       - name: search
         python_name: search
