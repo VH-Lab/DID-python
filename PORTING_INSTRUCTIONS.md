@@ -617,7 +617,7 @@ carry a `# Validation logic would go here` placeholder where MATLAB validates:
 | `delete_branch` | **Deleting a non-existent branch is a silent no-op.** No schema backstop, because there is no row to constrain. The sub-branch guard exists only as a FOREIGN KEY, raising `sqlite3.IntegrityError` where MATLAB raises `DID:Database:ParentBranch`. |
 | `set_branch` | Accepts a branch that does not exist; the error surfaces later at `add_docs`. MATLAB fails fast. Fail-deferred, not fail-silent. *(Closed 2026-08-30, DID-python#52.)* |
 | `add_branch` | Duplicate id and missing parent are caught by UNIQUE / FOREIGN KEY constraints, so data stays correct but the error type differs. |
-| `get_doc_ids` | Same placeholder; MATLAB validates the branch id first. |
+| `get_doc_ids` | Same placeholder; MATLAB validates the branch id first. *(Closed 2026-08-30, DID-python#55 — the placeholder was the lesser of two problems here.)* |
 
 `Document.set_properties` describes itself as "a simplified way to set
 properties" under a parity claim; treat it as unverified.
@@ -658,13 +658,9 @@ and database surface does — so the cross-cutting identifier asymmetry above is
 still open, and is now a question about the whole surface rather than about
 these four methods.*
 
-***`get_doc_ids` is the fourth, and is still a stub.*** MATLAB's calls
-`validate_branch_id` (`database.m:413`); Python's still carries the placeholder
-and passes the id straight to `_do_get_doc_ids`, which returns `[]` for a branch
-that does not exist rather than raising. It was left out of #52 because #52 is
-about `set_branch`, and out of #51 because that PR was about the two branch
-mutators; `_validate_branch_id` is already there for it, so the port is two
-lines plus tests whenever it is wanted.
+***`get_doc_ids` was the fourth.*** *Closed 2026-08-30, DID-python#55 — and it
+turned out to be the smaller half of a larger problem. See "An empty branch id
+is not the same as no branch id" below.*
 
 ## The file cache — ported 2026-08-29
 
@@ -1384,3 +1380,98 @@ table above for why it is a design question rather than a gap.
 
 Coverage: `tests/test_ported_database_methods.py` (16 tests) and the five new
 cases in `tests/test_branch_guards.py`.
+
+
+## An empty branch id is not the same as no branch id — 2026-08-30
+
+Closes DID-python#55. It was filed as "`get_doc_ids` is the last unvalidated
+branch stub", which was true and was the smaller half. The same root cause
+reached **six** methods and produced silently wrong answers in inconsistent
+directions.
+
+### The mismatch
+
+MATLAB guards every branch-taking method identically, then validates:
+
+```matlab
+if nargin < 2 || isempty(branch_id)
+    branch_id = database_obj.current_branch_id;
+end
+branch_id = database_obj.validate_branch_id(branch_id);
+```
+
+`isempty` covers `[]` **and** `''`. Python guarded six methods with
+`branch_id is None`, which does not cover `""`, so an explicit empty string was
+passed through to the `_do_*` layer — where each method decided for itself what
+a falsy id meant, and they did not agree.
+
+This is the third appearance of the same bug. #51 fixed it in `add_branch`, #54
+in `set_branch`; this closes it in the methods that *read*.
+
+### What it did, measured
+
+Two branches: `'a'` holding one document, `'b'` a child of `'a'` holding a
+second. Current branch `'a'`.
+
+| call | `None` (= current) | `""` before | MATLAB for `''` |
+|---|---|---|---|
+| `get_doc_ids` | 1 doc | **2 docs** | 1 doc |
+| `search` | 1 match | **0 matches** | 1 match |
+| `get_sub_branches` | `['b']` | **`[]`** | `['b']` |
+| `get_branch_parent` | `None` | `None` | `''` |
+
+Three of four wrong, failing in *opposite* directions — one over-returning, two
+under-returning — and nothing raised in any case.
+
+`get_doc_ids` was the worst. `_do_get_doc_ids` guards on truthiness:
+
+```python
+if branch_id:
+    ...WHERE bd.branch_id = ?
+else:
+    ...SELECT doc_id FROM docs      # every branch
+```
+
+`""` is falsy, so the branch filter was dropped and the all-branches query ran.
+`get_doc_ids("")` was `all_doc_ids()` — asking for one branch's documents
+returned the whole database.
+
+DID-matlab's `do_get_doc_ids` has the *same* fallback and documents it
+deliberately. The difference was never in the implementation layer; it was that
+Python's public method let an empty id reach it.
+
+### What changed
+
+`not branch_id` in all six, plus `_validate_branch_id` in five. Two things are
+deliberate and easy to get wrong later:
+
+- **`add_docs` does not validate.** MATLAB's `add_docs` is the one
+  branch-taking method that never calls `validate_branch_id` — it lets the
+  insert refuse a branch that does not exist. Python now matches, and
+  `_do_add_doc` does raise, which `tests/test_add_docs_atomicity.py` already
+  pinned.
+- **`search` needed fixing twice.** `SQLiteDB.search` overrides
+  `Database.search`, so correcting only the base class left the live path
+  untouched — which the first run of the new tests caught.
+
+`_do_get_doc_ids` keeps its no-branch fallback. It looks dead once `get_doc_ids`
+validates, but `all_doc_ids()` calls it with no argument and genuinely needs it;
+there is now a docstring saying so, because the next reader will otherwise
+delete it.
+
+### The fixtures matter more than usual
+
+Every test in `tests/test_branch_id_defaults.py` (10 tests, 5 subtests) puts
+documents on **more than one branch**. On a single-branch database the
+all-branches query and the one-branch query return the same rows, so the `""`
+cases would pass without the fix. `test_the_fixture_really_does_span_two_branches`
+asserts that property directly, so the suite fails loudly rather than quietly
+going vacuous if the fixture is ever simplified.
+
+Verified by reverting the source change with the tests in place: 11 of 15 fail,
+and all pass with it.
+
+### Not affected
+
+MATLAB needs no change — it was already correct at all 10 of its call sites —
+so there is no `matlab_last_sync_hash` bump and no symmetry impact.

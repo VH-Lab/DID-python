@@ -229,6 +229,13 @@ class SQLiteDB(Database):
         self.dbid.commit()
 
     def _do_get_doc_ids(self, branch_id=None):
+        """Document ids on a branch, or -- with no branch -- in the database.
+
+        The no-argument form is load-bearing: all_doc_ids() relies on it, and
+        DID-matlab's do_get_doc_ids documents the same fallback. It looks dead
+        from get_doc_ids, which validates its id first (issue #55), so do not
+        remove it on that reading.
+        """
         if branch_id:
             rows = self.do_run_sql_query(
                 "SELECT d.doc_id FROM docs d JOIN branch_docs bd ON d.doc_idx = bd.doc_idx WHERE bd.branch_id = ?",
@@ -627,9 +634,15 @@ class SQLiteDB(Database):
     # --- SQL-based search (matching MATLAB's database.m) ---
 
     def search(self, query_obj, branch_id=None):
-        """Search using SQL queries against doc_data, matching MATLAB's behavior."""
-        if branch_id is None:
+        """Search using SQL queries against doc_data, matching MATLAB's behavior.
+
+        Overrides Database.search, so the branch guard has to be repeated here
+        -- fixing only the base class would have left this path unchanged
+        (issue #55).
+        """
+        if not branch_id:
             branch_id = self.current_branch_id
+        branch_id, _ = self._validate_branch_id(branch_id)
 
         search_params = query_obj.to_search_structure()
 
