@@ -544,12 +544,26 @@ schema was a backstop "so the data stays correct" held for only two of them:
   compares an integer equal to a text value, so the current branch named
   nothing and `get_doc_ids` on it returned `[]` rather than raising.
 
-One `add_branch` difference is deliberate and remains: MATLAB treats an empty
-parent as "use the current branch", so once you are on a branch it cannot make
-a second root. Python distinguishes `None` ("use the current branch") from an
-explicit `""` ("no parent"), which is how a second root is created. Both agree
-on a fresh database, where the current branch is itself empty and the first
-`add_branch` makes a root.
+The empty-parent case matches too. MATLAB reads an empty parent as "use the
+current branch" (`isempty` covers `[]` and `''`); Python had distinguished
+them, taking an explicit `""` as "no parent". Both now mean the current
+branch, so a root is made only when there is no current branch.
+
+**That inherits a MATLAB limitation worth knowing about.** MATLAB's
+`set_branch` validates its argument and refuses `''`, so MATLAB cannot clear
+the current branch and therefore cannot create a second root once it is on one.
+Its own `add_branch_nodes` helper hits this: it positions with `set_branch` and
+adds with no explicit parent, so the second and later roots of a multi-root
+forest silently become children of whatever was added last.
+
+Python can still express it, because `set_branch` is still the unvalidated
+stub — which makes it, deliberately, the one branch stub left open after this
+change. `tests/helpers.py` `add_branch_nodes` uses `set_branch("")` for the
+roots of its forests. Porting `set_branch`'s validation would close a
+fail-deferred gap and at the same time remove multi-root creation from Python,
+so the real question is whether MATLAB should gain a way to clear the current
+branch — not whether Python should lose one. See the `set_branch` entry in
+`bridge.yaml`.
 
 Python raises `ValueError` where MATLAB raises an identified error; that is
 this codebase's convention throughout, not a remaining gap. One line of

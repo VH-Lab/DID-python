@@ -243,8 +243,11 @@ class TestAddDocsCustomFileHandler(unittest.TestCase):
         first = self._files_row(doc.id())["cached_location"]
 
         # A branch with no parent, so the document is not copied into it and
-        # the add below is a genuine second add of the same document.
-        self.db.add_branch("b", parent_branch_id="")
+        # the add below is a genuine second add of the same document. An
+        # empty parent now means "the current branch", as in MATLAB, so the
+        # current branch is cleared first to get one with no parent at all.
+        self.db.set_branch("")
+        self.db.add_branch("b")
         self.db.add_docs(
             [doc], branch_id="b", validate=False, custom_file_handler=handler
         )

@@ -70,11 +70,13 @@ class Database(abc.ABC):
           equal to a text value, so the current branch then named nothing:
           get_doc_ids on it returned [] rather than raising.
 
-        If PARENT_BRANCH_ID is not given, the current branch is used. Passing
-        an explicit empty parent creates a root branch; see the add_branch
-        bridge entry for how that differs from MATLAB.
+        An empty or omitted PARENT_BRANCH_ID means the current branch, exactly
+        as in MATLAB, whose isempty() covers both [] and ''. A branch with no
+        parent -- a root -- is therefore made only when there is no current
+        branch: on a fresh database, or after set_branch("") or deleting the
+        last branch. MATLAB has no other way to make one and neither has this.
         """
-        if parent_branch_id is None:
+        if not parent_branch_id:
             parent_branch_id = self.current_branch_id
 
         # check_existence=False: this id is supposed NOT to exist yet.

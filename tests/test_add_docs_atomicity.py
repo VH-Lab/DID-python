@@ -99,7 +99,12 @@ class TestAddDocsAtomicity(unittest.TestCase):
         # a legitimate cross-branch add, not a duplicate, and must not raise.
         d = _make_doc("1" * 32)
         self.db.add_docs([d], branch_id="a", validate=False)
-        self.db.add_branch("b", parent_branch_id="")
+        # A root branch, so the document is not inherited and the add below
+        # is a genuine cross-branch add. An empty parent now means "the
+        # current branch", as in MATLAB, so the current branch is cleared
+        # first to get one with no parent at all.
+        self.db.set_branch("")
+        self.db.add_branch("b")
         self.db.add_docs([d], branch_id="b", validate=False)
         self.assertIn(d.id(), self.db.get_doc_ids("b"))
 

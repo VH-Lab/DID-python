@@ -74,15 +74,25 @@ class TestBranchGuards(unittest.TestCase):
         self.assertEqual(self.db.all_branch_ids(), ["a"])
         self.assertEqual(self.db.current_branch_id, "a")
 
-    def test_the_valid_add_branch_paths_still_work(self):
-        # no parent given -> child of the current branch
+    def test_an_omitted_or_empty_parent_means_the_current_branch(self):
+        """MATLAB's isempty() covers both [] and '', so the two are the same
+        request. They were not here: an explicit "" used to mean "no parent"
+        and produced a root."""
         self.db.add_branch("b")
         self.assertEqual(self.db.get_branch_parent("b"), "a")
         self.assertEqual(self.db.current_branch_id, "b")
 
-        # an explicit empty parent -> a second root
-        self.db.add_branch("r", "")
+        self.db.set_branch("a")
+        self.db.add_branch("c", "")
+        self.assertEqual(self.db.get_branch_parent("c"), "a")
+
+    def test_a_root_branch_needs_there_to_be_no_current_branch(self):
+        """Which is how the first branch of a fresh database is made, and the
+        only way MATLAB can make one either."""
+        self.db.set_branch("")
+        self.db.add_branch("r")
         self.assertIsNone(self.db.get_branch_parent("r"))
+        self.assertEqual(self.db.current_branch_id, "r")
 
     # -- guard 1: the branch must exist -----------------------------------
 
@@ -173,7 +183,7 @@ class TestBranchGuards(unittest.TestCase):
         """Previously current_branch_id kept naming the deleted branch, so the
         next add_branch inherited a parent that no longer existed and failed
         on the FOREIGN KEY."""
-        self.db.add_branch("b", "")  # a second root; current becomes 'b'
+        self.db.add_branch("b")  # child of 'a'; current becomes 'b'
         self.assertEqual(self.db.current_branch_id, "b")
 
         self.db.delete_branch("b")
@@ -191,12 +201,19 @@ class TestBranchGuards(unittest.TestCase):
         self.assertEqual(self.db.all_branch_ids(), [])
 
     def test_deleting_a_branch_that_is_not_current_leaves_current_alone(self):
-        self.db.add_branch("b", "")  # current becomes 'b'
-        self.db.delete_branch("a")
-        self.assertEqual(self.db.current_branch_id, "b")
+        # two leaves under 'a', so the one deleted is neither current nor a
+        # parent
+        self.db.add_branch("b")
+        self.db.set_branch("a")
+        self.db.add_branch("c")  # current becomes 'c'
+
+        self.db.delete_branch("b")
+
+        self.assertEqual(self.db.current_branch_id, "c")
+        self.assertCountEqual(self.db.all_branch_ids(), ["a", "c"])
 
     def test_delete_branch_defaults_to_the_current_branch(self):
-        self.db.add_branch("b", "")
+        self.db.add_branch("b")
         self.assertEqual(self.db.current_branch_id, "b")
 
         self.db.delete_branch()

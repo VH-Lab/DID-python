@@ -189,14 +189,26 @@ classes:
             branch named nothing and get_doc_ids on it returned [] rather
             than raising.
 
-          One difference is deliberate and remains. MATLAB treats an empty
-          PARENT_BRANCH_ID as "use the current branch" (isempty covers both
-          [] and ''), so once you are on a branch it cannot create a second
-          root. Python distinguishes them: parent_branch_id=None means "use
-          the current branch", while an explicit "" means "no parent", which
-          is how a second root is created. Both agree on the case that
-          matters for a fresh database, where the current branch is itself
-          empty and the first add_branch makes a root.
+          The empty-parent case now matches too. MATLAB reads an empty
+          PARENT_BRANCH_ID as "use the current branch" (isempty covers both []
+          and ''); Python had distinguished them, taking an explicit "" as
+          "no parent". Both now mean the current branch, so a root is made
+          only when there is no current branch -- on a fresh database, or
+          after set_branch("").
+
+          That has a consequence worth recording, because it is a limitation
+          inherited from MATLAB rather than a Python one. MATLAB's set_branch
+          validates its argument and refuses '', so MATLAB has no way to clear
+          the current branch, and therefore no way to create a second root
+          branch once it is on one. Its own test helper add_branch_nodes hits
+          this: it positions with set_branch and adds with no explicit parent,
+          so the second and later roots of a multi-root forest silently become
+          children of whatever was added last.
+
+          Python can still express it, because its set_branch is an unvalidated
+          stub that accepts "" -- see the set_branch entry, where that is now
+          the remaining asymmetry. tests/helpers.py add_branch_nodes uses it to
+          build the forests the branch tests need.
 
           Regression coverage: tests/test_branch_guards.py.
 
@@ -215,6 +227,25 @@ classes:
           add_docs ("Branch '<id>' does not exist."). MATLAB fails fast at
           set_branch. Fail-deferred rather than fail-silent, but the two
           languages report the mistake at different points.
+
+          Still open as of 2026-08-30, and now the load-bearing one of the
+          branch stubs. Deliberately NOT closed alongside add_branch and
+          delete_branch in DID-python#51, because it is the only remaining way
+          to express something MATLAB cannot do at all: MATLAB's set_branch
+          refuses '' (validate_branch_id rejects an empty id), so MATLAB has
+          no way to clear the current branch and therefore no way to create a
+          second root branch once it is on one. Python's stub accepts "", and
+          tests/helpers.py add_branch_nodes relies on that to build multi-root
+          forests.
+
+          So porting this validation is not a pure win: it would close a
+          fail-deferred gap and simultaneously remove multi-root creation from
+          Python, matching a MATLAB limitation that MATLAB's own test helper
+          appears not to have noticed (its second and later roots become
+          children of whatever was added last). Worth deciding deliberately
+          rather than sweeping up with the other two -- the question is
+          whether MATLAB should gain a way to clear the current branch, not
+          whether Python should lose one.
 
       - name: get_branch
         python_name: get_branch
