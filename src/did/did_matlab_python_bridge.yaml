@@ -318,9 +318,27 @@ classes:
           - name: branch_id
             type_matlab: "char"
             type_python: "str"
+          - name: customFileHandler
+            type_matlab: "function_handle (name-value)"
+            type_python: "callable (custom_file_handler=None)"
         decision_log: >
-          MATLAB has options: OnDuplicate, Validate.
+          MATLAB has options: OnDuplicate, Validate, customFileHandler.
           Python accepts **kwargs. Synchronized 2026-03-15.
+
+          customFileHandler ported 2026-08-30 (DID-python#42). Same contract
+          as open_doc's: called as (destPath, sourcePath), it must produce a
+          local file at destPath, and it is how a downstream package supplies
+          retrieval for a location DID cannot open itself. DID downloads
+          nothing, in either language. Only a location marked `ingest` is
+          retrieved here, which for a remote one is rare -- ingest defaults to
+          0 for 'url' and 'ndicloud'.
+
+          DELIBERATE SPELLING DIFFERENCE: snake_case custom_file_handler,
+          matching open_doc's parameter for the same contract, rather than
+          MATLAB's customFileHandler. Named explicitly on add_docs (not left
+          to **kwargs) so the signature documents it, and threaded through to
+          _do_add_doc; see the do_add_doc entry in
+          did_matlab_python_bridge_implementations.yaml.
 
       - name: get_docs
         python_name: get_docs
@@ -394,17 +412,58 @@ classes:
           ReadOnlyFileobj. Synchronized 2026-03-15.
 
       - name: exist_doc
-        python_name: ~   # not ported
+        python_name: exist_doc
+        python_path: "did/implementations/sqlitedb.py"
         input_arguments:
           - name: document_id
-            type_matlab: "char"
-            type_python: "(not implemented in base)"
+            type_matlab: "char | did.document"
+            type_python: "str | Document"
           - name: filename
             type_matlab: "char"
-            type_python: "(not implemented in base)"
+            type_python: "str"
+        output_arguments:
+          - name: tf
+            type_matlab: "logical"
+            type_python: "bool"
+          - name: file_path
+            type_matlab: "char ('' when absent)"
+            type_python: "str | None (None when absent)"
         decision_log: >
-          Present in MATLAB as exist_doc(). Not yet in Python base class.
-          SQLiteDB has partial support via check_exist_doc pattern.
+          Ported 2026-08-30 (DID-python#42). It lives on SQLiteDB rather than
+          the Python base class, exactly as open_doc does: the resolution is
+          implementation-specific (it reads the `files` table), and SQLiteDB
+          is the only implementation. MATLAB likewise puts the work in
+          sqlitedb.check_exist_doc and keeps only the id-validation wrapper on
+          database.m.
+
+          MATLAB's two outputs [tf, file_path] come back as a tuple. Both
+          languages accept an id string or a document object (MATLAB via
+          validate_doc_id, Python via _document_id), report only the first
+          matching file, and report tf=false rather than erroring for a
+          document or filename the database does not have. An empty filename
+          is an error in both -- MATLAB's DID:SQLITEDB:open, Python's
+          ValueError, since it is a bad argument rather than a missing file.
+
+          DELIBERATE: file_path is None, not "", when the file does not exist.
+          MATLAB returns an empty char because that is its only empty string;
+          None cannot be mistaken for a usable relative path the way "" can
+          (os.path.join(dir, "") yields a directory). This matches the
+          intended caller: NDI-python's session.database_existbinarydoc is
+          already typed (doc_or_id: ndi_document | str, filename) ->
+          tuple[bool, Path | None] and returns (False, None) when it has
+          nothing. It hands back a pathlib.Path where this returns a str, and
+          it returns a path even when the file is absent; DID follows MATLAB
+          and reports no path for a file that is not there.
+
+          DELIBERATE: Python resolves through the same helper open_doc uses
+          (_locations_for_file / _first_local_file), so exist_doc is true
+          exactly when open_doc would return a file with no
+          custom_file_handler. MATLAB searches the same two candidate roots as
+          do_open_doc -- filecachepath/<uid> and FileDir/<uid> -- and stops
+          there, so Python additionally reports true for a local
+          orig_location or cached_location that exists on disk and MATLAB has
+          not yet ingested. That is a superset, and it is the answer the
+          caller asked for: MATLAB's own do_open_doc would open such a file.
 
       - name: close_doc
         python_name: ~   # not ported
@@ -610,9 +669,10 @@ classes:
       Schema validation (validate_docs, get_document_schema,
       validate_doc_vs_schema, validate_field_type_and_value, checkfiles and
       friends) was ported 2026-08-28 and brought the entry up to MATLAB
-      0142532, PR #153 included. A few MATLAB methods (freeze_branch,
-      is_branch_editable, display_branches, exist_doc, close_doc) are still
-      not ported. Deviation: MATLAB's add_docs also disables SQLite
+      0142532, PR #153 included. exist_doc was ported 2026-08-30
+      (DID-python#42), onto SQLiteDB as open_doc is; a few MATLAB methods
+      (freeze_branch, is_branch_editable, display_branches, close_doc) are
+      still not ported. Deviation: MATLAB's add_docs also disables SQLite
       journalling when validation is off; Python does not, since its sqlite3
       connection is managed differently (see the sqlitedb open_db/close_db
       note). Synchronized 2026-03-15; validation 2026-08-28.

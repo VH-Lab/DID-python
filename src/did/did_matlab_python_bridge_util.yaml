@@ -442,14 +442,17 @@ functions:
     python_path: "did/common.py"
     python_name: "get_cache"
     decision_log: >
-      Function shape matches -- both memoize a single cache object for the
-      process (MATLAB via a persistent variable, Python via a module-level
-      global) and construct it with (filecachepath, 33). The object returned
-      does NOT match: MATLAB returns a working did.file.fileCache, while
-      Python returns the three-line placeholder FileCache defined in
-      common.py, which stores only (path, size) and can cache nothing.
-      Corrected 2026-08-28 -- this entry previously read "Exact match",
-      which was wrong. See the fileCache entry in
+      Match. Both memoize a single cache object for the process (MATLAB via a
+      persistent variable, Python via a module-level global) and construct it
+      with (filecachepath, 33), and both return a working file cache.
+
+      History: this entry read "Exact match" until 2026-08-28, when the audit
+      found that the object returned did not match -- Python returned a
+      three-line placeholder FileCache defined in common.py, which stored only
+      (path, size) and could cache nothing. That placeholder was deleted on
+      2026-08-29 along with the rest of the FileCache port; did.file.FileCache
+      is now the only FileCache and get_cache() returns it, as MATLAB's
+      getCache() returns a did.file.fileCache. See the fileCache entry in
       did_matlab_python_bridge_file.yaml.
 
 # =========================================================================

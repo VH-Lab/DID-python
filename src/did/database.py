@@ -117,8 +117,21 @@ class Database(abc.ABC):
         branch_id=None,
         validate=True,
         OnDuplicate="error",
+        custom_file_handler=None,
         **kwargs,
     ):
+        """Add documents to a branch.
+
+        ``custom_file_handler`` mirrors MATLAB's ``customFileHandler``
+        name-value argument: a callable used to retrieve a file whose location
+        is not a local path (``ndic://``, a URL). It is called as
+        ``handler(dest_path, source_path)`` and must produce a local file at
+        ``dest_path``. DID retrieves no remote file itself; a downstream
+        package supplies retrieval through this handler. Only locations marked
+        for ingestion are retrieved here, which for remote locations is rare --
+        ``ingest`` defaults to 0 for ``url`` and ``ndicloud``. The spelling is
+        snake_case to match ``open_doc``'s parameter of the same contract.
+        """
         if branch_id is None:
             branch_id = self.current_branch_id
 
@@ -135,7 +148,13 @@ class Database(abc.ABC):
             self.validate_docs(document_objs)
 
         for doc in document_objs:
-            self._do_add_doc(doc, branch_id, OnDuplicate=OnDuplicate, **kwargs)
+            self._do_add_doc(
+                doc,
+                branch_id,
+                OnDuplicate=OnDuplicate,
+                custom_file_handler=custom_file_handler,
+                **kwargs,
+            )
 
     # ... other document-related methods would follow ...
 

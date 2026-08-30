@@ -3,6 +3,7 @@ import os
 import re as _re
 import sqlite3
 import struct
+import warnings
 
 from ..database import Database
 
@@ -343,10 +344,16 @@ class SQLiteDB(Database):
 
         return props
 
-    def _do_add_doc(self, document_obj, branch_id, OnDuplicate="error", **kwargs):
+    def _do_add_doc(
+        self,
+        document_obj,
+        branch_id,
+        OnDuplicate="error",
+        custom_file_handler=None,
+        **kwargs,
+    ):
         import json
         import time
-        import warnings
 
         on_dup = str(OnDuplicate).lower()
         if on_dup not in self._ON_DUPLICATE_CHOICES:
@@ -426,7 +433,9 @@ class SQLiteDB(Database):
             # MATLAB, including a plain local file that exists on disk.
             # Below the duplicate check: MATLAB 6edd765 likewise skips its
             # file-caching loop on the duplicate path, as duplicate work.
-            self._populate_files(cursor, doc_idx, document_obj)
+            self._populate_files(
+                cursor, doc_idx, document_obj, custom_file_handler=custom_file_handler
+            )
 
             cursor.execute(
                 "INSERT INTO branch_docs (branch_id, doc_idx, timestamp) VALUES (?, ?, ?)",
@@ -467,21 +476,87 @@ class SQLiteDB(Database):
                 if isinstance(entry, dict) and entry.get("location"):
                     yield name, entry
 
-    def _populate_files(self, cursor, doc_idx, document_obj):
+    def _ingest_location(self, filename, entry, custom_file_handler):
+        """Retrieve a non-local location marked `ingest`; return its local path.
+
+        MATLAB's do_add_doc walks every location whose ``ingest`` flag is set,
+        puts a copy at ``<FileDir>/<uid>`` and records that path in
+        files.cached_location. DID downloads nothing itself: a location that is
+        not a local path goes to ``custom_file_handler(dest_path,
+        source_path)``, exactly as open_doc's remote pass does, and a
+        downstream package supplies the retrieval.
+
+        Returns "" -- an empty cached_location -- when there is nothing to
+        retrieve or the retrieval failed. A failure warns rather than raises,
+        as MATLAB's does: the document is still added, its orig_location is
+        still recorded, and open_doc can retrieve the file later with a
+        handler. Failing the whole add would lose the document over a file
+        MATLAB is willing to add without.
+
+        A *local* location marked for ingestion is not copied here, and
+        delete_original is not honored; that gap predates the handler and is
+        recorded against do_add_doc in the bridge.
+        """
+        location = str(entry.get("location", ""))
+        uid = str(entry.get("uid", ""))
+        if not entry.get("ingest") or not location or not uid:
+            return ""
+        if not self._is_remote_location(location, entry.get("location_type")):
+            return ""
+
+        if custom_file_handler is None:
+            warnings.warn(
+                f'The file "{filename}" location "{location}" is marked for '
+                f"ingestion but is not a local path, and no "
+                f"custom_file_handler was supplied. DID does not download "
+                f"files itself; a downstream package supplies retrieval "
+                f"through custom_file_handler. The document is added with no "
+                f"ingested copy. See PORTING_INSTRUCTIONS.md.",
+                stacklevel=2,
+            )
+            return ""
+
+        dest_path = os.path.join(self._file_dir(), uid)
+        try:
+            os.makedirs(self._file_dir(), exist_ok=True)
+            # Clear any earlier copy first, as open_doc does for its download:
+            # otherwise a handler that produced nothing would be indis-
+            # tinguishable from one that succeeded, and a stale file would be
+            # recorded as this document's ingested copy.
+            if os.path.exists(dest_path):
+                os.remove(dest_path)
+            custom_file_handler(dest_path, location)
+        except Exception as error:  # noqa: BLE001 - reported as a warning
+            warnings.warn(
+                f'Failed to ingest "{filename}" from "{location}": {error}',
+                stacklevel=2,
+            )
+            return ""
+
+        if not os.path.isfile(dest_path):
+            warnings.warn(
+                f'Failed to ingest "{filename}" from "{location}": '
+                f'custom_file_handler did not produce a file at "{dest_path}"',
+                stacklevel=2,
+            )
+            return ""
+        return dest_path
+
+    def _populate_files(self, cursor, doc_idx, document_obj, custom_file_handler=None):
         """Insert one `files` row per file location, mirroring MATLAB.
 
         Columns match MATLAB's insert exactly: doc_idx, filename, uid,
         orig_location, cached_location, type, parameters.
 
-        cached_location is always empty here. MATLAB fills it when it ingests a
-        location into its FileDir; DID-python does no ingestion, so there is
-        never a cached copy to point at. That is a real difference in what the
-        two write, not a gap in this row -- see PORTING_INSTRUCTIONS.md.
+        cached_location is the ingested copy's path, which for now only a
+        non-local location marked ``ingest`` and retrieved through
+        ``custom_file_handler`` produces; see _ingest_location.
 
         INSERT OR IGNORE because a document added to a second branch reaches
         this path again with the same (doc_idx, filename, uid) primary key.
         """
         for name, entry in self._file_entries(document_obj):
+            cached_location = self._ingest_location(name, entry, custom_file_handler)
             cursor.execute(
                 "INSERT OR IGNORE INTO files "
                 "(doc_idx, filename, uid, orig_location, cached_location, "
@@ -491,7 +566,7 @@ class SQLiteDB(Database):
                     name,
                     str(entry.get("uid", "")),
                     str(entry.get("location", "")),
-                    "",
+                    cached_location,
                     str(entry.get("location_type", "file")),
                     str(entry.get("parameters", "")),
                 ),
@@ -971,6 +1046,99 @@ class SQLiteDB(Database):
             and entry.get("location")
         ]
 
+    @staticmethod
+    def _document_id(doc_id):
+        """MATLAB's validate_doc_id: an id string, or a document to take it from.
+
+        ``did.database/open_doc`` and ``exist_doc`` both accept "either the
+        document id of a did.document, or a did.document object itself", so
+        both accept it here too.
+        """
+        identify = getattr(doc_id, "id", None)
+        return identify() if callable(identify) else doc_id
+
+    def _locations_for_file(self, doc_id, filename, missing="error"):
+        """Every recorded location for one of a document's files.
+
+        The `files` table first, since that is the only place MATLAB records
+        an ingested copy; then the document's own locations, which is all a
+        database written before that table was populated will have.
+
+        ``open_doc`` and ``exist_doc`` share this, so the two can never
+        disagree about where a file is -- MATLAB's ``do_open_doc`` and
+        ``check_exist_doc`` run the same ``docs, files`` join for the same
+        reason. With ``missing="ignore"`` a document or filename that is not
+        there returns None instead of raising, which is what ``exist_doc``
+        needs: MATLAB's ``check_exist_doc`` reports tf=false for an unknown
+        document rather than erroring.
+        """
+        doc = self.get_docs(
+            doc_id, OnMissing="ignore" if missing == "ignore" else "error"
+        )
+        if not doc:
+            if missing == "ignore":
+                return None
+            raise ValueError(f"Document {doc_id} not found.")
+
+        is_in, info, _ = doc.is_in_file_list(filename)
+        if not is_in:
+            if missing == "ignore":
+                return None
+            raise FileNotFoundError(f"File {filename} not found in document {doc_id}.")
+
+        locations = self._locations_from_files_table(doc_id, filename)
+        locations += self._valid_locations(info)
+        return locations
+
+    def _first_local_file(self, locations):
+        """``(entry, path)`` for the first location already readable on disk.
+
+        ``(None, None)`` when none is. This is MATLAB's first pass, before it
+        tries to retrieve anything.
+        """
+        for entry in locations:
+            location = entry["location"]
+            if self._is_remote_location(location, entry.get("location_type")):
+                continue
+            resolved = self._resolve_local(location)
+            if os.path.isfile(resolved):
+                return entry, resolved
+        return None, None
+
+    def exist_doc(self, doc_id, filename):
+        """Does `filename` exist for this document, and where?
+
+        Mirrors MATLAB's ``did.database/exist_doc`` -> ``sqlitedb``'s
+        ``check_exist_doc``, whose two outputs ``[tf, file_path]`` come back
+        here as a tuple: whether the file is on disk, and its absolute path.
+        Only the first matching location is reported, as in MATLAB.
+
+        The path is None -- not "" -- when the file does not exist. MATLAB
+        returns an empty char because that is its only empty string; Python
+        has a value for "there is no path", and None cannot be mistaken for a
+        usable relative path the way "" can (``os.path.join(dir, "")`` yields
+        a directory).
+
+        The lookup runs through the same resolution as ``open_doc``, so
+        ``exist_doc`` is true exactly when ``open_doc`` would return a file
+        without needing a ``custom_file_handler``.
+        """
+        if not str(filename or "").strip():
+            # MATLAB: error('DID:SQLITEDB:open', 'The requested filename must
+            # be specified in check_exist_doc()').
+            raise ValueError("The requested filename must be specified in exist_doc().")
+
+        locations = self._locations_for_file(
+            self._document_id(doc_id), filename, missing="ignore"
+        )
+        if not locations:
+            return False, None
+
+        entry, resolved = self._first_local_file(locations)
+        if entry is None:
+            return False, None
+        return True, os.path.abspath(resolved)
+
     def open_doc(self, doc_id, filename, custom_file_handler=None):
         """Open a file belonging to a document.
 
@@ -988,38 +1156,27 @@ class SQLiteDB(Database):
         from ..database import FileAccessError
         from ..file import ReadOnlyFileobj
 
-        doc = self.get_docs(doc_id)
-        if not doc:
-            raise ValueError(f"Document {doc_id} not found.")
-
-        is_in, info, _ = doc.is_in_file_list(filename)
-        if not is_in:
-            raise FileNotFoundError(f"File {filename} not found in document {doc_id}.")
-
-        # The files table first, since that is the only place MATLAB records an
-        # ingested copy; then the document's own locations, which is all a
-        # database written before this table was populated will have.
-        locations = self._locations_from_files_table(doc_id, filename)
-        locations += self._valid_locations(info)
+        doc_id = self._document_id(doc_id)
+        locations = self._locations_for_file(doc_id, filename)
 
         # First pass: anything already on disk, as MATLAB does before it tries
-        # to retrieve anything.
-        remote = []
-        for entry in locations:
-            location = entry["location"]
-            if self._is_remote_location(location, entry.get("location_type")):
-                remote.append(entry)
-                continue
-            resolved = self._resolve_local(location)
-            if os.path.isfile(resolved):
-                if entry.get("in_file_cache"):
-                    # Record the use, or the cache would evict what is read
-                    # most as though it had never been read at all.
-                    cache = self._file_cache()
-                    if cache is not None:
-                        with contextlib.suppress(OSError, ValueError):
-                            cache.touch(str(entry["uid"]))
-                return ReadOnlyFileobj(resolved)
+        # to retrieve anything. exist_doc reports on exactly this pass.
+        entry, resolved = self._first_local_file(locations)
+        if entry is not None:
+            if entry.get("in_file_cache"):
+                # Record the use, or the cache would evict what is read
+                # most as though it had never been read at all.
+                cache = self._file_cache()
+                if cache is not None:
+                    with contextlib.suppress(OSError, ValueError):
+                        cache.touch(str(entry["uid"]))
+            return ReadOnlyFileobj(resolved)
+
+        remote = [
+            entry
+            for entry in locations
+            if self._is_remote_location(entry["location"], entry.get("location_type"))
+        ]
 
         # Second pass: hand each remote location to the caller's retriever.
         if remote and custom_file_handler is not None:

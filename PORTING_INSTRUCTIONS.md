@@ -409,11 +409,12 @@ validation was ported 2026-08-28 and is no longer listed; MATLAB's
 `document.validate` is dead code and is deliberately not ported — see the
 document entry in `bridge.yaml`. `binaryTable`'s write path, `binaryTable.
 compare` and `fileCache` were ported 2026-08-29 and are no longer listed — see
-"The file cache" below.)
+"The file cache" below. `database.exist_doc` and `add_docs`'
+`customFileHandler` were ported 2026-08-30 and are no longer listed — see
+"exist_doc and ingestion at add time" below.)
 
 | MATLAB feature | Bridge file | Priority |
 |---|---|---|
-| `database.exist_doc` | bridge.yaml | Medium |
 | `database.get_preference` / `set_preference` / `get_preference_names` — Python has the `preferences` dict but no accessors for it | bridge.yaml | Medium |
 | Remote (URL) file locations in `open_doc` — MATLAB uses `ndi.cloud.api.files.getFile`; Python would need `requests`/`urllib` | bridge_implementations.yaml | Low |
 | `database.freeze_branch` | bridge.yaml | Low |
@@ -898,14 +899,14 @@ dependency.
   `PathConstants.temppath` and re-fetch on every open. It now does what MATLAB
   does: a retrieved file goes into the file cache under its uid, and a later
   open is served from there. See "The file cache".
-- **`do_add_doc` still calls into NDI.** DID-matlab's *ingestion* path
-  (`do_add_doc`, not `do_open_doc`) also calls
-  `ndi.cloud.api.files.getFile` for a non-`file` location, so DID-matlab's
-  dependency on NDI is reduced but **not gone**. `do_add_doc` takes no handler
-  parameter, so closing it means plumbing one through `add_docs` and the
-  abstract base — a real API change, not done here. It is rarely reached,
-  because `ingest` defaults to 0 for `url` and `ndicloud` locations, which is
-  presumably why it went unnoticed.
+- **~~`do_add_doc` still calls into NDI.~~ Closed 2026-08-30.** DID-matlab's
+  *ingestion* path (`do_add_doc`, not `do_open_doc`) used to call
+  `ndi.cloud.api.files.getFile` for a non-`file` location. Both languages now
+  take a handler there instead — MATLAB's `options.customFileHandler`,
+  Python's `custom_file_handler`, plumbed through `add_docs` — so DID
+  downloads nothing on either path. It is rarely reached, because `ingest`
+  defaults to 0 for `url` and `ndicloud` locations, which is presumably why it
+  went unnoticed for so long. See "exist_doc and ingestion at add time".
 
 ### A hazard the tests caught
 
@@ -967,20 +968,96 @@ difference. A `fileDocument` symmetry pair was added alongside the fix.
    locations without one collapsed into a single row: **adding two files to a
    document produced exactly one row.**
 
-`cached_location` is always empty on the Python side, since DID-python does no
-ingestion. That is a real difference in what the two write, not a gap in the
-row.
+`cached_location` is written when a location marked `ingest` is retrieved
+through `custom_file_handler` (see "exist_doc and ingestion at add time"), and
+is otherwise empty — including for a *local* location marked `ingest`, which
+Python does not copy into `FileDir`. That last case is a real difference in
+what the two write, not a gap in the row.
 
 **Known remaining divergence**: MATLAB's `add_file` errors when the name is not
 declared in the class's `file_list`; Python appends instead. Left alone as a
 separate behavioral decision.
 
-**Related, and larger**: Python has no ingestion at all. MATLAB copies or
-retrieves a location marked `ingest` into `FileDir`, and can delete the
-original afterwards. Python does neither, so `ingest` and `delete_original`
-are inert on the Python side. `add_docs(**kwargs)` already forwards
-`custom_file_handler` through to `_do_add_doc`, so the parameter arrives — but
-there is nothing there to use it yet.
+**Related, and partly closed**: Python ingests a *remote* location marked
+`ingest` through `custom_file_handler` as of 2026-08-30. It still does not
+ingest a *local* one: MATLAB copies such a location into `FileDir` and, when
+`delete_original` is set, deletes the source. So for a local location `ingest`
+and `delete_original` remain inert on the Python side. `delete_original` never
+applies to the remote path — MATLAB explicitly skips deletion for a location
+containing `://`, since a remote location is not ours to remove.
+
+## exist_doc and ingestion at add time — ported 2026-08-30
+
+Two file-service entry points existed in DID-matlab and not in DID-python
+(DID-python#42). Both are ports: MATLAB defines the behaviour and is the
+source of truth.
+
+### `exist_doc(doc_id, filename)`
+
+MATLAB's `did.database/exist_doc` validates the document id and delegates to
+`sqlitedb/check_exist_doc`; both return `[tf, file_path]`. Python puts both
+halves on `SQLiteDB.exist_doc`, exactly where `open_doc` lives, and returns
+MATLAB's two outputs as a tuple:
+
+```python
+exists, file_path = db.exist_doc(doc_id, "filename1.ext")
+```
+
+Carried over from MATLAB: `doc_id` may be an id string **or** a document
+object; only the first matching file is reported; an unknown document or an
+unlisted filename is `False`, not an error; an empty filename **is** an error
+(MATLAB's `DID:SQLITEDB:open`, Python's `ValueError` — it is a bad argument,
+not a missing file).
+
+Two things were decided deliberately:
+
+- **`file_path` is `None`, not `""`, when the file does not exist.** MATLAB
+  returns an empty char because that is its only empty string. Python has a
+  value for "there is no path", and `None` cannot be mistaken for a usable
+  relative path the way `""` can — `os.path.join(dir, "")` yields a directory.
+- **It shares `open_doc`'s resolution** rather than growing a second copy of
+  the `docs, files` join. `_locations_for_file` gathers the candidates and
+  `_first_local_file` picks the first one on disk; `open_doc` calls both, so
+  `exist_doc` is true *exactly* when `open_doc` would return a file with no
+  `custom_file_handler`. `tests/test_exist_doc.py` asserts that agreement
+  directly. MATLAB's `check_exist_doc` searches the same two roots as
+  `do_open_doc` (`filecachepath/<uid>` and `FileDir/<uid>`) and stops there, so
+  Python additionally reports true for a local `orig_location` that exists and
+  MATLAB has not ingested — a superset, and the answer the caller wants, since
+  MATLAB's own `do_open_doc` would open that file.
+
+Neither language trusts a `files` row: one is inserted even when caching failed
+and `cached_location` is empty, so the filesystem decides.
+
+### `add_docs(..., custom_file_handler=...)`
+
+MATLAB's `do_add_doc` walks every location whose `ingest` flag is set and puts
+a copy at `<FileDir>/<uid>`. A `'file'` location is copied; anything else goes
+to `options.customFileHandler(destPath, sourcePath)`. Python now does the same
+for the non-local case, threaded `add_docs` → `_do_add_doc` →
+`_populate_files` → `_ingest_location`, and records the result in
+`files.cached_location` — which is where both languages then look for it.
+
+The parameter is spelled `custom_file_handler`, matching `open_doc`'s
+parameter for the identical contract rather than MATLAB's `customFileHandler`;
+the same deliberate difference is recorded in the bridge.
+
+**Failure warns, it does not raise.** A handler that throws, produces no file,
+or was never supplied leaves `cached_location` empty and emits a warning — the
+document is still added, `orig_location` is still recorded, and `open_doc` can
+retrieve the file later with a handler. This follows MATLAB, whose
+`warning('DID:SQLiteDB:add_doc', ...)` does exactly that: failing the whole add
+would lose a document MATLAB is willing to store. The missing-handler warning
+carries the same explanation `open_doc`'s error does, so the case is never
+*silently* skipped.
+
+One Python addition: an existing file at `<FileDir>/<uid>` is removed before
+the handler runs, as `open_doc` already does for its download. Without it a
+handler that produced nothing would be indistinguishable from one that
+succeeded, and a stale file would be recorded as this document's ingested copy.
+
+Coverage: `tests/test_exist_doc.py` (24 tests) and
+`tests/test_add_docs_file_handler.py` (12 tests).
 
 ## The fileDocument symmetry pair, added 2026-08-29
 
