@@ -1,11 +1,11 @@
-"""delete_branch refuses what MATLAB's delete_branch refuses.
+"""add_branch and delete_branch refuse what MATLAB refuses.
 
-Until this was ported, Python's delete_branch was a bare delegate behind a
-"validation logic would go here" placeholder, so all three of MATLAB's guards
-were missing and the current branch was left dangling afterwards. Each test
-below names the behavior before the port.
+Both were bare delegates behind "validation logic would go here"
+placeholders, so MATLAB's guards were missing on each. Each test below names
+the behavior before the port.
 
-Covers database.delete_branch, freeze_branch and is_branch_editable.
+Covers database.add_branch, delete_branch, freeze_branch and
+is_branch_editable.
 """
 
 import os
@@ -29,6 +29,60 @@ class TestBranchGuards(unittest.TestCase):
         self.db._close_db()
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
+
+    # -- add_branch ---------------------------------------------------------
+
+    def test_adding_an_empty_branch_id_raises(self):
+        """Previously accepted, and the damage was downstream: "" is also the
+        sentinel for *no* current branch, so the branch was created, made
+        current, and the next add_branch read that parent, turned it into
+        NULL and silently produced a ROOT instead of a child."""
+        with self.assertRaises(ValueError) as caught:
+            self.db.add_branch("")
+        self.assertIn("non-empty string", str(caught.exception))
+
+        self.assertEqual(self.db.all_branch_ids(), ["a"])
+        self.assertEqual(self.db.current_branch_id, "a")
+
+    def test_adding_a_non_string_branch_id_raises(self):
+        """Previously accepted: SQLite's TEXT affinity stored '42' while
+        current_branch_id became the integer 42, and an integer never compares
+        equal to a text value — so the current branch named nothing and
+        get_doc_ids on it returned [] rather than raising."""
+        with self.assertRaises(ValueError) as caught:
+            self.db.add_branch(42)
+        self.assertIn("non-empty string", str(caught.exception))
+
+        self.assertEqual(self.db.all_branch_ids(), ["a"])
+        self.assertEqual(self.db.current_branch_id, "a")
+
+    def test_adding_a_duplicate_branch_id_raises_a_described_error(self):
+        """Previously refused only by the UNIQUE constraint, i.e. a raw
+        sqlite3.IntegrityError with no indication of the cause."""
+        with self.assertRaises(ValueError) as caught:
+            self.db.add_branch("a")
+        self.assertIn("already exists", str(caught.exception))
+        self.assertNotIsInstance(caught.exception, sqlite3.IntegrityError)
+
+    def test_adding_under_a_missing_parent_raises_a_described_error(self):
+        """Previously refused only by the FOREIGN KEY, same problem."""
+        with self.assertRaises(ValueError) as caught:
+            self.db.add_branch("x", "no_such_parent")
+        self.assertIn("does not exist", str(caught.exception))
+        self.assertNotIsInstance(caught.exception, sqlite3.IntegrityError)
+
+        self.assertEqual(self.db.all_branch_ids(), ["a"])
+        self.assertEqual(self.db.current_branch_id, "a")
+
+    def test_the_valid_add_branch_paths_still_work(self):
+        # no parent given -> child of the current branch
+        self.db.add_branch("b")
+        self.assertEqual(self.db.get_branch_parent("b"), "a")
+        self.assertEqual(self.db.current_branch_id, "b")
+
+        # an explicit empty parent -> a second root
+        self.db.add_branch("r", "")
+        self.assertIsNone(self.db.get_branch_parent("r"))
 
     # -- guard 1: the branch must exist -----------------------------------
 

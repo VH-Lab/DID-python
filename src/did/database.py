@@ -51,10 +51,42 @@ class Database(abc.ABC):
         return self._do_get_branch_ids()
 
     def add_branch(self, branch_id, parent_branch_id=None):
+        """Add a branch, refusing the cases MATLAB refuses.
+
+        This was a bare delegate behind a "validation logic would go here"
+        placeholder. Two of MATLAB's three checks had a schema backstop, so
+        they were refused but only as a raw sqlite3.IntegrityError with no
+        indication of the cause: a duplicate BRANCH_ID by the UNIQUE
+        constraint, and a missing parent by the FOREIGN KEY.
+
+        The third had no backstop, and let two silent corruptions through:
+
+        - `add_branch("")` created a real branch whose id is empty and made it
+          current. Since "" is also the sentinel for *no* current branch, the
+          next add_branch read that parent, converted it to NULL, and silently
+          made the new branch a ROOT rather than its child.
+        - `add_branch(42)` stored '42' (TEXT affinity coerces it) but set
+          current_branch_id to the integer. SQLite never compares an integer
+          equal to a text value, so the current branch then named nothing:
+          get_doc_ids on it returned [] rather than raising.
+
+        If PARENT_BRANCH_ID is not given, the current branch is used. Passing
+        an explicit empty parent creates a root branch; see the add_branch
+        bridge entry for how that differs from MATLAB.
+        """
         if parent_branch_id is None:
             parent_branch_id = self.current_branch_id
 
-        # Validation logic would go here
+        # check_existence=False: this id is supposed NOT to exist yet.
+        branch_id, branch_ids = self._validate_branch_id(
+            branch_id, check_existence=False
+        )
+        if branch_id in branch_ids:
+            raise ValueError(f'Branch id "{branch_id}" already exists in the database')
+        if parent_branch_id and parent_branch_id not in branch_ids:
+            raise ValueError(
+                f'Parent branch id "{parent_branch_id}" does not exist in the database'
+            )
 
         self._do_add_branch(branch_id, parent_branch_id)
         self.current_branch_id = branch_id

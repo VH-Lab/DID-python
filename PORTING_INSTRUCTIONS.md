@@ -414,7 +414,7 @@ compare` and `fileCache` were ported 2026-08-29 and are no longer listed — see
 "exist_doc and ingestion at add time" below. The three issue #55 rows were
 ported 2026-08-30 and are no longer listed — see below. `freeze_branch` and
 `is_branch_editable` were ported 2026-08-30 with `delete_branch`'s guards —
-see "delete_branch's guards" below.)
+see "add_branch and delete_branch guards" below.)
 
 | MATLAB feature | Bridge file | Priority |
 |---|---|---|
@@ -504,7 +504,7 @@ MATLAB's `strcmpi`; it had been case-sensitive, so a MATLAB-written `Item_1`
 was unreachable from Python by `item_1`. Coverage is in
 `tests/test_dependency_lists.py` (23 tests); MATLAB has none for these methods.
 
-### `delete_branch`'s guards — ported 2026-08-30
+### `add_branch` and `delete_branch` guards — ported 2026-08-30
 
 `database.delete_branch` was a bare delegate behind a
 `# Validation logic would go here` placeholder, so none of MATLAB's three
@@ -528,11 +528,34 @@ parent and failed on the FOREIGN KEY. Both languages read those ids with the
 same unordered `SELECT DISTINCT branch_id FROM branches`, so the fallback picks
 the same branch in both.
 
+`add_branch` carried the same placeholder and was fixed alongside it. MATLAB
+checks three things there too — `branch_id` is a non-empty string, is not
+already taken, and the parent exists — and the 2026-08-28 note that the SQLite
+schema was a backstop "so the data stays correct" held for only two of them:
+
+- **Duplicate id** (UNIQUE) and **missing parent** (FOREIGN KEY) were refused,
+  but as a bare `sqlite3.IntegrityError`. Data correct.
+- **Empty or non-string id** had no backstop and was *accepted*.
+  `add_branch("")` created a branch whose id is empty and made it current —
+  and since `""` is also the sentinel for *no* current branch, the next
+  `add_branch` read that parent, converted it to `NULL`, and silently produced
+  a **root instead of a child**. `add_branch(42)` stored `'42'` by TEXT
+  affinity but set `current_branch_id` to the integer, and SQLite never
+  compares an integer equal to a text value, so the current branch named
+  nothing and `get_doc_ids` on it returned `[]` rather than raising.
+
+One `add_branch` difference is deliberate and remains: MATLAB treats an empty
+parent as "use the current branch", so once you are on a branch it cannot make
+a second root. Python distinguishes `None` ("use the current branch") from an
+explicit `""` ("no parent"), which is how a second root is created. Both agree
+on a fresh database, where the current branch is itself empty and the first
+`add_branch` makes a root.
+
 Python raises `ValueError` where MATLAB raises an identified error; that is
 this codebase's convention throughout, not a remaining gap. One line of
 MATLAB's is deliberately not mirrored — it drops the branch from
 `frozen_branch_ids` after deleting, which its own frozen guard has already made
-unreachable. Coverage: `tests/test_branch_guards.py` (12 tests).
+unreachable. Coverage: `tests/test_branch_guards.py` (17 tests).
 
 ## Re-audit of the remaining Low-priority items, 2026-08-28
 
