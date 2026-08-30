@@ -98,13 +98,13 @@ class TestAddDocsAtomicity(unittest.TestCase):
         # A doc already in docs (from branch 'a') added to a DIFFERENT branch is
         # a legitimate cross-branch add, not a duplicate, and must not raise.
         d = _make_doc("1" * 32)
+        # 'b' is created BEFORE the document is added to 'a', so it does not
+        # inherit it -- branch_docs rows are copied at creation time -- and the
+        # add below is a genuine cross-branch add. (This used a parentless
+        # branch until set_branch stopped accepting "", which is the only way
+        # to make one; a sibling works just as well here.)
+        self.db.add_branch("b", "a")
         self.db.add_docs([d], branch_id="a", validate=False)
-        # A root branch, so the document is not inherited and the add below
-        # is a genuine cross-branch add. An empty parent now means "the
-        # current branch", as in MATLAB, so the current branch is cleared
-        # first to get one with no parent at all.
-        self.db.set_branch("")
-        self.db.add_branch("b")
         self.db.add_docs([d], branch_id="b", validate=False)
         self.assertIn(d.id(), self.db.get_doc_ids("b"))
 

@@ -73,8 +73,9 @@ class Database(abc.ABC):
         An empty or omitted PARENT_BRANCH_ID means the current branch, exactly
         as in MATLAB, whose isempty() covers both [] and ''. A branch with no
         parent -- a root -- is therefore made only when there is no current
-        branch: on a fresh database, or after set_branch("") or deleting the
-        last branch. MATLAB has no other way to make one and neither has this.
+        branch: on a fresh database, or after delete_branch drops the last
+        one. set_branch cannot clear it (see there), so as in MATLAB there is
+        no way to add a second root to a database that already has one.
         """
         if not parent_branch_id:
             parent_branch_id = self.current_branch_id
@@ -94,11 +95,44 @@ class Database(abc.ABC):
         self.current_branch_id = branch_id
 
     def set_branch(self, branch_id):
-        # Validation logic would go here
+        """Set the current branch, refusing an id that does not exist.
+
+        Mirrors MATLAB, which calls validate_branch_id here. This was a bare
+        assignment behind a "validation logic would go here" placeholder, so a
+        typo was accepted and only surfaced later at the next add_docs
+        ("Branch '<id>' does not exist.") -- fail-deferred rather than
+        fail-silent, but reported at a different point than MATLAB reports it.
+
+        A consequence worth knowing, because it is inherited from MATLAB
+        rather than chosen here: an empty id is refused, so the current branch
+        cannot be cleared, and since add_branch reads an empty parent as "the
+        current branch", a root branch can only be created when there is no
+        current branch -- on a fresh database, or after delete_branch drops
+        the last one. Neither language can build a multi-root database through
+        the API. See VH-Lab/DID-matlab#165.
+        """
+        branch_id, _ = self._validate_branch_id(branch_id)
         self.current_branch_id = branch_id
 
     def get_branch(self):
         return self.current_branch_id
+
+    def display_branches(self, branch_id=None):
+        """Print the branch hierarchy under a branch, as MATLAB does.
+
+        If BRANCH_ID is empty or not given, the current branch is used.
+        Raises if it does not exist.
+        """
+        if not branch_id:
+            branch_id = self.current_branch_id
+        branch_id, _ = self._validate_branch_id(branch_id)
+
+        def show(bid, indent):
+            print(f"{'  ' * indent} - {bid}")
+            for sub_id in self.get_sub_branches(bid):
+                show(sub_id, indent + 1)
+
+        show(branch_id, 0)
 
     # ... other branch-related methods would follow ...
 
@@ -363,6 +397,54 @@ class Database(abc.ABC):
     @abc.abstractmethod
     def _do_get_branch_parent(self, branch_id):
         pass
+
+    def close_doc(self, file_obj):
+        """Close a file object previously returned by open_doc.
+
+        MATLAB's close_doc delegates to do_close_doc, whose default
+        implementation is a single file_obj.fclose(); there is no separate
+        _do_close_doc here because no implementation overrides it. Python's
+        file objects also close on garbage collection, so this is the explicit
+        call rather than a leak fix.
+        """
+        if file_obj is not None:
+            file_obj.fclose()
+
+    def get_preference_names(self):
+        """Names of every preference set on this object.
+
+        MATLAB returns a cell array; this returns a list. Empty when none
+        have been set.
+        """
+        return list(self.preferences.keys())
+
+    def get_preference(self, pref_name, *default_value):
+        """Value of a preference, or DEFAULT_VALUE if it was never set.
+
+        Mirrors MATLAB's three-argument form: with no default given, an unset
+        preference raises rather than returning None -- which is why the
+        default is *args rather than default=None. None is a legitimate stored
+        value, and the two cases have to stay distinguishable.
+        """
+        if not pref_name or not isinstance(pref_name, str):
+            raise ValueError("get_preference requires a valid preference name")
+        if len(default_value) > 1:
+            raise TypeError(
+                f"get_preference takes at most one default value, "
+                f"got {len(default_value)}"
+            )
+        try:
+            return self.preferences[pref_name]
+        except KeyError:
+            if default_value:
+                return default_value[0]
+            raise ValueError(f'Preference value "{pref_name}" is not defined') from None
+
+    def set_preference(self, pref_name, value=None):
+        """Set a preference. An omitted VALUE stores None, as MATLAB stores []."""
+        if not pref_name or not isinstance(pref_name, str):
+            raise ValueError("set_preference requires a valid preference name")
+        self.preferences[pref_name] = value
 
     def search(self, query_obj, branch_id=None):
         from .datastructures import field_search

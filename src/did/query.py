@@ -50,7 +50,13 @@ class Query:
         for i in range(0, len(search_cell_array), 2):
             field = search_cell_array[i]
             value = search_cell_array[i + 1]
-            op = "exact_number" if isinstance(value, (int, float)) else "regexp"
+            # MATLAB branches on ischar: a char gets 'regexp', everything
+            # else gets 'exact_number'. Branching on int/float instead sent a
+            # cell/list or struct/dict to 'regexp', where MATLAB sends it to
+            # 'exact_number'. Strings and numbers agreed either way; logicals
+            # agreed only because bool subclasses int, which this no longer
+            # relies on.
+            op = "regexp" if isinstance(value, str) else "exact_number"
             search_structure.append(
                 {"field": field, "operation": op, "param1": value, "param2": None}
             )

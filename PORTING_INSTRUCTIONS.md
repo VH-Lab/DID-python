@@ -264,10 +264,13 @@ MATLAB change to any of it would have gone unnoticed:
 | all six `PathConstants` properties | `PATH`, `DEFPATH`, `DEFINITIONS`, `temppath`, `filecachepath`, `preferences` |
 
 Writing these up surfaced two deviations that had never been recorded.
-`search_cell_array_to_search_structure` is a simplification: MATLAB dispatches
-on the value's MATLAB class, while Python picks `exact_number` for an int or
+`search_cell_array_to_search_structure` was a simplification: MATLAB dispatches
+on the value's MATLAB class, while Python picked `exact_number` for an int or
 float and `regexp` for everything else, so a cell/list, struct/dict or logical
-that MATLAB handles falls through to `regexp`. And `PathConstants` enforces
+that MATLAB handles fell through to `regexp`. *(Closed 2026-08-30, DID-python#53
+— Python now branches on `isinstance(value, str)` exactly as MATLAB branches on
+`ischar`. See "The last of the Not Yet Ported backlog" below.)* And
+`PathConstants` enforces
 writability with a `mustBeWritable` property validator in MATLAB, checked once
 at class load, versus a `@property` calling `must_be_writable()` on every read
 in Python.
@@ -278,6 +281,7 @@ no bridge entry, so the gap was recorded nowhere:
 - `database.get_preference_names` / `get_preference` / `set_preference`. Python
   has the `preferences` dict but no accessors, so preferences can only be
   reached by touching the attribute directly. Added to *Not Yet Ported* below.
+  *(Ported 2026-08-30, DID-python#53.)*
 - `database.findfilematch`. No port needed — `check_files` does the same
   matching inline through `is_filename_match` — but that reasoning was written
   down nowhere.
@@ -414,15 +418,19 @@ compare` and `fileCache` were ported 2026-08-29 and are no longer listed — see
 "exist_doc and ingestion at add time" below. The three issue #55 rows were
 ported 2026-08-30 and are no longer listed — see below. `freeze_branch` and
 `is_branch_editable` were ported 2026-08-30 with `delete_branch`'s guards —
-see "add_branch and delete_branch guards" below.)
+see "add_branch and delete_branch guards" below. `set_branch`'s validation
+(DID-python#52) and the four remaining backlog rows (DID-python#53) were ported
+2026-08-30 — see "set_branch, and the last of the Not Yet Ported backlog"
+below.)
 
 | MATLAB feature | Bridge file | Priority |
 |---|---|---|
-| `database.get_preference` / `set_preference` / `get_preference_names` — Python has the `preferences` dict but no accessors for it | bridge.yaml | Medium |
 | Remote (URL) file locations in `open_doc` — MATLAB uses `ndi.cloud.api.files.getFile`; Python would need `requests`/`urllib` | bridge_implementations.yaml | Low |
-| `database.display_branches` | bridge.yaml | Low |
-| `database.close_doc` | bridge.yaml | Low |
-| `query.searchcellarray2searchstructure` handles only numbers and strings; MATLAB also handles cells, structs and logicals | bridge.yaml | Low |
+
+That last row is the only one left, and it is a design question rather than an
+oversight: DID downloads nothing itself in either language, and Python hands a
+non-local location to `custom_file_handler`. Growing a `requests`/`urllib` path
+would be a new capability, not a port.
 
 ### Issue #55: what landed in MATLAB, and what is left here
 
@@ -556,20 +564,16 @@ Its own `add_branch_nodes` helper hits this: it positions with `set_branch` and
 adds with no explicit parent, so the second and later roots of a multi-root
 forest silently become children of whatever was added last.
 
-Python can still express it, because `set_branch` is still the unvalidated
-stub — which makes it, deliberately, the one branch stub left open after this
-change. `tests/helpers.py` `add_branch_nodes` uses `set_branch("")` for the
-roots of its forests. Porting `set_branch`'s validation would close a
-fail-deferred gap and at the same time remove multi-root creation from Python,
-so the real question is whether MATLAB should gain a way to clear the current
-branch — not whether Python should lose one. See the `set_branch` entry in
-`bridge.yaml`.
+Python could still express it at the time, because `set_branch` was still the
+unvalidated stub — which made it, deliberately, the one branch stub left open
+after that change. *(Resolved 2026-08-30 in favour of matching MATLAB; see
+"set_branch, and the last of the Not Yet Ported backlog" below.)*
 
 Python raises `ValueError` where MATLAB raises an identified error; that is
 this codebase's convention throughout, not a remaining gap. One line of
 MATLAB's is deliberately not mirrored — it drops the branch from
 `frozen_branch_ids` after deleting, which its own frozen guard has already made
-unreachable. Coverage: `tests/test_branch_guards.py` (17 tests).
+unreachable. Coverage: `tests/test_branch_guards.py` (22 tests).
 
 ## Re-audit of the remaining Low-priority items, 2026-08-28
 
@@ -611,7 +615,7 @@ carry a `# Validation logic would go here` placeholder where MATLAB validates:
 | Method | What actually happens |
 |---|---|
 | `delete_branch` | **Deleting a non-existent branch is a silent no-op.** No schema backstop, because there is no row to constrain. The sub-branch guard exists only as a FOREIGN KEY, raising `sqlite3.IntegrityError` where MATLAB raises `DID:Database:ParentBranch`. |
-| `set_branch` | Accepts a branch that does not exist; the error surfaces later at `add_docs`. MATLAB fails fast. Fail-deferred, not fail-silent. |
+| `set_branch` | Accepts a branch that does not exist; the error surfaces later at `add_docs`. MATLAB fails fast. Fail-deferred, not fail-silent. *(Closed 2026-08-30, DID-python#52.)* |
 | `add_branch` | Duplicate id and missing parent are caught by UNIQUE / FOREIGN KEY constraints, so data stays correct but the error type differs. |
 | `get_doc_ids` | Same placeholder; MATLAB validates the branch id first. |
 
@@ -645,6 +649,22 @@ stubbed methods, raising an identifier-carrying error as the validation port
 does. That closes the one genuinely silent failure (`delete_branch`), converts
 three constraint errors into MATLAB-matching identifiers, and makes
 `set_branch` fail fast — in one change with one set of tests.
+
+*Done for three of the four, in two steps: `_validate_branch_id` landed with
+`add_branch` and `delete_branch` in DID-python#51 (2026-08-30), and
+`set_branch` followed in DID-python#52 the same day. The identifier-carrying
+error was not adopted — these raise bare `ValueError`, as the rest of the branch
+and database surface does — so the cross-cutting identifier asymmetry above is
+still open, and is now a question about the whole surface rather than about
+these four methods.*
+
+***`get_doc_ids` is the fourth, and is still a stub.*** MATLAB's calls
+`validate_branch_id` (`database.m:413`); Python's still carries the placeholder
+and passes the id straight to `_do_get_doc_ids`, which returns `[]` for a branch
+that does not exist rather than raising. It was left out of #52 because #52 is
+about `set_branch`, and out of #51 because that PR was about the two branch
+mutators; `_validate_branch_id` is already there for it, so the port is two
+lines plus tests whenever it is wanted.
 
 ## The file cache — ported 2026-08-29
 
@@ -1287,3 +1307,80 @@ on-disk shape by hand — files rows present, ingested copy at
 One of its cases deletes the `files` rows and asserts the same document becomes
 unreadable, which is what demonstrates the table is load-bearing rather than
 incidental.
+
+## set_branch, and the last of the *Not Yet Ported* backlog — 2026-08-30
+
+Closes DID-python#52 (`set_branch`'s validation) and DID-python#53 (everything
+that was left in the *Not Yet Ported* table except the remote-download design
+question). They landed together because #52's consequence — that a second root
+branch becomes unconstructible — is what the multi-root discussion below turns
+on, and #53's `search_cell_array_to_search_structure` row is a one-line change
+in the same direction.
+
+### `set_branch` now validates, and multi-root databases are gone
+
+```python
+def set_branch(self, branch_id):
+    branch_id, _ = self._validate_branch_id(branch_id)
+    self.current_branch_id = branch_id
+```
+
+`_validate_branch_id` came with #51 and already did both halves of MATLAB's
+check: a non-empty string, and a branch that exists. So this is MATLAB's
+`set_branch` line for line, with `ValueError` in place of
+`DID:Database:InvalidBranch`.
+
+**The consequence is the interesting part.** Since #51, `add_branch` reads an
+empty parent as "the current branch", so a *root* branch is created only when
+there is no current branch. `set_branch("")` was the only way to arrange that
+deliberately, and it is now refused — in Python as it always was in MATLAB.
+What remains is:
+
+- the first branch of a fresh database, and
+- deleting the last branch, which resets `current_branch_id` to `""`.
+
+Both give you exactly one root at a time. **A database with two roots cannot be
+built through the API in either language.** Issue #52 listed three ways to
+resolve that; this is option 3, chosen because the standing instruction is to
+make Python like MATLAB, and because the alternative — teaching MATLAB to clear
+its current branch — is a new capability rather than a port.
+
+The schema still permits multi-root databases (`branches.parent_id` is
+nullable), and nothing here deletes one that already exists. The change is to
+what the *API* will construct.
+
+### The three callers that relied on it
+
+Each wanted "a branch that does not inherit the document", not a root as such:
+
+- `tests/test_add_docs_atomicity.py` and `tests/test_add_docs_file_handler.py`
+  now create the second branch as a **sibling, before the document exists**.
+  `branch_docs` rows are copied at `add_branch` time, so a branch created first
+  does not inherit a document added later — which is the property both tests
+  actually needed, and it is now stated in a comment rather than implied.
+- `tests/helpers.py` `add_branch_nodes` **refuses** a multi-root forest with a
+  `ValueError` naming the reason, rather than building one wrong. MATLAB's
+  helper raises `DID:Test:MultiRootTree` for the same input as of
+  VH-Lab/DID-matlab#165. `tests/test_branch.py` builds `make_tree(1, 4, 0.8, 10)`
+  — one root, matching MATLAB's `BranchTest`.
+
+That last point is worth stating plainly: the Python helper had the *same*
+latent bug as MATLAB's, and only Python's tests ever fired it, because
+DID-matlab's `BranchTest` happens to pass `1` for the root count. Building the
+forest silently made every root after the first a child of whatever was added
+last.
+
+### The backlog rows
+
+| Row | What landed |
+|---|---|
+| `get_preference` / `set_preference` / `get_preference_names` | All three, over the existing `preferences` dict. `get_preference(name, *default)` takes the default as a varargs, not `default=None`, so a stored `None` stays distinguishable from "not supplied" — with no default it raises, as MATLAB's `error('Preference value "%s" is not defined')` does. |
+| `display_branches` | Recursive indented print from a branch (default: the current one), through `get_sub_branches`. Validates its argument like MATLAB's. |
+| `close_doc` | The explicit `fclose()` MATLAB has. Python's file objects still close on garbage collection; what was missing was the call you can make yourself. |
+| `search_cell_array_to_search_structure` | Now branches on `isinstance(value, str)` exactly as MATLAB branches on `ischar`: a string gets `regexp`, everything else `exact_number`. Previously a list or dict fell through to `regexp` where MATLAB gives `exact_number`. Logicals agreed before and still agree, but now for a stated reason rather than because `bool` subclasses `int`. |
+
+The remote-download row is deliberately not closed; see the *Not Yet Ported*
+table above for why it is a design question rather than a gap.
+
+Coverage: `tests/test_ported_database_methods.py` (16 tests) and the five new
+cases in `tests/test_branch_guards.py`.

@@ -87,12 +87,28 @@ class TestBranchGuards(unittest.TestCase):
         self.assertEqual(self.db.get_branch_parent("c"), "a")
 
     def test_a_root_branch_needs_there_to_be_no_current_branch(self):
-        """Which is how the first branch of a fresh database is made, and the
-        only way MATLAB can make one either."""
-        self.db.set_branch("")
+        """Which is how the first branch of a fresh database is made, and --
+        now that set_branch cannot clear the current branch -- the only way
+        either language can make one at all."""
+        self.assertIsNone(self.db.get_branch_parent("a"))
+
+        # the only remaining route to "no current branch" is deleting the last
+        self.db.delete_branch("a")
+        self.assertEqual(self.db.current_branch_id, "")
+
         self.db.add_branch("r")
         self.assertIsNone(self.db.get_branch_parent("r"))
         self.assertEqual(self.db.current_branch_id, "r")
+
+    def test_a_second_root_cannot_be_added(self):
+        """Not a Python limitation: MATLAB cannot do it either, for the same
+        reason. Recorded so the constraint is visible rather than folklore.
+        See VH-Lab/DID-matlab#165."""
+        with self.assertRaises(ValueError):
+            self.db.set_branch("")  # the only way to ask for "no parent"
+
+        self.db.add_branch("b")
+        self.assertEqual(self.db.get_branch_parent("b"), "a")
 
     # -- guard 1: the branch must exist -----------------------------------
 
@@ -114,10 +130,33 @@ class TestBranchGuards(unittest.TestCase):
     def test_an_empty_id_with_no_current_branch_raises(self):
         """ "" and None mean "the current branch", which is only usable when
         there is one. With none set, the id really is empty."""
-        self.db.set_branch("")
+        self.db.delete_branch("a")  # leaves no current branch
         with self.assertRaises(ValueError) as caught:
             self.db.delete_branch()
         self.assertIn("non-empty string", str(caught.exception))
+
+    # -- set_branch -------------------------------------------------------
+
+    def test_set_branch_refuses_a_branch_that_does_not_exist(self):
+        """Previously accepted: current_branch_id was assigned whatever it was
+        given, and the mistake surfaced later at the next add_docs. MATLAB
+        fails fast here."""
+        with self.assertRaises(ValueError) as caught:
+            self.db.set_branch("no_such_branch")
+        self.assertIn("does not exist", str(caught.exception))
+        self.assertEqual(self.db.current_branch_id, "a")
+
+    def test_set_branch_refuses_an_empty_or_non_string_id(self):
+        for bad in ("", 42):
+            with self.assertRaises(ValueError) as caught:
+                self.db.set_branch(bad)
+            self.assertIn("non-empty string", str(caught.exception))
+        self.assertEqual(self.db.current_branch_id, "a")
+
+    def test_set_branch_still_moves_to_a_real_branch(self):
+        self.db.add_branch("b")  # current becomes 'b'
+        self.db.set_branch("a")
+        self.assertEqual(self.db.current_branch_id, "a")
 
     # -- guard 2: the branch must have no sub-branches ---------------------
 

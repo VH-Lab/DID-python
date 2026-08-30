@@ -222,6 +222,21 @@ def add_branch_nodes(db, starting_db_branch_id, g, node_names, node_start_index=
     if node_start_index is None:
         node_start_index = [n for n, d in g.in_degree() if d == 0]
 
+    # A forest with several roots cannot be built through the database API and
+    # must not be built wrong: an empty starting branch id leaves the current
+    # branch alone, and add_branch reads an empty parent as "the current
+    # branch", so the first root is a root and every root after it becomes a
+    # child of whatever was added last. set_branch cannot clear the current
+    # branch, so there is nothing to build it with. MATLAB's helper raises
+    # DID:Test:MultiRootTree for the same input; see VH-Lab/DID-matlab#165.
+    if not starting_db_branch_id and len(node_start_index) > 1:
+        raise ValueError(
+            f"Cannot add a {len(node_start_index)}-root forest: there is no way "
+            f"to create a second root branch, because set_branch cannot clear "
+            f"the current branch. Build the tree with make_tree(1, ...) so it "
+            f"has a single root. See VH-Lab/DID-matlab#165."
+        )
+
     q = [(starting_db_branch_id, n) for n in node_start_index]
     visited = set()
 
@@ -234,13 +249,11 @@ def add_branch_nodes(db, starting_db_branch_id, g, node_names, node_start_index=
         node_name = node_names[node]
 
         # Mirrors MATLAB's add_branch_nodes: position on the parent, then add
-        # with no explicit parent. An empty parent means "the current branch"
-        # in both languages now, so a root needs there to be no current
-        # branch -- hence the set_branch("") for the roots of the forest.
-        # (MATLAB's helper omits that, so its second and later roots become
-        # children of whatever was added last; its set_branch validates and
-        # would refuse "", so it has no way to express this.)
-        db.set_branch(parent_branch if parent_branch else "")
+        # with no explicit parent. A root is added with no positioning at all,
+        # which only works while the database has no current branch -- see the
+        # single-root check above.
+        if parent_branch:
+            db.set_branch(parent_branch)
         db.add_branch(node_name)
 
         children = list(g.successors(node))
