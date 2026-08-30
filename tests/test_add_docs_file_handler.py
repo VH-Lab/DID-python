@@ -239,15 +239,18 @@ class TestAddDocsCustomFileHandler(unittest.TestCase):
         """INSERT OR IGNORE: the ingested copy recorded first is kept."""
         handler, calls = self._recording_handler()
         doc = self._doc_with_location(NDIC, "ndicloud")
+
+        # 'b' is created BEFORE the document exists, so it does not inherit it
+        # -- branch_docs rows are copied at creation time -- and the add below
+        # is a genuine second add of the same document. (This used a parentless
+        # branch until set_branch stopped accepting "", which is the only way
+        # to make one; a sibling works just as well here.)
+        self.db.add_branch("b", "a")
+        self.db.set_branch("a")
+
         self.db.add_docs([doc], validate=False, custom_file_handler=handler)
         first = self._files_row(doc.id())["cached_location"]
 
-        # A branch with no parent, so the document is not copied into it and
-        # the add below is a genuine second add of the same document. An
-        # empty parent now means "the current branch", as in MATLAB, so the
-        # current branch is cleared first to get one with no parent at all.
-        self.db.set_branch("")
-        self.db.add_branch("b")
         self.db.add_docs(
             [doc], branch_id="b", validate=False, custom_file_handler=handler
         )

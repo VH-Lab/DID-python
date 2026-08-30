@@ -228,24 +228,31 @@ classes:
           set_branch. Fail-deferred rather than fail-silent, but the two
           languages report the mistake at different points.
 
-          Still open as of 2026-08-30, and now the load-bearing one of the
-          branch stubs. Deliberately NOT closed alongside add_branch and
-          delete_branch in DID-python#51, because it is the only remaining way
-          to express something MATLAB cannot do at all: MATLAB's set_branch
-          refuses '' (validate_branch_id rejects an empty id), so MATLAB has
-          no way to clear the current branch and therefore no way to create a
-          second root branch once it is on one. Python's stub accepts "", and
-          tests/helpers.py add_branch_nodes relies on that to build multi-root
-          forests.
+          CLOSED 2026-08-30 (DID-python#52). set_branch now validates through
+          _validate_branch_id, so a non-existent or empty id is refused here
+          rather than surfacing later at the next add_docs. ValueError, where
+          MATLAB raises DID:Database:InvalidBranch.
 
-          So porting this validation is not a pure win: it would close a
-          fail-deferred gap and simultaneously remove multi-root creation from
-          Python, matching a MATLAB limitation that MATLAB's own test helper
-          appears not to have noticed (its second and later roots become
-          children of whatever was added last). Worth deciding deliberately
-          rather than sweeping up with the other two -- the question is
-          whether MATLAB should gain a way to clear the current branch, not
-          whether Python should lose one.
+          The consequence was the reason this was held back, and it is now
+          settled rather than avoided: refusing '' means the current branch
+          cannot be cleared, and since add_branch reads an empty parent as
+          "the current branch", a root can only be created when there is no
+          current branch -- a fresh database, or after delete_branch drops the
+          last one. Neither language can add a second root to a database that
+          already has one. That is MATLAB's constraint, inherited on purpose.
+
+          The three Python callers that relied on the old stub to make a
+          parentless branch were changed rather than grandfathered:
+          tests/helpers.py add_branch_nodes now refuses a multi-root forest
+          exactly as MATLAB's does (VH-Lab/DID-matlab#165), test_branch builds
+          make_tree(1,...) matching MATLAB's BranchTest, and the two
+          add_docs suites create their second branch BEFORE the document
+          exists, so it does not inherit it -- a sibling serves the purpose a
+          root was serving.
+
+          Whether did.database should gain a way to make a root is still a
+          live question, and it is now the same question in both languages
+          rather than a divergence. It is recorded on VH-Lab/DID-matlab#165.
 
       - name: get_branch
         python_name: get_branch
@@ -348,13 +355,16 @@ classes:
           missing.
 
       - name: display_branches
-        python_name: ~   # not ported
+        python_name: display_branches
         input_arguments:
           - name: branch_id
             type_matlab: "char"
-            type_python: "(not implemented)"
+            type_python: "str (branch_id=None)"
         decision_log: >
-          Present in MATLAB. Not yet ported to Python.
+          PORTED 2026-08-30 (DID-python#53). Same recursive walk and the same
+          " - <id>" line with two spaces of indent per level, defaulting to
+          the current branch and validating the id. MATLAB disp()s; Python
+          print()s. Coverage: tests/test_ported_database_methods.py.
           Display/visualization helper.
 
       - name: all_doc_ids
@@ -537,13 +547,22 @@ classes:
           caller asked for: MATLAB's own do_open_doc would open such a file.
 
       - name: close_doc
-        python_name: ~   # not ported
+        python_name: close_doc
         input_arguments:
           - name: file_obj
             type_matlab: "did.file.fileobj"
-            type_python: "(not implemented)"
+            type_python: "Fileobj"
         decision_log: >
-          Present in MATLAB. Python relies on garbage collection / fclose.
+          PORTED 2026-08-30 (DID-python#53). MATLAB's close_doc delegates to
+          do_close_doc, whose default implementation is a single
+          file_obj.fclose(); no implementation overrides it, so there is no
+          separate _do_close_doc here and close_doc calls fclose directly. A
+          None argument is tolerated and a second call is a no-op, since
+          Fileobj.fclose already guards on fid.
+
+          Python's file objects still close on garbage collection, so this was
+          never a leak -- what was missing was the explicit call. Coverage:
+          tests/test_ported_database_methods.py.
 
       - name: validate_docs
         python_name: validate_docs
@@ -710,23 +729,34 @@ classes:
           no entry at all, so this was previously untracked.
 
       - name: get_preference_names
-        python_name: ~   # not ported
+        python_name: get_preference_names
         decision_log: >
-          Public MATLAB API with no Python counterpart. Python's Database has
-          the `preferences` dict but no accessors for it, so preferences can
-          only be manipulated by reaching into the attribute directly. Added
-          to the bridge 2026-08-28 -- previously untracked. See "Not Yet
-          Ported" in PORTING_INSTRUCTIONS.md.
+          PORTED 2026-08-30 (DID-python#53). MATLAB returns a cell array of
+          the keys; Python returns a list. Empty when nothing has been set.
+          The `preferences` dict had been here all along with no accessors, so
+          the only way to use it was to reach into the attribute.
 
       - name: get_preference
-        python_name: ~   # not ported
+        python_name: get_preference
         decision_log: >
-          Public MATLAB API with no Python counterpart. See
-          get_preference_names. Added to the bridge 2026-08-28.
+          PORTED 2026-08-30 (DID-python#53). Mirrors MATLAB's three-argument
+          form: an unset preference raises when no default is given, and
+          returns the default when one is.
+
+          The default is *args rather than default=None deliberately. MATLAB's
+          set_preference stores [] for a valueless call, so Python stores
+          None, and a stored None has to stay distinguishable from "never
+          set". A default=None signature would have collapsed the two and made
+          an unset preference silently return None instead of raising.
 
       - name: set_preference
-        python_name: ~   # not ported
+        python_name: set_preference
         decision_log: >
+          PORTED 2026-08-30 (DID-python#53). An omitted value stores None,
+          as MATLAB stores []. A non-string or empty name raises, as in MATLAB
+          (DID:Database:MissingPrefName / InvalidPrefName; ValueError here).
+
+          Superseded note:
           Public MATLAB API with no Python counterpart. MATLAB validates the
           preference name and value type on write; Python has nothing
           equivalent. Added to the bridge 2026-08-28.
@@ -1107,13 +1137,28 @@ classes:
         kind: static
         python_name: search_cell_array_to_search_structure
         decision_log: >
-          Added to the bridge 2026-08-28 -- ported but previously untracked,
-          which also left its deviation unrecorded. MATLAB builds the search
-          structure from a name/value cell array and dispatches on the value's
-          MATLAB class; Python's version is simplified, choosing
-          'exact_number' for an int or float and 'regexp' for everything else.
-          A value that is neither -- a cell/list, a struct/dict, a logical --
-          is handled by MATLAB but falls through to 'regexp' in Python.
+          CLOSED 2026-08-30 (DID-python#53). Python now branches on
+          isinstance(value, str), the direct equivalent of MATLAB's ischar:
+          a string gets 'regexp', everything else gets 'exact_number'.
+
+          Correcting the 2026-08-28 note, which described the deviation more
+          broadly than it was. Verified by running both branches over six
+          value types:
+
+          - str: regexp in both. Agreed.
+          - int, float: exact_number in both. Agreed.
+          - logical/bool: exact_number in both -- but only by accident, since
+            bool subclasses int in Python and so satisfied the old
+            isinstance(value, (int, float)) test. Now it agrees by rule.
+          - cell/list, struct/dict: exact_number in MATLAB, 'regexp' in the
+            old Python. This was the whole of the real divergence, and it was
+            silent: a different operator, not an error.
+
+          So it was never "handles only numbers and strings"; strings and
+          numbers always agreed. Coverage:
+          tests/test_ported_database_methods.py pins all six, including the
+          logical case, so a future rewrite of the branch cannot regress it by
+          accident.
 
       - name: searchstruct
         kind: static

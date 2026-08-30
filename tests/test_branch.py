@@ -18,7 +18,11 @@ class TestBranch(unittest.TestCase):
     def setUp(self):
         # Create a temporary working directory to run tests in
         self.db = SQLiteDB(self.DB_FILENAME)
-        self.g = make_tree(4, 3, 0.8, 10)
+        # A single root, matching MATLAB's BranchTest. A multi-root forest
+        # cannot be built through the API in either language, and
+        # add_branch_nodes now refuses one rather than building it wrong
+        # (VH-Lab/DID-matlab#165).
+        self.g = make_tree(1, 4, 0.8, 10)
         self.node_names = name_tree(self.g)
 
     def tearDown(self):
