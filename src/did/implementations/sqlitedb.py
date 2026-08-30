@@ -1,6 +1,7 @@
 import contextlib
 import os
 import re as _re
+import shutil
 import sqlite3
 import struct
 import warnings
@@ -477,34 +478,32 @@ class SQLiteDB(Database):
                     yield name, entry
 
     def _ingest_location(self, filename, entry, custom_file_handler):
-        """Retrieve a non-local location marked `ingest`; return its local path.
+        """Ingest a location marked `ingest`; return the local copy's path.
 
-        MATLAB's do_add_doc walks every location whose ``ingest`` flag is set,
-        puts a copy at ``<FileDir>/<uid>`` and records that path in
-        files.cached_location. DID downloads nothing itself: a location that is
-        not a local path goes to ``custom_file_handler(dest_path,
-        source_path)``, exactly as open_doc's remote pass does, and a
-        downstream package supplies the retrieval.
+        MATLAB's do_add_doc walks every location whose ``ingest`` flag is set
+        and puts a copy at ``<FileDir>/<uid>``, recording that path in
+        files.cached_location. A local location is copied; anything else is
+        handed to ``custom_file_handler(dest_path, source_path)``, exactly as
+        open_doc's remote pass does. DID downloads nothing itself -- a
+        downstream package supplies remote retrieval through the handler.
+
+        On success, ``delete_original`` deletes the source, as MATLAB does.
+        Never for a remote location: MATLAB guards that with a '://' check,
+        since a remote location is not ours to remove.
 
         Returns "" -- an empty cached_location -- when there is nothing to
-        retrieve or the retrieval failed. A failure warns rather than raises,
-        as MATLAB's does: the document is still added, its orig_location is
-        still recorded, and open_doc can retrieve the file later with a
-        handler. Failing the whole add would lose the document over a file
-        MATLAB is willing to add without.
-
-        A *local* location marked for ingestion is not copied here, and
-        delete_original is not honored; that gap predates the handler and is
-        recorded against do_add_doc in the bridge.
+        ingest or the ingest failed. A failure warns rather than raises, as
+        MATLAB's does: the document is still added, its orig_location is still
+        recorded, and open_doc can reach the file later. Failing the whole add
+        would lose the document over a file MATLAB is willing to add without.
         """
         location = str(entry.get("location", ""))
         uid = str(entry.get("uid", ""))
         if not entry.get("ingest") or not location or not uid:
             return ""
-        if not self._is_remote_location(location, entry.get("location_type")):
-            return ""
 
-        if custom_file_handler is None:
+        is_remote = self._is_remote_location(location, entry.get("location_type"))
+        if is_remote and custom_file_handler is None:
             warnings.warn(
                 f'The file "{filename}" location "{location}" is marked for '
                 f"ingestion but is not a local path, and no "
@@ -516,16 +515,32 @@ class SQLiteDB(Database):
             )
             return ""
 
-        dest_path = os.path.join(self._file_dir(), uid)
+        file_dir = self._file_dir()
+        dest_path = os.path.join(file_dir, uid)
+        # A relative location is rebased against the database directory, the
+        # same resolution open_doc uses -- otherwise a document written with a
+        # relative path would be ingested from the process's cwd.
+        source_path = location if is_remote else self._resolve_local(location)
+
+        if not is_remote and os.path.abspath(source_path) == os.path.abspath(dest_path):
+            # Already the ingested copy: adding the same document again (to a
+            # second branch, say) reaches this with the location rewritten to
+            # <FileDir>/<uid>. Copying a file onto itself fails, and honoring
+            # delete_original here would delete the only copy there is.
+            return dest_path
+
         try:
-            os.makedirs(self._file_dir(), exist_ok=True)
+            os.makedirs(file_dir, exist_ok=True)
             # Clear any earlier copy first, as open_doc does for its download:
             # otherwise a handler that produced nothing would be indis-
             # tinguishable from one that succeeded, and a stale file would be
             # recorded as this document's ingested copy.
             if os.path.exists(dest_path):
                 os.remove(dest_path)
-            custom_file_handler(dest_path, location)
+            if is_remote:
+                custom_file_handler(dest_path, location)
+            else:
+                shutil.copyfile(source_path, dest_path)
         except Exception as error:  # noqa: BLE001 - reported as a warning
             warnings.warn(
                 f'Failed to ingest "{filename}" from "{location}": {error}',
@@ -536,10 +551,23 @@ class SQLiteDB(Database):
         if not os.path.isfile(dest_path):
             warnings.warn(
                 f'Failed to ingest "{filename}" from "{location}": '
-                f'custom_file_handler did not produce a file at "{dest_path}"',
+                f'{"custom_file_handler did not produce a file" if is_remote else "no file was produced"} '
+                f'at "{dest_path}"',
                 stacklevel=2,
             )
             return ""
+
+        # Only now, with a copy safely in place. MATLAB deletes the original
+        # solely on the success branch, for the same reason.
+        if entry.get("delete_original") and not is_remote:
+            try:
+                os.remove(source_path)
+            except OSError as error:
+                warnings.warn(
+                    f'Ingested "{filename}" but could not delete the original '
+                    f'"{source_path}": {error}',
+                    stacklevel=2,
+                )
         return dest_path
 
     def _populate_files(self, cursor, doc_idx, document_obj, custom_file_handler=None):
