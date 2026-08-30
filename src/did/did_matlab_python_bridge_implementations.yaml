@@ -22,7 +22,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "6edd765"
+    matlab_last_sync_hash: "edb1a6b"
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
     inherits_matlab: "did.database"
@@ -83,6 +83,16 @@ classes:
       of the connection; 6edd765 restores it from an onCleanup. Python has
       no such fast path -- it never changes journal_mode (grep confirms no
       occurrence in did/) -- so there is nothing to restore.
+
+      MATLAB edb1a6b (2026-08-30) closed issue #55: a document removed from
+      its last branch is now removed completely. Reviewed 2026-08-30; no code
+      moved. The part that matters most was already here -- _do_remove_doc has
+      deleted the doc_data, files and docs rows since DID-python#39, in the
+      order MATLAB has now adopted -- so on the reclamation itself the two
+      languages agree exactly. Two MATLAB-only additions came with that commit
+      and are recorded as divergences on the do_remove_doc and do_add_doc
+      entries: deleting the ingested copies from disk, and retiring removed
+      document ids in a new deleted_docs table.
 
     properties:
       - name: FileDir
@@ -150,6 +160,12 @@ classes:
             cached_location, matching MATLAB. delete_original does not apply
             there: MATLAB explicitly skips deletion for a location containing
             '://', since a remote location is not ours to remove.
+
+          Added 2026-08-30: MATLAB edb1a6b also refuses a document whose id was
+          previously removed from every branch, raising
+          DID:SQLITEDB:DELETED_DOC after consulting the deleted_docs table
+          (issue #55). Python has neither the table nor the check, so re-adding
+          a removed id still succeeds here. See the do_remove_doc entry.
         input_arguments:
           - name: document_obj
             type_matlab: "did.document"
@@ -200,6 +216,29 @@ classes:
 
       - name: do_remove_doc
         python_name: _do_remove_doc
+        out_of_sync: true
+        out_of_sync_reason: >
+          The reclamation itself is in sync (see decision_log). What remains is
+          two things MATLAB edb1a6b added on top of it, neither of which exists
+          here:
+
+          - Cached files are not deleted from disk. When the last branch
+            reference goes, MATLAB reads files.cached_location for the document
+            and deletes each ingested copy before dropping the rows. Python
+            drops the rows and leaves the copies behind. This is not
+            hypothetical: remote ingestion (DID-python#42) writes to
+            FileDir/<uid> and records cached_location, and the two languages
+            share one cache directory (MATLAB d7ac853), so a removal here
+            orphans a file that MATLAB would have cleaned up.
+          - Removed document ids are not retired. MATLAB records the id in a
+            new deleted_docs table and refuses it on the way back in; Python
+            has neither the table nor the check, so a removed id can be added
+            again. See the do_add_doc entry.
+
+          Neither breaks reading across languages. deleted_docs is created on
+          demand and is not one of MATLAB's mandatory tables, so a
+          Python-written database opens in MATLAB unchanged, and MATLAB does
+          not write the table into one merely by reading it.
         input_arguments:
           - name: document_id
             type_matlab: "char"
@@ -208,20 +247,25 @@ classes:
             type_matlab: "char"
             type_python: "str"
         decision_log: >
-          NOT an exact match; recorded 2026-08-29, correcting the previous
-          "Exact match. Synchronized 2026-03-15." MATLAB deletes only the
-          branch_docs row and leaves the docs and doc_data rows in place,
-          behind a commented-out block and a "% TODO - remove all document
-          records if no branch references remain?". Python implements that
-          TODO: when the last branch reference goes, it deletes the doc_data,
-          files and docs rows too.
-          The divergence is deliberate -- an unreferenced document should not
-          keep occupying the database -- but it is the reason the files table
-          broke only Python. MATLAB never deletes the docs row its
-          FOREIGN KEY(doc_idx) points at, so it cannot hit the constraint;
-          Python does, and had to learn to clear the files rows first.
-          If MATLAB ever implements its TODO it needs the same three deletes
-          in the same order.
+          The table reclamation now matches exactly. Recorded 2026-08-30,
+          superseding the 2026-08-29 note that MATLAB left the docs and
+          doc_data rows in place behind a commented-out TODO. MATLAB edb1a6b
+          implements that TODO: when the last branch reference goes it deletes
+          the doc_data, files and docs rows -- the same three deletes, in the
+          same order, that _do_remove_doc runs, under the same guard (no
+          surviving branch_docs row for the document).
+
+          That order is what the two languages converged on, not where either
+          started. doc_data and files both carry
+          FOREIGN KEY(doc_idx) REFERENCES docs(doc_idx), so the docs row has to
+          go last. Python enforces it (PRAGMA foreign_keys = ON), which is why
+          the bug surfaced here first -- a document with an attached file
+          simply refused to be removed, fixed in DID-python#39. MATLAB sets no
+          such pragma, so both of its earlier drafts had the order wrong
+          harmlessly: main's commented sketch dropped docs while files rows
+          still pointed at it, and the stranded `sql` branch dropped docs
+          before doc_data. edb1a6b corrects the order anyway, so turning the
+          pragma on there stays a one-line change rather than a bug hunt.
 
       - name: search
         python_name: search

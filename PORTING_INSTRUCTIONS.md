@@ -422,6 +422,37 @@ compare` and `fileCache` were ported 2026-08-29 and are no longer listed — see
 | `database.display_branches` | bridge.yaml | Low |
 | `database.close_doc` | bridge.yaml | Low |
 | `query.searchcellarray2searchstructure` handles only numbers and strings; MATLAB also handles cells, structs and logicals | bridge.yaml | Low |
+| Deleting ingested copies from the file cache on removal — MATLAB's `do_remove_doc` deletes each `files.cached_location` from disk before dropping the rows (issue #55) | bridge_implementations.yaml | Medium |
+| Retiring removed document ids — MATLAB's `deleted_docs` table and the `DID:SQLITEDB:DELETED_DOC` refusal in `do_add_doc` (issue #55) | bridge_implementations.yaml | Medium |
+
+### Issue #55: what landed in MATLAB, and what is left here
+
+MATLAB `edb1a6b` (2026-08-30) closed DID-matlab issue #55, which asked for
+three things when a document is removed from its last branch: delete its cached
+files, delete its field data, and refuse the id if it is ever added back.
+
+The middle one was already done here and needed no port. `_do_remove_doc` has
+deleted the `doc_data`, `files` and `docs` rows since DID-python#39, and MATLAB
+adopted the same three deletes in the same order — dependents before the `docs`
+row they reference. Python is the language that enforces that order
+(`PRAGMA foreign_keys = ON`), which is why the ordering bug surfaced here first
+as a document with an attached file refusing to be removed.
+
+The other two are the rows added to the table above. Both are genuinely
+missing, not merely unreachable:
+
+- **Cached files.** Local ingestion is still not implemented here, so a
+  document added from Python usually has an empty `cached_location` and nothing
+  to clean up. But remote ingestion *is* implemented (DID-python#42), it writes
+  to `FileDir/<uid>`, and MATLAB `d7ac853` pointed both languages at one shared
+  cache directory. A removal from Python therefore orphans a file that a
+  removal from MATLAB would have deleted.
+- **Retired ids.** MATLAB records the id in a `deleted_docs` table and raises
+  `DID:SQLITEDB:DELETED_DOC` on a re-add. Nothing stops the same re-add here.
+
+Neither breaks reading a database across languages. `deleted_docs` is created
+on demand, is not one of MATLAB's mandatory tables, and MATLAB does not add it
+to a Python-written database merely by opening one.
 
 ### Enumerated dependency lists (`name_1`, `name_2`, ...) — ported 2026-08-28
 
