@@ -17,3 +17,7 @@ DID-matlab/
 
 # MkDocs
 site/
+# Test detritus: the FileDir a test database ingests into (tests/*.sqlite ->
+# tests/files/<uid>), plus the databases themselves.
+tests/files/
+tests/*.sqlite
