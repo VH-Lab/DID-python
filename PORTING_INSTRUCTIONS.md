@@ -422,6 +422,52 @@ compare` and `fileCache` were ported 2026-08-29 and are no longer listed — see
 | `database.display_branches` | bridge.yaml | Low |
 | `database.close_doc` | bridge.yaml | Low |
 | `query.searchcellarray2searchstructure` handles only numbers and strings; MATLAB also handles cells, structs and logicals | bridge.yaml | Low |
+| Deleting ingested copies from the file cache on removal — MATLAB's `do_remove_doc` deletes each `files.cached_location` from disk before dropping the rows (issue #55) | bridge_implementations.yaml | Medium |
+| Retiring removed document ids — MATLAB's `deleted_docs` table and the `DID:SQLITEDB:DELETED_DOC` refusal in `do_add_doc` (issue #55) | bridge_implementations.yaml | Medium |
+| Reclaiming documents orphaned by a branch deletion — MATLAB's `do_delete_branch` runs the same reclamation as `do_remove_doc`; Python's drops the branch rows and stops (issue #55) | bridge_implementations.yaml | Medium |
+
+### Issue #55: what landed in MATLAB, and what is left here
+
+MATLAB `edb1a6b` (2026-08-30) closed DID-matlab issue #55, which asked for
+three things when a document is removed from its last branch: delete its cached
+files, delete its field data, and refuse the id if it is ever added back.
+
+The middle one was already done here and needed no port. `_do_remove_doc` has
+deleted the `doc_data`, `files` and `docs` rows since DID-python#39, and MATLAB
+adopted the same three deletes in the same order — dependents before the `docs`
+row they reference. Python is the language that enforces that order
+(`PRAGMA foreign_keys = ON`), which is why the ordering bug surfaced here first
+as a document with an attached file refusing to be removed.
+
+The other two are rows in the table above. Both are genuinely missing, not
+merely unreachable:
+
+- **Cached files.** Both ingestion paths are implemented here now — remote in
+  DID-python#42, local in DID-python#45 — so any location marked `ingest` is
+  copied to `FileDir/<uid>` and recorded in `cached_location`, exactly as in
+  MATLAB. `d7ac853` pointed both languages at one shared cache directory. A
+  removal from Python therefore leaves a file behind that the same removal from
+  MATLAB deletes, in a directory both of them read. This is the more pressing
+  of the two rows: it now applies to ordinary documents, not just remote ones.
+- **Retired ids.** MATLAB records the id in a `deleted_docs` table and raises
+  `DID:SQLITEDB:DELETED_DOC` on a re-add. Nothing stops the same re-add here.
+
+Neither breaks reading a database across languages. `deleted_docs` is created
+on demand, is not one of MATLAB's mandatory tables, and MATLAB does not add it
+to a Python-written database merely by opening one.
+
+A third row was added when MATLAB `a0bb373` finished the issue. `do_remove_doc`
+is not the only way a document comes to be referenced by no branch — deleting a
+branch is the other, and MATLAB now runs the same reclamation there.
+`_do_delete_branch` here still drops the `branch_docs` and `branches` rows and
+stops, so a branch deleted from Python leaves behind documents no branch
+references, with their field data and their ingested files.
+
+Whoever ports it should carry the guard, not just the deletes: the reclamation
+fires only when **no** `branch_docs` row for the document survives anywhere, so
+a document that any other branch still holds is left alone. That is what makes
+it safe under DID's branch model, where deleting documents from one branch does
+not delete them from others.
 
 ### Enumerated dependency lists (`name_1`, `name_2`, ...) — ported 2026-08-28
 
