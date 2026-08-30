@@ -233,7 +233,15 @@ def add_branch_nodes(db, starting_db_branch_id, g, node_names, node_start_index=
 
         node_name = node_names[node]
 
-        db.add_branch(node_name, parent_branch_id=parent_branch)
+        # Mirrors MATLAB's add_branch_nodes: position on the parent, then add
+        # with no explicit parent. An empty parent means "the current branch"
+        # in both languages now, so a root needs there to be no current
+        # branch -- hence the set_branch("") for the roots of the forest.
+        # (MATLAB's helper omits that, so its second and later roots become
+        # children of whatever was added last; its set_branch validates and
+        # would refuse "", so it has no way to express this.)
+        db.set_branch(parent_branch if parent_branch else "")
+        db.add_branch(node_name)
 
         children = list(g.successors(node))
         for child in children:

@@ -412,14 +412,14 @@ compare` and `fileCache` were ported 2026-08-29 and are no longer listed — see
 "The file cache" below. `database.exist_doc` and `add_docs`'
 `customFileHandler` were ported 2026-08-30 and are no longer listed — see
 "exist_doc and ingestion at add time" below. The three issue #55 rows were
-ported 2026-08-30 and are no longer listed — see below.)
+ported 2026-08-30 and are no longer listed — see below. `freeze_branch` and
+`is_branch_editable` were ported 2026-08-30 with `delete_branch`'s guards —
+see "add_branch and delete_branch guards" below.)
 
 | MATLAB feature | Bridge file | Priority |
 |---|---|---|
 | `database.get_preference` / `set_preference` / `get_preference_names` — Python has the `preferences` dict but no accessors for it | bridge.yaml | Medium |
 | Remote (URL) file locations in `open_doc` — MATLAB uses `ndi.cloud.api.files.getFile`; Python would need `requests`/`urllib` | bridge_implementations.yaml | Low |
-| `database.freeze_branch` | bridge.yaml | Low |
-| `database.is_branch_editable` | bridge.yaml | Low |
 | `database.display_branches` | bridge.yaml | Low |
 | `database.close_doc` | bridge.yaml | Low |
 | `query.searchcellarray2searchstructure` handles only numbers and strings; MATLAB also handles cells, structs and logicals | bridge.yaml | Low |
@@ -504,6 +504,73 @@ MATLAB's `strcmpi`; it had been case-sensitive, so a MATLAB-written `Item_1`
 was unreachable from Python by `item_1`. Coverage is in
 `tests/test_dependency_lists.py` (23 tests); MATLAB has none for these methods.
 
+### `add_branch` and `delete_branch` guards — ported 2026-08-30
+
+`database.delete_branch` was a bare delegate behind a
+`# Validation logic would go here` placeholder, so none of MATLAB's three
+guards existed:
+
+1. **Branch must exist.** Deleting a non-existent branch was a *silent no-op* —
+   nothing raised, nothing changed. Unlike the other two this had no schema
+   backstop, since there is no row to constrain.
+2. **Branch must have no sub-branches.** Enforced only by the SQLite FOREIGN
+   KEY, so it surfaced as a raw `sqlite3.IntegrityError` with no indication of
+   the cause, where MATLAB raises `DID:Database:ParentBranch`.
+3. **Branch must not be frozen.** Nothing to enforce, because `freeze_branch`
+   had no counterpart. Both it and `is_branch_editable` are ported here for
+   that reason.
+
+A fourth thing came with them: MATLAB moves `current_branch_id` off a branch it
+just deleted, falling back to the first of the branch ids read *before* the
+delete, or to none if that was the branch deleted. Python left it naming a
+branch that no longer existed, so the next `add_branch` inherited a dangling
+parent and failed on the FOREIGN KEY. Both languages read those ids with the
+same unordered `SELECT DISTINCT branch_id FROM branches`, so the fallback picks
+the same branch in both.
+
+`add_branch` carried the same placeholder and was fixed alongside it. MATLAB
+checks three things there too — `branch_id` is a non-empty string, is not
+already taken, and the parent exists — and the 2026-08-28 note that the SQLite
+schema was a backstop "so the data stays correct" held for only two of them:
+
+- **Duplicate id** (UNIQUE) and **missing parent** (FOREIGN KEY) were refused,
+  but as a bare `sqlite3.IntegrityError`. Data correct.
+- **Empty or non-string id** had no backstop and was *accepted*.
+  `add_branch("")` created a branch whose id is empty and made it current —
+  and since `""` is also the sentinel for *no* current branch, the next
+  `add_branch` read that parent, converted it to `NULL`, and silently produced
+  a **root instead of a child**. `add_branch(42)` stored `'42'` by TEXT
+  affinity but set `current_branch_id` to the integer, and SQLite never
+  compares an integer equal to a text value, so the current branch named
+  nothing and `get_doc_ids` on it returned `[]` rather than raising.
+
+The empty-parent case matches too. MATLAB reads an empty parent as "use the
+current branch" (`isempty` covers `[]` and `''`); Python had distinguished
+them, taking an explicit `""` as "no parent". Both now mean the current
+branch, so a root is made only when there is no current branch.
+
+**That inherits a MATLAB limitation worth knowing about.** MATLAB's
+`set_branch` validates its argument and refuses `''`, so MATLAB cannot clear
+the current branch and therefore cannot create a second root once it is on one.
+Its own `add_branch_nodes` helper hits this: it positions with `set_branch` and
+adds with no explicit parent, so the second and later roots of a multi-root
+forest silently become children of whatever was added last.
+
+Python can still express it, because `set_branch` is still the unvalidated
+stub — which makes it, deliberately, the one branch stub left open after this
+change. `tests/helpers.py` `add_branch_nodes` uses `set_branch("")` for the
+roots of its forests. Porting `set_branch`'s validation would close a
+fail-deferred gap and at the same time remove multi-root creation from Python,
+so the real question is whether MATLAB should gain a way to clear the current
+branch — not whether Python should lose one. See the `set_branch` entry in
+`bridge.yaml`.
+
+Python raises `ValueError` where MATLAB raises an identified error; that is
+this codebase's convention throughout, not a remaining gap. One line of
+MATLAB's is deliberately not mirrored — it drops the branch from
+`frozen_branch_ids` after deleting, which its own frozen guard has already made
+unreachable. Coverage: `tests/test_branch_guards.py` (17 tests).
+
 ## Re-audit of the remaining Low-priority items, 2026-08-28
 
 Every remaining item was retested rather than taken on trust, since the
@@ -512,12 +579,13 @@ evidence.
 
 ### Confirmed Low, with the evidence that was missing
 
-- **`freeze_branch` / `is_branch_editable`** — MATLAB's `frozen_branch_ids` is
-  an in-memory property never written to the database, enforced in exactly one
-  place (`delete_branch`). A freeze does not survive a session and cannot cross
-  languages, so this is an absent feature, not a divergence. The sub-branch
-  half of `is_branch_editable` is upheld in Python by a SQLite FOREIGN KEY
-  anyway; what is missing is the ability to *ask* before trying.
+- **`freeze_branch` / `is_branch_editable`** — *superseded 2026-08-30; both are
+  now ported. See "delete_branch's guards" below.* The 2026-08-28 reasoning
+  still holds as far as it went: `frozen_branch_ids` is an in-memory property
+  never written to the database, enforced in exactly one place
+  (`delete_branch`), so a freeze does not survive a session and cannot cross
+  languages. What that missed is that the one place it is enforced was itself
+  unported, so ranking these Low left `delete_branch` with nothing to refuse.
 - **`close_doc`** — a thin delegate to `do_close_doc`. Python's file objects
   close on garbage collection.
 - **`display_branches` / `display_branch`** — display helpers, no data effect.

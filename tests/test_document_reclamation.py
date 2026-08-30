@@ -224,12 +224,15 @@ class TestDocumentReclamation(unittest.TestCase):
         for path in cached:
             self.assertFalse(os.path.isfile(path), f"must be deleted: {path}")
 
+        # Deleting the last branch left no current branch, so the new one is
+        # a root. (Before delete_branch grew MATLAB's guards this had to pass
+        # an explicit empty parent, because current_branch_id still named the
+        # deleted branch and add_branch inherited it.)
+        self.assertEqual(self.db.current_branch_id, "")
+
         # ...and its id is retired, as when remove_docs drops the last
-        # reference. The parent is given explicitly because Python's
-        # delete_branch does not reset current_branch_id the way MATLAB's
-        # does, so it still names the branch just deleted -- a separate
-        # divergence, noted on the delete_branch bridge entry, not this one.
-        self.db.add_branch("b", "")
+        # reference
+        self.db.add_branch("b")
         with self.assertRaises(ValueError):
             self.db._do_add_doc(doc, "b")
 
