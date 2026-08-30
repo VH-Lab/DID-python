@@ -179,6 +179,11 @@ class SQLiteDB(Database):
             )
         """)
 
+        # Create deleted_docs table
+        # Ids of documents that were removed from their last branch. These are
+        # never re-used -- see _do_add_doc (DID-matlab issue #55).
+        self._create_deleted_docs_table(cursor)
+
         self.dbid.commit()
 
     def do_run_sql_query(self, query_str, params=()):
@@ -376,6 +381,25 @@ class SQLiteDB(Database):
         cursor.execute("SELECT 1 FROM branches WHERE branch_id = ?", (branch_id,))
         if not cursor.fetchone():
             raise ValueError(f"Branch '{branch_id}' does not exist.")
+
+        # A document id that was removed from its last branch is retired for
+        # good and cannot be used again (DID-matlab issue #55, where MATLAB
+        # raises DID:SQLITEDB:DELETED_DOC; ValueError is this class's
+        # convention for the same kind of refusal).
+        #
+        # The reason here is not the one the issue gives. MATLAB re-used ids
+        # kept their old doc_data rows, so a re-added document silently
+        # inherited stale field values; that never happened in Python, which
+        # has reclaimed those rows since #39. Ids are retired here because
+        # they must not be re-used under DID's branch model, and because both
+        # languages have to agree about whether this is legal on a database
+        # file they share.
+        if self._is_deleted_doc_id(cursor, doc_id):
+            raise ValueError(
+                f"Cannot add document '{doc_id}' - a document with this id was "
+                f"previously removed from every branch. Document ids are never "
+                f"re-used; generate a new id for a new document."
+            )
 
         # Snapshot the fields cache so a rollback also unwinds any field_idx
         # entries _populate_doc_data added for fields whose INSERTs get rolled
@@ -1289,6 +1313,107 @@ class SQLiteDB(Database):
             return None
         return cache.full_path(name)
 
+    @staticmethod
+    def _create_deleted_docs_table(cursor):
+        """Create the `deleted_docs` table (DID-matlab issue #55)."""
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deleted_docs (
+                doc_id TEXT NOT NULL UNIQUE,
+                timestamp REAL,
+                PRIMARY KEY(doc_id)
+            )
+        """)
+
+    @staticmethod
+    def _has_deleted_docs_table(cursor):
+        """Does this database carry a `deleted_docs` table?
+
+        The table arrived with DID-matlab issue #55, so a database written by
+        an earlier DID -- in either language -- does not have one. Its absence
+        is never an error: it simply means no document has been permanently
+        removed from it yet. MATLAB takes the same view, and neither language
+        adds the table to a database merely by reading it.
+        """
+        cursor.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'deleted_docs'"
+        )
+        return cursor.fetchone() is not None
+
+    def _is_deleted_doc_id(self, cursor, doc_id):
+        """Was a document with this id permanently removed?"""
+        if not self._has_deleted_docs_table(cursor):
+            return False
+        cursor.execute("SELECT doc_id FROM deleted_docs WHERE doc_id = ?", (doc_id,))
+        return cursor.fetchone() is not None
+
+    def _record_deleted_doc_id(self, cursor, doc_id):
+        """Retire a document id, so that it is never re-used.
+
+        Creates the table on demand rather than at open, so that merely
+        reading a database written by an earlier DID never writes to it.
+        OR IGNORE: recording an id that is already retired is a no-op, not a
+        UNIQUE-constraint failure.
+        """
+        import time
+
+        if not self._has_deleted_docs_table(cursor):
+            self._create_deleted_docs_table(cursor)
+        cursor.execute(
+            "INSERT OR IGNORE INTO deleted_docs (doc_id, timestamp) VALUES (?, ?)",
+            (doc_id, time.time()),
+        )
+
+    def _reclaim_unreferenced_doc(self, cursor, doc_idx, doc_id):
+        """Erase every trace of a document no branch references any more.
+
+        Called once the last branch_docs row for DOC_IDX is gone, from both
+        paths that can orphan a document: _do_remove_doc and
+        _do_delete_branch. Deletes the doc_data, files and docs rows and
+        retires DOC_ID (DID-matlab issue #55).
+
+        The delete order matters: doc_data and files both carry
+        FOREIGN KEY(doc_idx) REFERENCES docs(doc_idx), and with
+        PRAGMA foreign_keys = ON the docs delete is refused while any of them
+        survives. MATLAB runs the same three deletes in the same order.
+
+        Returns the ingested copies' paths for the caller to unlink AFTER the
+        transaction commits. MATLAB deletes them before the rows, but it runs
+        no transaction; here, unlinking first would mean a later SQL failure
+        rolled the rows back with the files already gone. Deleting them after
+        the commit can at worst leave an orphaned file, which is recoverable.
+        """
+        cursor.execute(
+            "SELECT cached_location FROM files WHERE doc_idx = ?", (doc_idx,)
+        )
+        # Materialize before reusing the cursor for the deletes below.
+        cached_paths = [
+            row["cached_location"]
+            for row in cursor.fetchall()
+            if row["cached_location"]
+        ]
+
+        cursor.execute("DELETE FROM doc_data WHERE doc_idx = ?", (doc_idx,))
+        cursor.execute("DELETE FROM files WHERE doc_idx = ?", (doc_idx,))
+        cursor.execute("DELETE FROM docs WHERE doc_idx = ?", (doc_idx,))
+
+        self._record_deleted_doc_id(cursor, doc_id)
+        return cached_paths
+
+    @staticmethod
+    def _remove_cached_files(paths):
+        """Delete ingested copies from disk, ignoring ones already gone.
+
+        A file that is not there is not a failure: the point is that it must
+        not be there afterwards. MATLAB suppresses the same case by turning
+        off MATLAB:DELETE:FileNotFound around its delete() loop.
+        """
+        for path in paths:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
     def _do_remove_doc(self, document_id, branch_id, **kwargs):
         cursor = self.dbid.cursor()
 
@@ -1303,6 +1428,7 @@ class SQLiteDB(Database):
 
         if row:
             doc_idx = row["doc_idx"]
+            cached_paths = []
             try:
                 # Remove from branch_docs
                 cursor.execute(
@@ -1310,20 +1436,17 @@ class SQLiteDB(Database):
                     (branch_id, doc_idx),
                 )
 
-                # Optional: remove from docs, doc_data and files if no other
-                # branches reference it. The files rows have to go first: they
-                # carry FOREIGN KEY(doc_idx) REFERENCES docs(doc_idx), and with
-                # PRAGMA foreign_keys = ON the docs delete is refused while any
-                # of them survives -- so before this, no document carrying a
-                # file could be removed at all.
+                # If no branch references this document any more, it is gone
+                # for good, so nothing of it should be left behind: its rows,
+                # its ingested files and its id all go.
                 cursor.execute(
                     "SELECT COUNT(*) FROM branch_docs WHERE doc_idx = ?", (doc_idx,)
                 )
                 count = cursor.fetchone()[0]
                 if count == 0:
-                    cursor.execute("DELETE FROM doc_data WHERE doc_idx = ?", (doc_idx,))
-                    cursor.execute("DELETE FROM files WHERE doc_idx = ?", (doc_idx,))
-                    cursor.execute("DELETE FROM docs WHERE doc_idx = ?", (doc_idx,))
+                    cached_paths = self._reclaim_unreferenced_doc(
+                        cursor, doc_idx, document_id
+                    )
 
                 self.dbid.commit()
             except Exception:
@@ -1332,6 +1455,9 @@ class SQLiteDB(Database):
                 # next commit on this connection to pick up.
                 self.dbid.rollback()
                 raise
+
+            # Only once the rows are committed - see _reclaim_unreferenced_doc.
+            self._remove_cached_files(cached_paths)
         else:
             # Handle missing document
             on_missing = kwargs.get("OnMissing", "error").lower()
@@ -1341,10 +1467,48 @@ class SQLiteDB(Database):
                 raise ValueError(f"Document id '{document_id}' not found for removal.")
 
     def _do_delete_branch(self, branch_id):
+        """Delete a branch, reclaiming any document it was the last to hold.
+
+        Deleting a branch is the second way a document comes to be referenced
+        by no branch at all, so it owes the same clean-up _do_remove_doc does
+        (DID-matlab issue #55). The guard is the same test - no surviving
+        branch_docs row anywhere - so a document that any other branch still
+        holds is left completely alone. Deleting documents from one branch
+        does not delete them from other branches.
+        """
         cursor = self.dbid.cursor()
-        cursor.execute("DELETE FROM branch_docs WHERE branch_id = ?", (branch_id,))
-        cursor.execute("DELETE FROM branches WHERE branch_id = ?", (branch_id,))
-        self.dbid.commit()
+        cached_paths = []
+        try:
+            # Note which documents this branch holds BEFORE dropping its rows:
+            # afterwards nothing leads from the branch back to them.
+            cursor.execute(
+                "SELECT docs.doc_idx AS doc_idx, docs.doc_id AS doc_id "
+                "FROM docs, branch_docs "
+                "WHERE docs.doc_idx = branch_docs.doc_idx "
+                "AND branch_docs.branch_id = ?",
+                (branch_id,),
+            )
+            held = [(row["doc_idx"], row["doc_id"]) for row in cursor.fetchall()]
+
+            cursor.execute("DELETE FROM branch_docs WHERE branch_id = ?", (branch_id,))
+            cursor.execute("DELETE FROM branches WHERE branch_id = ?", (branch_id,))
+
+            for doc_idx, doc_id in held:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM branch_docs WHERE doc_idx = ?", (doc_idx,)
+                )
+                if cursor.fetchone()[0] == 0:
+                    cached_paths.extend(
+                        self._reclaim_unreferenced_doc(cursor, doc_idx, doc_id)
+                    )
+
+            self.dbid.commit()
+        except Exception:
+            self.dbid.rollback()
+            raise
+
+        # Only once the rows are committed - see _reclaim_unreferenced_doc.
+        self._remove_cached_files(cached_paths)
 
     def _do_get_sub_branches(self, branch_id):
         rows = self.do_run_sql_query(
