@@ -150,9 +150,18 @@ class Database(abc.ABC):
         return self._do_get_doc_ids()
 
     def get_doc_ids(self, branch_id=None):
-        if branch_id is None:
+        """Ids of the documents on a branch, defaulting to the current one.
+
+        The guard is ``not branch_id``, not ``is None``: MATLAB's isempty()
+        covers both [] and '', and the difference was not cosmetic here. An
+        explicit "" used to reach _do_get_doc_ids, whose own guard is
+        truthiness, so the branch filter was dropped and the all-branches
+        query ran -- get_doc_ids("") returned every document in the database
+        rather than the current branch's. See issue #55.
+        """
+        if not branch_id:
             branch_id = self.current_branch_id
-        # Validation logic would go here
+        branch_id, _ = self._validate_branch_id(branch_id)
         return self._do_get_doc_ids(branch_id)
 
     def validate_docs(self, document_objs):
@@ -200,7 +209,13 @@ class Database(abc.ABC):
         ``ingest`` defaults to 0 for ``url`` and ``ndicloud``. The spelling is
         snake_case to match ``open_doc``'s parameter of the same contract.
         """
-        if branch_id is None:
+        # MATLAB's isempty() covers both [] and '', so "" means the current
+        # branch here too. It is deliberately NOT validated: MATLAB's add_docs
+        # is the one branch-taking method that does not call
+        # validate_branch_id, leaving _do_add_doc's insert to refuse a branch
+        # that does not exist -- which it does, and which
+        # tests/test_add_docs_atomicity.py pins.
+        if not branch_id:
             branch_id = self.current_branch_id
 
         # Reject invalid OnDuplicate up front (mirror MATLAB mustBeMember) so a
@@ -284,8 +299,9 @@ class Database(abc.ABC):
         if not isinstance(document_ids, list):
             document_ids = [document_ids]
 
-        if branch_id is None:
+        if not branch_id:
             branch_id = self.current_branch_id
+        branch_id, _ = self._validate_branch_id(branch_id)
 
         for doc_id in document_ids:
             self._do_remove_doc(doc_id, branch_id, **kwargs)
@@ -381,8 +397,9 @@ class Database(abc.ABC):
         pass
 
     def get_sub_branches(self, branch_id=None):
-        if branch_id is None:
+        if not branch_id:
             branch_id = self.current_branch_id
+        branch_id, _ = self._validate_branch_id(branch_id)
         return self._do_get_sub_branches(branch_id)
 
     @abc.abstractmethod
@@ -390,8 +407,9 @@ class Database(abc.ABC):
         pass
 
     def get_branch_parent(self, branch_id=None):
-        if branch_id is None:
+        if not branch_id:
             branch_id = self.current_branch_id
+        branch_id, _ = self._validate_branch_id(branch_id)
         return self._do_get_branch_parent(branch_id)
 
     @abc.abstractmethod
@@ -449,8 +467,9 @@ class Database(abc.ABC):
     def search(self, query_obj, branch_id=None):
         from .datastructures import field_search
 
-        if branch_id is None:
+        if not branch_id:
             branch_id = self.current_branch_id
+        branch_id, _ = self._validate_branch_id(branch_id)
 
         doc_ids = self.get_doc_ids(branch_id)
         docs = self.get_docs(doc_ids, OnMissing="ignore")

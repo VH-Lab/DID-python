@@ -271,7 +271,8 @@ classes:
         output_arguments:
           - name: parent_id
             type_python: "str"
-        decision_log: "Exact match. Synchronized 2026-03-15."
+        decision_log: >
+          Exact match. Synchronized 2026-08-30 (issue #55): the branch guard is now ``not branch_id``, matching MATLAB's isempty() over both [] and '', and the id is validated as MATLAB validates it. Previously guarded with ``is None``, so an explicit "" reached the _do_* layer and each method decided for itself what a falsy id meant. Here "" returned the parent of nothing.
 
       - name: get_sub_branches
         python_name: get_sub_branches
@@ -282,7 +283,9 @@ classes:
         output_arguments:
           - name: sub_branch_ids
             type_python: "list[str]"
-        decision_log: "Exact match. Synchronized 2026-03-15."
+        decision_log: >
+          Exact match. Synchronized 2026-08-30 (issue #55): the branch guard is now ``not branch_id``, matching MATLAB's isempty() over both [] and '', and the id is validated as MATLAB validates it. Previously guarded with ``is None``, so an explicit "" reached the _do_* layer and each method decided for itself what a falsy id meant. Here "" matched no parent_id and returned [],
+          where MATLAB returns the current branch's children.
 
       - name: delete_branch
         python_name: delete_branch
@@ -377,10 +380,6 @@ classes:
 
       - name: get_doc_ids
         python_name: get_doc_ids
-        deviation_note: >
-          Carries the same "# Validation logic would go here" placeholder as
-          the branch methods above; MATLAB validates the branch_id first.
-          Noted 2026-08-28.
         input_arguments:
           - name: branch_id
             type_matlab: "char"
@@ -388,7 +387,15 @@ classes:
         output_arguments:
           - name: doc_ids
             type_python: "list[str]"
-        decision_log: "Exact match. Synchronized 2026-03-15."
+        decision_log: >
+          Exact match. Synchronized 2026-08-30 (issue #55): the branch guard is now ``not branch_id``, matching MATLAB's isempty() over both [] and '', and the id is validated as MATLAB validates it. Previously guarded with ``is None``, so an explicit "" reached the _do_* layer and each method decided for itself what a falsy id meant. This was the worst of the six and the reason the
+          set was found: _do_get_doc_ids guards on truthiness, so an empty id
+          dropped the branch filter and ran the all-branches query --
+          get_doc_ids("") returned every document in the database rather than
+          the current branch's. The last of the four "# Validation logic would
+          go here" placeholders from the 2026-08-28 audit is gone with it.
+          _do_get_doc_ids keeps its no-branch fallback, which all_doc_ids
+          relies on and DID-matlab's do_get_doc_ids documents identically.
 
       - name: add_docs
         python_name: add_docs
@@ -447,7 +454,8 @@ classes:
           - name: branch_id
             type_matlab: "char"
             type_python: "str"
-        decision_log: "Exact match. Synchronized 2026-03-15."
+        decision_log: >
+          Exact match. Synchronized 2026-08-30 (issue #55): the branch guard is now ``not branch_id``, matching MATLAB's isempty() over both [] and '', and the id is validated as MATLAB validates it. Previously guarded with ``is None``, so an explicit "" reached the _do_* layer and each method decided for itself what a falsy id meant.
 
       - name: search
         python_name: search
@@ -461,7 +469,12 @@ classes:
         output_arguments:
           - name: doc_ids
             type_python: "list[str]"
-        decision_log: "Exact match. Synchronized 2026-03-15."
+        decision_log: >
+          Exact match. Synchronized 2026-08-30 (issue #55): the branch guard is
+          now ``not branch_id``, matching MATLAB's isempty() over both [] and
+          '', and the id is validated as MATLAB validates it. Fixed in TWO
+          places -- SQLiteDB.search overrides Database.search, so correcting
+          only the base class would have left the live path unchanged.
 
       - name: run_sql_query
         python_name: do_run_sql_query
