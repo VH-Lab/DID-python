@@ -31,7 +31,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "c0a9507"
+    matlab_last_sync_hash: "b2fe427"
     python_path: "did/database.py"
     python_class: "Database"
     inherits: "abc.ABC"
@@ -492,8 +492,9 @@ classes:
           the schema and hand off to validate_doc_vs_schema. The per-document
           work lives in did/validate.py:validate_docs. Ported 2026-08-28.
 
-          ACCESS, aligned 2026-08-30. Python's has been public since
-          DID-python#27; MATLAB's sat in a methods(Access=protected) block,
+          ACCESS, aligned 2026-08-30 (DID-matlab#163, 5c0e0f6). Python's has
+          been public since DID-python#27; MATLAB's sat in a
+          methods(Access=protected) block,
           a divergence this entry never recorded. The symmetry read gate
           (DID-python#28 / DID-matlab#155) has to validate documents the
           OTHER language wrote, which is by definition a call from outside
@@ -560,10 +561,11 @@ classes:
           ('syncrule_id_2') rather than the schema's stem, so it says which
           of several is at fault.
 
-          The MATLAB fix is authored in lockstep in +did/database.m; this
-          entry's matlab_last_sync_hash still predates it, so the drift check
-          will flag database.m once that lands. Bump the hash then -- the
-          Python side already carries the change.
+          The MATLAB fix was authored in lockstep in +did/database.m and
+          merged as DID-matlab#163 (b2fe427); this entry's
+          matlab_last_sync_hash is bumped to it. The only commits touching
+          database.m between the previous hash (c0a9507) and b2fe427 are that
+          PR's two, d31c575 and 5c0e0f6, and both are carried here.
 
       - name: validate_field_type_and_value
         python_name: validate_field_type_and_value

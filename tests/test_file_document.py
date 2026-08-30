@@ -1,4 +1,5 @@
 import os
+import shutil
 import unittest
 
 from did.document import Document
@@ -32,10 +33,17 @@ class TestFileDocument(unittest.TestCase):
             self.db._do_add_doc(doc, "a")
 
     def tearDown(self):
-        # Clean up the database file
+        # Clean up the database file, and the FileDir ingestion writes beside
+        # it. Since local ingestion landed (#45) an added document's file is
+        # copied to <db dir>/files/<uid>, so this test leaves artifacts in the
+        # source tree unless they are removed here. Thirteen of them reached
+        # main before this cleanup existed.
         self.db._close_db()
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
+        shutil.rmtree(
+            os.path.join(os.path.dirname(self.db_path), "files"), ignore_errors=True
+        )
 
     def test_add_and_open_file(self):
         # Create a document of type 'demoFile'
