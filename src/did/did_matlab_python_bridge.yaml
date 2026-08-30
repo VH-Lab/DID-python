@@ -534,6 +534,27 @@ classes:
           'DID:Database:ValidationDependsOn') as .identifier. Ported
           2026-08-28.
 
+          ENUMERATED DEPENDENCIES, fixed in BOTH repos 2026-08-30
+          (DID-python#41). The depends_on value loop matched the schema's
+          declared name against the document's RAW names while the presence
+          check just above used the enumeration-stripped ones. A document
+          holds 'syncrule_id_1' where the schema declares 'syncrule_id', so
+          the two never matched: the value read back as empty, and both the
+          mustbenotempty check and the dependent-id resolution check were
+          skipped. An enumerated dependency could name a document that exists
+          in no database and in no batch and still validate. Both languages
+          now match on the stripped names and check EVERY entry sharing a
+          stem, since an enumerated dependency may legitimately carry several
+          (syncrule_id_1, syncrule_id_2) -- the assumption the old one-match
+          lookup broke. The error message now names the document's own entry
+          ('syncrule_id_2') rather than the schema's stem, so it says which
+          of several is at fault.
+
+          The MATLAB fix is authored in lockstep in +did/database.m; this
+          entry's matlab_last_sync_hash still predates it, so the drift check
+          will flag database.m once that lands. Bump the hash then -- the
+          Python side already carries the change.
+
       - name: validate_field_type_and_value
         python_name: validate_field_type_and_value
         python_path: "did/validate.py"
