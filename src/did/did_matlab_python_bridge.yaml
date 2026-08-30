@@ -492,6 +492,16 @@ classes:
           the schema and hand off to validate_doc_vs_schema. The per-document
           work lives in did/validate.py:validate_docs. Ported 2026-08-28.
 
+          ACCESS, aligned 2026-08-30. Python's has been public since
+          DID-python#27; MATLAB's sat in a methods(Access=protected) block,
+          a divergence this entry never recorded. The symmetry read gate
+          (DID-python#28 / DID-matlab#155) has to validate documents the
+          OTHER language wrote, which is by definition a call from outside
+          the class, and it failed with MATLAB:class:MethodRestricted on its
+          first run. MATLAB's is now public too; add_docs still calls it on
+          the Validate path exactly as before, and protected -> public is
+          additive.
+
       - name: get_document_schema
         python_name: get_document_schema
         python_path: "did/validate.py"
