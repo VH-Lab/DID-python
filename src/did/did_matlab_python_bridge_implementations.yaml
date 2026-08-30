@@ -127,29 +127,23 @@ classes:
 
       - name: do_add_doc
         python_name: _do_add_doc
-        out_of_sync: true
-        out_of_sync_reason: >
-          NARROWED 2026-08-30. What remains is local ingestion: MATLAB copies
-          a location marked `ingest` whose location_type is 'file' into
-          FileDir/<uid> and, when delete_original is set, deletes the source.
-          Python does neither, so for a LOCAL location `ingest` and
-          `delete_original` are still inert and cached_location stays empty.
-          A Python-written database therefore keeps pointing at the original
-          file where MATLAB would have moved it. Both languages can still read
-          such a document -- orig_location is recorded either way -- so this
-          is a difference in what add time does, not a break.
+        out_of_sync: false
+        sync_notes: >
+          CLOSED 2026-08-30 (DID-python#45). Python's _do_add_doc now mirrors
+          MATLAB's ingestion loop in full. Three separate gaps were closed in
+          sequence, recorded here because the entry was out_of_sync for each:
 
-          Two earlier parts of this entry are now closed:
-
-          - The `files` table is populated (see _populate_files). Before that,
-            a Python-written database was unreadable from MATLAB, whose
+          - The `files` table was never populated. Before that fix a
+            Python-written database was unreadable from MATLAB, whose
             do_open_doc resolves a file purely through the docs/files join.
-          - Remote ingestion is ported (2026-08-30, DID-python#42). A location
-            marked `ingest` whose location is not a local path is retrieved
-            through custom_file_handler into FileDir/<uid> and recorded in
-            cached_location, matching MATLAB. delete_original does not apply
-            there: MATLAB explicitly skips deletion for a location containing
-            '://', since a remote location is not ours to remove.
+          - Remote ingestion (DID-python#42): a location marked `ingest` whose
+            location is not a local path is retrieved through
+            custom_file_handler into FileDir/<uid>.
+          - Local ingestion (this change): a location marked `ingest` whose
+            location IS local is copied into FileDir/<uid>, and on success
+            delete_original deletes the source, as MATLAB does. Deletion never
+            applies to a remote location -- MATLAB guards it with a '://'
+            check, since a remote location is not ours to remove.
         input_arguments:
           - name: document_obj
             type_matlab: "did.document"
@@ -166,6 +160,10 @@ classes:
 
           customFileHandler ported 2026-08-30 (DID-python#42), threaded
           add_docs -> _do_add_doc -> _populate_files -> _ingest_location.
+          Local ingestion landed in the same helper on 2026-08-30
+          (DID-python#45): _ingest_location copies a local location marked
+          `ingest` with shutil.copyfile where MATLAB uses copyfile(...,'f'),
+          then honors delete_original.
           Spelled custom_file_handler, matching open_doc; see the add_docs
           entry in did_matlab_python_bridge.yaml.
 
@@ -179,11 +177,25 @@ classes:
           warning('DID:SQLiteDB:add_doc',...), and the missing-handler text
           carries the same explanation open_doc's error does.
 
-          One Python addition: an existing file at FileDir/<uid> is removed
-          before the handler runs, as open_doc does for its download. Without
-          that, a handler that produced nothing would be indistinguishable
-          from one that succeeded and a stale file would be recorded as this
-          document's ingested copy.
+          Two Python additions, both guarding against losing a file MATLAB
+          would also lose:
+
+          - An existing file at FileDir/<uid> is removed before the handler
+            runs, as open_doc does for its download. Without that, a handler
+            that produced nothing would be indistinguishable from one that
+            succeeded and a stale file would be recorded as this document's
+            ingested copy.
+          - A local location that already IS FileDir/<uid> is left alone
+            rather than copied onto itself. Re-adding a document whose
+            location was rewritten to its ingested path reaches this, and
+            honoring delete_original there would delete the only copy. MATLAB
+            would warn on the failed copyfile and skip the delete; Python
+            keeps the copy and records it.
+
+          Python resolves a relative local location against the database
+          directory before copying (the same rebasing open_doc does), so a
+          document written with a relative path is not ingested from the
+          process's working directory.
 
       - name: do_get_doc
         python_name: _do_get_doc

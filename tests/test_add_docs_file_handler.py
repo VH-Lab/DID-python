@@ -38,8 +38,8 @@ class TestAddDocsCustomFileHandler(unittest.TestCase):
 
     def _doc_with_location(self, location, location_type, ingest=1, uid="u-remote"):
         doc = Document("demoFile", **{"demoFile.value": 1})
-        doc.add_file("filename1.ext", "placeholder")
-        doc.add_file("filename2.ext", "placeholder")
+        doc.add_file("filename1.ext", "placeholder", ingest=0, delete_original=0)
+        doc.add_file("filename2.ext", "placeholder", ingest=0, delete_original=0)
         is_in, info, _ = doc.is_in_file_list("filename1.ext")
         self.assertTrue(is_in)
         info["locations"] = [
@@ -151,8 +151,9 @@ class TestAddDocsCustomFileHandler(unittest.TestCase):
 
         self.db.add_docs([doc], validate=False, custom_file_handler=handler)
 
-        self.assertEqual(calls, [], "a local file is not retrieved")
-        # And the original is still there: delete_original is not honored.
+        self.assertEqual(calls, [], "a local file is copied, not retrieved")
+        # This fixture sets delete_original=0, so the source survives; the
+        # delete is covered in tests/test_add_docs_local_ingest.py.
         self.assertTrue(os.path.isfile(path))
 
     # -- failures warn, they do not lose the document -----------------------

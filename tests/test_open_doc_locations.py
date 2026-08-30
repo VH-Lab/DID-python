@@ -17,6 +17,7 @@ turn, returning the first it can reach. Three things were wrong here before
 import os
 import tempfile
 import unittest
+import warnings
 from unittest import mock
 
 from did.database import FileAccessError
@@ -46,8 +47,8 @@ class TestOpenDocLocations(unittest.TestCase):
     def _doc_with_locations(self, locations):
         """A demoFile document whose first file carries the given locations."""
         doc = Document("demoFile", **{"demoFile.value": 1})
-        doc.add_file("filename1.ext", "placeholder")
-        doc.add_file("filename2.ext", "placeholder")
+        doc.add_file("filename1.ext", "placeholder", ingest=0, delete_original=0)
+        doc.add_file("filename2.ext", "placeholder", ingest=0, delete_original=0)
         is_in, info, _ = doc.is_in_file_list("filename1.ext")
         self.assertTrue(is_in)
         info["locations"] = locations
@@ -336,35 +337,49 @@ class TestMatlabShapedDatabase(TestOpenDocLocations):
     """
 
     def _matlab_shaped_doc(self, content=b"ingested payload"):
-        """Add a document, then rearrange it into MATLAB's on-disk shape."""
+        """Add a document and let ingestion put it in MATLAB's on-disk shape.
+
+        This used to be hand-built. Since DID-python#45 add_docs produces the
+        shape itself: a local location marked `ingest` is copied to
+        <db dir>/files/<uid> and the original is deleted, as MATLAB's
+        do_add_doc does. Both files here point at the SAME original, so the
+        first is ingested and the second -- reached after the original is
+        gone -- ends with no ingested copy and no original, which is the case
+        test_a_file_with_no_ingested_copy_and_no_original_is_an_error needs.
+        """
         original = self._local_file("original.bin", content)
         doc = Document("demoFile", **{"demoFile.value": 1})
         doc.add_file("filename1.ext", original)
         doc.add_file("filename2.ext", original)
-        self.db.add_docs([doc])
+        with warnings.catch_warnings():
+            # filename2's ingest cannot succeed -- filename1's delete_original
+            # already removed the source. MATLAB warns there too.
+            warnings.simplefilter("ignore")
+            self.db.add_docs([doc])
 
-        # The uid MATLAB would have named the ingested copy by.
+        # The files table should carry a row per file, and filename1's copy
+        # should be sitting under its uid.
         cursor = self.db.dbid.cursor()
         row = cursor.execute(
-            "SELECT f.uid FROM docs d, files f "
+            "SELECT f.uid, f.cached_location FROM docs d, files f "
             "WHERE d.doc_idx = f.doc_idx AND d.doc_id = ? AND f.filename = ?",
             (doc.id(), "filename1.ext"),
         ).fetchone()
         self.assertIsNotNone(row, "the files table should carry a row per file")
-        uid = row["uid"]
-
-        # Ingest it: copy to <db dir>/files/<uid>, then delete the original.
-        file_dir = os.path.join(os.path.dirname(self.db.connection), "files")
-        os.makedirs(file_dir, exist_ok=True)
-        with open(os.path.join(file_dir, uid), "wb") as handle:
-            handle.write(content)
-        os.remove(original)
+        self.assertEqual(
+            row["cached_location"],
+            os.path.join(self.db._file_dir(), row["uid"]),
+            "add_docs should have ingested the local file into FileDir",
+        )
 
         return doc, original
 
     def test_ingested_copy_is_found_after_the_original_is_deleted(self):
         doc, original = self._matlab_shaped_doc()
-        self.assertFalse(os.path.exists(original), "fixture should have removed it")
+        self.assertFalse(
+            os.path.exists(original),
+            "delete_original should have removed it during add_docs",
+        )
 
         file_obj = self.db.open_doc(doc.id(), "filename1.ext")
         file_obj.fopen()
