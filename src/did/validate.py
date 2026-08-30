@@ -480,8 +480,27 @@ def validate_field_type_and_value(doc_name, field_name, value, definition):
         )
 
     elif expected_type == "structure":
+        # MATLAB's check is `isempty(value) | isstruct(value)`, and isstruct is
+        # true for a struct ARRAY as well as a scalar struct. A 1xN struct array
+        # is what MATLAB uses for a list of like-shaped records, and jsonencode
+        # writes it as a JSON array of objects -- which arrives here as a list
+        # of dicts.
+        #
+        # Accepting only a dict rejected every such field. It surfaced on
+        # stimulus_presentation.stimuli, whose value is the list of stimuli in
+        # a presentation: MATLAB stores those documents happily, Python could
+        # not store them at all.
+        #
+        # A list whose entries are not all dicts is not a struct array in
+        # MATLAB either -- it would be a numeric or cell array, and isstruct
+        # would be false -- so that stays rejected.
         _assert(
-            _is_empty(value) or isinstance(value, dict),
+            _is_empty(value)
+            or isinstance(value, dict)
+            or (
+                isinstance(value, (list, tuple))
+                and all(isinstance(item, dict) for item in value)
+            ),
             "DID:Database:ValidationFieldStructure",
             f"Invalid structure sub-field {field_name} found in {doc_name}",
         )
