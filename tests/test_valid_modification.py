@@ -29,7 +29,20 @@ class TestValidModification(unittest.TestCase):
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
 
-    def test_remove_and_readd_doc(self):
+    def test_removed_doc_id_cannot_be_readded(self):
+        """A document removed from its last branch is gone for good.
+
+        This test previously asserted the opposite -- that the same id could
+        be added back. DID-matlab issue #55 retires the id instead, and this
+        is the deliberate behavior change that came with porting it.
+
+        The reason is not that the old re-add was broken here. Python has
+        reclaimed the doc_data rows since #39, so the re-added document got
+        fresh rows rather than the stale ones MATLAB used to resurrect. The
+        reason is that ids must not be re-used under DID's branch model, and
+        that both languages must agree about whether this operation is legal
+        on the same database file.
+        """
         doc = self.docs[0]
         doc_id = doc.id()
 
@@ -40,13 +53,13 @@ class TestValidModification(unittest.TestCase):
         retrieved_doc = self.db.get_docs(doc_id, OnMissing="ignore")
         self.assertIsNone(retrieved_doc)
 
-        # Re-add the document
-        self.db._do_add_doc(doc, "a")
+        # Re-adding the retired id is refused
+        with self.assertRaises(ValueError) as caught:
+            self.db._do_add_doc(doc, "a")
+        self.assertIn("previously removed", str(caught.exception))
 
-        # Verify it's back
-        retrieved_doc = self.db.get_docs(doc_id)
-        self.assertIsNotNone(retrieved_doc)
-        self.assertEqual(retrieved_doc.id(), doc_id)
+        # ...and it stayed gone
+        self.assertIsNone(self.db.get_docs(doc_id, OnMissing="ignore"))
 
 
 if __name__ == "__main__":
