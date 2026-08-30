@@ -17,8 +17,8 @@ import json
 import os
 
 from did.implementations.sqlitedb import SQLiteDB
-from did.validate import ValidationError
 from did.util import compare_database_summary, database_summary
+from did.validate import ValidationError
 from tests.symmetry.conftest import SYMMETRY_BASE, missing_artifact
 
 
