@@ -56,6 +56,20 @@ class SQLiteDB(Database):
         self._fields_cache = {}  # (class, field_name) -> field_idx
         self._open_db()
 
+        # Create FileDir now, as DID-MATLAB's sqlitedb constructor does:
+        #
+        #     cacheDir = fullfile(cacheDir_parent, 'files');
+        #     if ~isfolder(cacheDir)
+        #         mkdir(cacheDir);
+        #     end
+        #
+        # _file_dir() only computes the path; until this, nothing created the
+        # directory, so it appeared on first ingest rather than at database
+        # creation. A database that had never stored a file therefore had no
+        # files/ at all, and its directory listing differed from the MATLAB
+        # equivalent -- which the cross-language symmetry tests compare.
+        os.makedirs(self._file_dir(), exist_ok=True)
+
     def _open_db(self):
         if self.dbid:
             return
