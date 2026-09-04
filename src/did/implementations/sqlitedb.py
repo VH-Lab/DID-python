@@ -49,6 +49,48 @@ def _sql_like_escape(value):
     return text
 
 
+def _is_safe_uid(uid):
+    """Is ``uid`` safe to use as a filename inside FileDir?
+
+    A uid stands in for a file basename under ``<FileDir>/<uid>``, so any
+    value that would leave that directory once joined -- a path separator,
+    a dot segment, a NUL, an empty or whitespace-padded string -- has to
+    be refused. Otherwise a document whose ``file_list[i].locations[j].uid``
+    is ``"../../.ssh/authorized_keys"`` reaches ``os.path.join(file_dir, uid)``
+    and either writes to, or reads from, an attacker-chosen path outside
+    FileDir. See DID-python issue #58.
+    """
+    if not isinstance(uid, str) or not uid:
+        return False
+    if uid.strip() != uid:
+        return False
+    if uid in (".", ".."):
+        return False
+    if "/" in uid or "\\" in uid or "\x00" in uid:
+        return False
+    # Catches any other separator the running OS honours (e.g. NT altsep).
+    return os.path.basename(uid) == uid
+
+
+def _is_within(root, path):
+    """Does ``path`` resolve inside ``root`` (or equal it)?
+
+    Both are compared with symlinks resolved so a symlink under ``root``
+    that points outside cannot smuggle a read past the guard.
+    """
+    try:
+        root_r = os.path.realpath(root)
+        path_r = os.path.realpath(path)
+    except OSError:
+        return False
+    try:
+        return os.path.commonpath([root_r, path_r]) == root_r
+    except ValueError:
+        # commonpath raises when the two are on different drives (Windows)
+        # or one is empty; either way ``path`` is not contained in ``root``.
+        return False
+
+
 class SQLiteDB(Database):
     def __init__(self, filename):
         super().__init__(connection=filename)
@@ -547,6 +589,18 @@ class SQLiteDB(Database):
         if not entry.get("ingest") or not location or not uid:
             return ""
 
+        # A document ingested from a cloud pull is attacker-controlled JSON:
+        # a crafted ``uid`` or ``location`` could otherwise let this method
+        # copy to (or over) an arbitrary file. Refuse -- do not sanitise --
+        # so a corrupt document stays out of the database rather than being
+        # partly written. See DID-python issue #58.
+        if not _is_safe_uid(uid):
+            raise ValueError(
+                f'Refusing to ingest "{filename}": uid {uid!r} is not a '
+                f"plain filename (no path separators, no '.' or '..', no "
+                f"empty basename). See DID-python issue #58."
+            )
+
         is_remote = self._is_remote_location(location, entry.get("location_type"))
         if is_remote and custom_file_handler is None:
             warnings.warn(
@@ -565,7 +619,12 @@ class SQLiteDB(Database):
         # A relative location is rebased against the database directory, the
         # same resolution open_doc uses -- otherwise a document written with a
         # relative path would be ingested from the process's cwd.
-        source_path = location if is_remote else self._resolve_local(location)
+        if is_remote:
+            source_path = location
+        else:
+            source_path = self._validated_local_path(
+                location, purpose=f'ingest source for "{filename}"'
+            )
 
         if not is_remote and os.path.abspath(source_path) == os.path.abspath(dest_path):
             # Already the ingested copy: adding the same document again (to a
@@ -1017,6 +1076,47 @@ class SQLiteDB(Database):
         db_dir = os.path.dirname(os.path.abspath(self.connection))
         return os.path.join(db_dir, location)
 
+    def _validated_local_path(self, location, purpose="location"):
+        """``_resolve_local`` that refuses to escape the database directory.
+
+        A location from an ingested document is attacker-reachable when the
+        document itself was pulled from a cloud store; a value of
+        ``"../../etc/passwd"`` (or an absolute path outside the db dir) would
+        otherwise reach ``open()`` or ``shutil.copyfile()``. Only paths that
+        resolve inside the database directory are accepted. See DID-python
+        issue #58.
+
+        Raises :class:`ValueError` on an unsafe location so a corrupt
+        document stays out of the database rather than being partly written.
+        """
+        if not isinstance(location, str) or not location:
+            raise ValueError(f"Refusing to use empty {purpose}.")
+        db_dir = os.path.dirname(os.path.abspath(self.connection))
+        resolved = self._resolve_local(location)
+        resolved_abs = os.path.abspath(resolved)
+        if not _is_within(db_dir, resolved_abs):
+            raise ValueError(
+                f"Refusing {purpose}: {location!r} resolves outside the "
+                f"database directory {db_dir!r}. See DID-python issue #58."
+            )
+        return resolved_abs
+
+    def _is_safe_local_location(self, location, location_type=None):
+        """Would ``location`` open a file inside the db dir?
+
+        Used to filter locations read back out of an older, unguarded
+        database (or from a document JSON that predates the guard); a
+        remote location is not a filesystem path and is left alone here.
+        See DID-python issue #58.
+        """
+        if self._is_remote_location(location, location_type):
+            return True
+        try:
+            self._validated_local_path(location)
+        except ValueError:
+            return False
+        return True
+
     def _locations_from_files_table(self, doc_id, filename):
         """Locations for one file, read from the `files` table.
 
@@ -1046,28 +1146,43 @@ class SQLiteDB(Database):
         for row in rows:
             uid = row["uid"]
             cached = row["cached_location"]
+            # Cache and FileDir candidates both key off uid; an unsafe uid
+            # (one written by an unguarded DID before issue #58) would build
+            # a path outside the cache dir or outside FileDir, so skip those
+            # candidates. The row's cached_location and orig_location are
+            # still tried through the read-time containment filter below.
+            uid_ok = _is_safe_uid(str(uid)) if uid else False
             # The global file cache comes first, as it does in MATLAB's
             # do_open_doc: a file retrieved from a remote location once is
             # kept there under its uid, so a second open of the same document
             # does not fetch it again.
-            if uid and cache is not None:
+            if uid_ok and cache is not None:
                 locations.append(
                     {
                         "location": cache.full_path(str(uid)),
                         "location_type": "file",
                         "uid": uid,
                         "in_file_cache": True,
+                        # Cache path is built from a uid we just validated,
+                        # so it does not need to pass the db-dir containment
+                        # filter -- the cache lives outside db_dir by design.
+                        "_trusted_local": True,
                     }
                 )
             # MATLAB stores an ingested copy at <FileDir>/<uid>, where FileDir
             # is <directory holding the .sqlite file>/files. It looks the copy
             # up by uid rather than by cached_location, so mirror that next.
-            if uid:
+            if uid_ok:
                 locations.append(
                     {
                         "location": os.path.join(self._file_dir(), str(uid)),
                         "location_type": "file",
                         "uid": uid,
+                        # <FileDir>/<uid> with a validated uid is inside
+                        # db_dir by construction; skip the containment
+                        # filter so it stays reachable even on filesystems
+                        # where realpath returns something unexpected.
+                        "_trusted_local": True,
                     }
                 )
             if cached:
@@ -1167,7 +1282,22 @@ class SQLiteDB(Database):
 
         locations = self._locations_from_files_table(doc_id, filename)
         locations += self._valid_locations(info)
-        return locations
+        # Defense in depth: filter out any local location that resolves
+        # outside the database directory. Ingest-time checks refuse to
+        # WRITE such a row, but a database written by an older DID may
+        # already carry one; without this a `..`-crafted orig_location
+        # would still let ``open_doc`` read /etc/passwd. Entries flagged
+        # _trusted_local (uid-derived paths built from a validated uid)
+        # skip the check -- the file cache lives outside db_dir by design.
+        # See issue #58.
+        return [
+            entry
+            for entry in locations
+            if entry.get("_trusted_local")
+            or self._is_safe_local_location(
+                entry["location"], entry.get("location_type")
+            )
+        ]
 
     def _first_local_file(self, locations):
         """``(entry, path)`` for the first location already readable on disk.
