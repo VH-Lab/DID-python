@@ -22,7 +22,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "a0bb373"
+    matlab_last_sync_hash: "85c119e"
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
     inherits_matlab: "did.database"
@@ -176,6 +176,32 @@ classes:
             delete_original deletes the source, as MATLAB does. Deletion never
             applies to a remote location -- MATLAB guards it with a '://'
             check, since a remote location is not ours to remove.
+
+          CLOSED 2026-09-04: traversal guard on the ingest write, ported in
+          lockstep. DID-python#58 / DID-matlab#167 both landed a "refuse, do
+          not substitute" check on `uid` before any write: <FileDir>/<uid>
+          cannot escape FileDir if uid has no path separators, no '.' or
+          '..', no NUL, and no empty basename. Python raises ValueError from
+          _is_safe_uid at _ingest_location; MATLAB raises
+          DID:SQLITEDB:PathTraversal from isSafeUid at
+          validateIngestFileEntry -- called in do_add_doc before doc_props is
+          read, so a refused document leaves no half-written state behind
+          (docs, files, or an escaped destPath).
+
+          CLOSED 2026-09-04: source-side containment check removed on both
+          sides in lockstep (DID-python#60 / DID-matlab#169). The initial
+          #58/#167 fix also refused any ingest source that did not resolve
+          inside db_dir, which broke the normal "add this file from wherever
+          it lives to my DB" workflow (110/115 failures downstream in
+          NDI-python#194 that stages sources under /tmp/ndi-vhsb-*). The
+          destination is already fully constrained by the uid check above,
+          so a source outside db_dir is a normal ingest and not an attack.
+          Python's _ingest_location now uses _resolve_local (no containment
+          check) for the local branch; MATLAB's validateIngestFileEntry only
+          checks the uid. The read-side filter -- _is_safe_local_location in
+          Python (_locations_from_files_table), isSafeLocalLocation in
+          MATLAB (do_open_doc, line 767) -- is untouched and still defends
+          open_doc against a crafted stored location.
         input_arguments:
           - name: document_obj
             type_matlab: "did.document"
@@ -429,6 +455,24 @@ classes:
           options.customFileHandler and Python takes custom_file_handler,
           plumbed through add_docs (DID-python#42). Rarely hit, because ingest
           defaults to 0 for url and ndicloud locations.
+
+          CLOSED 2026-09-04: read-side traversal filter, ported in lockstep
+          with the ingest-side guard (DID-python#58 / DID-matlab#167). A row
+          written by an older, unguarded DID (or a document JSON that
+          predates the guard) may carry a `uid`, `orig_location`, or
+          `cached_location` that would open a file outside db_dir. The
+          filter fires when locations are pulled back out of the DB:
+          _is_safe_local_location in Python (_locations_from_files_table
+          skips FileDir- and cache-derived candidates built from an unsafe
+          uid, and drops orig_location / cached_location values that resolve
+          outside db_dir); isSafeLocalLocation in MATLAB (do_open_doc, line
+          767). Cache candidates (PathConstants.filecachepath / FileCache)
+          live outside db_dir by design and are safe as long as the uid
+          they are built from has been validated -- they skip the
+          containment filter on both sides. This filter is unchanged by the
+          #60/#169 rollback of the source-side ingest guard: the write side
+          now trusts caller-supplied ingest sources, but stored locations
+          read back into open_doc are still not to be trusted.
 
       - name: check_exist_doc
         python_name: exist_doc
