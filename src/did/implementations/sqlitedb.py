@@ -618,13 +618,15 @@ class SQLiteDB(Database):
         dest_path = os.path.join(file_dir, uid)
         # A relative location is rebased against the database directory, the
         # same resolution open_doc uses -- otherwise a document written with a
-        # relative path would be ingested from the process's cwd.
+        # relative path would be ingested from the process's cwd. The source
+        # is caller-supplied ("add this file to my DB"); the destination is
+        # already contained under <FileDir>/<uid> by the _is_safe_uid check
+        # above, so a source outside db_dir is a normal ingest workflow, not
+        # an attack. See DID-python issue #60.
         if is_remote:
             source_path = location
         else:
-            source_path = self._validated_local_path(
-                location, purpose=f'ingest source for "{filename}"'
-            )
+            source_path = self._resolve_local(location)
 
         if not is_remote and os.path.abspath(source_path) == os.path.abspath(dest_path):
             # Already the ingested copy: adding the same document again (to a

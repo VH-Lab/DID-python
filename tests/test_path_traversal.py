@@ -1,22 +1,24 @@
 """Directory-traversal guards on ingest and open_doc.
 
-Regression test for DID-python issue #58: a document's `file_list[i].
-locations[j].uid` and `location` are attacker-controlled when the document
-is pulled from a cloud store, and both used to reach the filesystem
-verbatim -- `os.path.join(file_dir, uid)` on the write side, and
-`_resolve_local(location)` (which returned an absolute location verbatim
-and joined a relative one with ``..`` intact) on the read side.
+Regression test for DID-python issue #58 and its follow-up #60: a
+document's `file_list[i].locations[j].uid` and `location` are
+attacker-controlled when the document is pulled from a cloud store, and
+both used to reach the filesystem verbatim -- `os.path.join(file_dir,
+uid)` on the write side, and `_resolve_local(location)` (which returned
+an absolute location verbatim and joined a relative one with ``..``
+intact) on the read side.
 
-The behaviour to pin is the "refuse, do not substitute" rule ported from
-ndi-python's ``TestGetBinaryPathTraversal``:
+The behaviour to pin:
 
 * an unsafe uid (path separator, ``.``, ``..``, empty basename) is refused
-  at ingest -- the document is not partly written;
-* an unsafe location (``..`` that escapes the db dir, or an absolute path
-  outside it) is refused at ingest for the same reason;
+  at ingest -- the document is not partly written. The destination
+  ``<FileDir>/<uid>`` is fully constrained by that check;
+* a legitimate ingest source outside the database directory is accepted
+  (see #60): "add this file to my DB" is the normal call, and the
+  destination is already contained by the uid check above;
 * on the read side, a row written by an older, unguarded DID that carries
-  such a value is filtered out -- ``open_doc`` cannot be steered into
-  reading a file outside the database directory through it.
+  an unsafe stored location is filtered out -- ``open_doc`` cannot be
+  steered into reading a file outside the database directory through it.
 """
 
 import os
@@ -124,21 +126,31 @@ class TestUnsafeUidRefusedAtIngest(_TraversalTestBase):
         )
 
 
-class TestUnsafeLocationRefusedAtIngest(_TraversalTestBase):
-    def test_relative_location_that_escapes_db_dir_is_refused(self):
-        doc = self._doc(uid="u-1", location="../../etc/passwd")
-        with self.assertRaises(ValueError) as caught:
-            self.db.add_docs([doc], validate=False)
-        self.assertIn("issue #58", str(caught.exception))
+class TestLegitimateSourceOutsideDbDirIsAccepted(_TraversalTestBase):
+    """See DID-python issue #60.
 
-    def test_absolute_location_outside_db_dir_is_refused(self):
-        # /etc/hostname is readable on Linux; the point is only that it is
-        # outside the database directory, so the ingest source path check
-        # rejects it before the copy ever runs.
-        doc = self._doc(uid="u-1", location="/etc/hostname")
-        with self.assertRaises(ValueError) as caught:
-            self.db.add_docs([doc], validate=False)
-        self.assertIn("issue #58", str(caught.exception))
+    Ingest workflows commonly stage the source file somewhere outside the
+    database directory ("take this file from wherever it lives and add it
+    to my DB"). The destination path is already constrained under
+    ``<FileDir>/<uid>`` by the ``_is_safe_uid`` check, so a source outside
+    ``db_dir`` is not an attack -- refusing it broke downstream ingest.
+    """
+
+    def test_absolute_source_outside_db_dir_is_ingested(self):
+        outside_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: os.path.exists(outside_dir))
+        outside_source = os.path.join(outside_dir, "staged.bin")
+        with open(outside_source, "wb") as handle:
+            handle.write(b"payload")
+
+        doc = self._doc(uid="u-outside", location=outside_source)
+        self.db.add_docs([doc], validate=False)
+
+        file_dir = self.db._file_dir()
+        self.assertTrue(
+            os.path.isfile(os.path.join(file_dir, "u-outside")),
+            "the ingested copy must land at <FileDir>/<uid>",
+        )
 
 
 class TestOpenDocFiltersUnguardedRows(_TraversalTestBase):
