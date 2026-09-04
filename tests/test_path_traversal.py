@@ -104,9 +104,7 @@ class TestUnsafeUidRefusedAtIngest(_TraversalTestBase):
         row = cursor.execute(
             "SELECT doc_id FROM docs WHERE doc_id = ?", (doc.id(),)
         ).fetchone()
-        self.assertIsNone(
-            row, "a refused ingest must not leave the document behind"
-        )
+        self.assertIsNone(row, "a refused ingest must not leave the document behind")
 
     def test_a_refused_uid_does_not_write_the_dest_file(self):
         """Concretely: no file appears at the traversal target."""
@@ -114,9 +112,7 @@ class TestUnsafeUidRefusedAtIngest(_TraversalTestBase):
         outside = os.path.abspath(
             os.path.join(self._dir, os.pardir, "outside-file.bin")
         )
-        self.addCleanup(
-            lambda: os.path.exists(outside) and os.remove(outside)
-        )
+        self.addCleanup(lambda: os.path.exists(outside) and os.remove(outside))
 
         # ../<basename> lands next to db_dir -- a real filesystem escape.
         doc = self._doc(uid="../outside-file.bin", location=source)
@@ -202,9 +198,7 @@ class TestOpenDocFiltersUnguardedRows(_TraversalTestBase):
         )
         with open(outside, "wb") as handle:
             handle.write(b"attacker-planted")
-        self.addCleanup(
-            lambda: os.path.exists(outside) and os.remove(outside)
-        )
+        self.addCleanup(lambda: os.path.exists(outside) and os.remove(outside))
 
         # An uid that escapes FileDir back into the parent, landing at the
         # attacker-planted file. FileDir is <db_dir>/files, so ..<basename>
