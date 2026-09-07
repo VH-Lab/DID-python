@@ -79,6 +79,12 @@ REPLACED_STATUSES = {
     "implemented": "no status at all (ported is the default: no status plus a "
     "python_path)",
     "does_not_exist": "retired",
+    # "ported" has no replacement NAME because the default has no name. Writing
+    # it out is the specific mistake this vocabulary is built to prevent: if the
+    # value were sometimes explicit, an absent status would stop meaning
+    # "ported" and start meaning "ported, or nobody filled this in".
+    "ported": "no status at all (a plain port is the default: no status plus a "
+    "python_path)",
 }
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

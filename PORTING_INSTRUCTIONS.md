@@ -151,6 +151,7 @@ vocabulary" that leaves the reader guessing.
 | `not_applicable` | `matlab_only`, `porting_deferred` or `retired` | Conflated all three; it was this repo's own key name until 2026-09-07 |
 | `implemented` | *(no status)* | A synonym for the default |
 | `does_not_exist` | `retired` | Same claim, and `retired` says it is a tombstone |
+| `ported` | *(no status)* | The default has no name on purpose — see the vocabulary table above. Naming it would make an absent status ambiguous between "ported" and "not filled in" |
 
 Several of these were never written in this repository — `not_yet_ported`,
 `implemented` and `does_not_exist` come from NDI-python, and NDR-python's
