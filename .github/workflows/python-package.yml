@@ -62,8 +62,19 @@ jobs:
       - name: Install PyYAML
         run: pip install pyyaml
 
-      # These five checks depend only on the current state of the two repos,
-      # so a PR can break them and a PR can fix them. They gate.
+      # All six checks gate, drift included.
+      #
+      # Drift used to run separately with continue-on-error, on the argument
+      # that it turns red when DID-matlab moves -- which no commit here causes
+      # and none can fix until someone does the port. That argument is sound
+      # about the CAUSE and wrong about the CONSEQUENCE: an unreviewed upstream
+      # change is exactly the thing this bridge exists to surface, and a red
+      # main is how a repo of three says so. Settled across DID-python,
+      # NDI-python and NDR-python in NDI-python issue #211.
+      #
+      # When a batch of MATLAB work lands faster than it can be reviewed, the
+      # escape hatch is DRIFT_ALLOWLIST in bin/check_bridge_coverage.py -- a
+      # ratchet that shrinks -- not switching this back off.
       #
       # Each check is named explicitly, so adding one to CHECKS in
       # bin/check_bridge_coverage.py does NOT make it run here: it has to be
@@ -73,16 +84,7 @@ jobs:
           python bin/check_bridge_coverage.py \
             --matlab-repo DID-matlab \
             --check file --check hash --check status \
-            --check member --check missing
-
-      # Drift is different: it turns red when DID-matlab moves, which no commit
-      # here causes and no commit here can fix until someone does the port. Kept
-      # visible but non-gating, so main does not go red without a commit.
-      - name: Report MATLAB drift (informational)
-        continue-on-error: true
-        run: |
-          python bin/check_bridge_coverage.py \
-            --matlab-repo DID-matlab --check drift
+            --check drift --check member --check missing
 
   test:
     runs-on: ubuntu-latest

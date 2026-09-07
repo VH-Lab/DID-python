@@ -54,13 +54,11 @@ will never show up. The script checks that the bridge has no such blind spots.
 | `file` | Every `.m` file under `DID-matlab/src/did` is either tracked by an entry or listed under `not_tracked`; every `.py` module under `src/did` is some entry's `python_path`. Both `matlab_path` and `python_path` point at files that exist. |
 | `hash` | Every entry with a `matlab_path` has a `matlab_last_sync_hash`, and that hash is a real commit. An entry without one can never show drift. |
 | `status` | Every `status` is one of the values in [Status vocabulary](#status-vocabulary), carries a `decision_log` saying why, and agrees with the rest of its entry. Every `not_tracked` entry either excuses a real MATLAB file or declares that it does not. |
-| `drift` | No MATLAB commits touch a tracked file after its sync hash. |
+| `drift` | No MATLAB commits touch a tracked file after its sync hash — see [Drift gates](#drift-gates). |
 | `member` | Every method/property entry names a symbol that exists in the MATLAB class (or one it inherits from), and its `python_name` exists in the Python class. |
 | `missing` | Every public MATLAB method and property has a bridge entry. Protected, private and `delete` members are skipped as implementation detail. |
 
-CI runs `file`, `hash`, `status`, `member` and `missing` as gating checks, and
-`drift` non-gating: drift turns red when DID-matlab moves, which no commit here
-causes and none can fix until someone does the port.
+CI gates on all six checks, `drift` included — see [Drift gates](#drift-gates).
 
 A check only gates if the CI job names it. The bridge job passes each one
 explicitly on the command line, so **adding a check to `CHECKS` in
@@ -72,6 +70,41 @@ its silence reads as a pass.
 all (duplicate entries, the status vocabulary, docs-vs-code agreement). It is a
 plain pytest file, so it runs in every `test` matrix job — a job with no
 DID-matlab checkout, where a MATLAB-dependent test would skip green.
+
+### Drift gates
+
+**The rule.** An entry drifts when DID-matlab has commits touching its
+`matlab_path` after the recorded hash. **Drift fails CI.** Clear it by reviewing
+the MATLAB diff and either porting the behavioral change or recording in the
+`decision_log` that there is none — then bump the hash.
+
+Settled across DID-python, NDI-python and NDR-python in
+[NDI-python issue #211](https://github.com/Waltham-Data-Science/NDI-python/issues/211);
+the three repos had three different answers, one of which was silence.
+
+Until 2026-09-07 this check ran non-gating here, on the argument that drift
+turns red when DID-matlab moves — which no commit in this repo causes, and none
+can fix until someone does the port. That is right about the cause and wrong
+about the consequence. An unreviewed upstream change is precisely what the
+bridge exists to surface; a red build is how it says so, and "no commit here
+caused it" describes every upstream regression worth catching.
+
+**Drift is asked by walking history, not by comparing hashes.** A batch sync
+records a repo-wide commit that never touched the entry's own file, so
+`git log -1 --format=%h -- <path>` will not equal the recorded hash even though
+nothing about that entry changed. Equality would reject a correct record;
+`git log <hash>..HEAD -- <path>` is empty for it, and non-empty exactly when the
+file really moved. Both spellings of a sync hash therefore stay valid — see
+[`matlab_last_sync_hash` is a commit](#matlab_last_sync_hash-is-a-commit).
+
+**The escape hatch is a ratchet, not a switch.** `DRIFT_ALLOWLIST` in
+`bin/check_bridge_coverage.py` names entries permitted to be drifted right now.
+It is empty in this repo, and was empty when the gate went on — nothing here was
+drifted, so there was no backlog to ratchet down. Use it when a batch of MATLAB
+work lands faster than it can be reviewed: add the name, review or port it, take
+the name out. An allowlisted entry that has *stopped* drifting is reported as a
+stale allowlist entry, so the list cannot outlive its reason. Turning the gate
+back off is not the remedy.
 
 ### The MATLAB checkout must not be shallow
 
@@ -294,7 +327,7 @@ If MATLAB is available, run the full 3-step symmetry cycle:
 | `inherits_python` | No | Python parent class(es) |
 | `out_of_sync` | No | `true` if MATLAB has diverged |
 | `out_of_sync_reason` | No | Human-readable explanation of the divergence |
-| `decision_log` | Yes | Sync status, dates, deviation rationale |
+| `decision_log` | Only where there is something to explain | Sync status, dates, deviation rationale. **Required** on any entry carrying a `status`, and on every `not_tracked` entry — those record a judgement, and a recorded decision with no reason gets re-investigated. **Not required** on a plain port: it has no divergence to explain, and its `python_path` / `python_name` already say what happened. Most entries here carry one anyway, and that is welcome, not mandatory |
 | `properties` | No | List of property mappings |
 | `methods` | No | List of method mappings |
 
@@ -346,7 +379,7 @@ Each entry in `methods` / `properties` takes:
 | `matlab_name` | No | `~` marks a Python-only member with no MATLAB counterpart |
 | `python_path` | No | Only when the counterpart lives outside the entry's `python_path` |
 | `kind` | No | `constructor`, `static` or `hidden` |
-| `decision_log` | Yes | Deviations, sync date, rationale |
+| `decision_log` | Only where there is something to explain | Deviations, sync date, rationale — same rule as the entry-level field above |
 | `input_arguments` / `output_arguments` | No | Argument type mappings |
 
 ## Adding a New MATLAB File

@@ -248,6 +248,38 @@ def _documented_status_table() -> list[tuple[str, str]]:
     return rows
 
 
+class TestTheDriftAllowlistNamesRealEntries:
+    """`DRIFT_ALLOWLIST` exempts entries from the gating drift check by `name`.
+
+    A typo in it exempts nothing and reads as though it exempts something --
+    the same inert-entry failure the `not_tracked` list had, in a place where
+    the consequence is a gate that quietly does not cover what someone thought
+    they had parked. Empty today (nothing here was drifted when the gate went
+    on, per NDI-python issue #211), so this guards the list's future use.
+
+    Whether an allowlisted entry is STILL drifting needs DID-matlab and is
+    checked by `check_drift`, which reports a stale entry so the ratchet
+    tightens. This only asks that the names exist.
+    """
+
+    def test_every_allowlisted_name_is_a_bridge_entry(self):
+        known = {
+            entry.get("name")
+            for _, data in _bridge_documents()
+            for entry in _tracked(data)
+        }
+        unknown = [n for n in checker.DRIFT_ALLOWLIST if n not in known]
+        assert not unknown, (
+            "DRIFT_ALLOWLIST names entries that do not exist: "
+            f"{unknown}\nIt exempts by `name`, so a typo exempts nothing while "
+            "looking like it does."
+        )
+
+    def test_the_allowlist_has_no_duplicates(self):
+        seen = list(checker.DRIFT_ALLOWLIST)
+        assert len(seen) == len(set(seen)), f"duplicate names: {seen}"
+
+
 def _documented_retired_statuses() -> set[str]:
     """Names in PORTING_INSTRUCTIONS.md § Retired status names.
 

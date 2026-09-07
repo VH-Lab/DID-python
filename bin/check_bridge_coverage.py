@@ -89,6 +89,21 @@ REPLACED_STATUSES = {
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Entries permitted to be drifted right now, by `name`. The drift check gates
+# (NDI-python issue #211, one policy for all three repos), and a repo switching
+# it on with a backlog would go red on work nobody has done yet -- so the
+# rollout is a RATCHET: list what is already drifted, gate everything else, and
+# shrink the list as entries get reviewed.
+#
+# DID-python's list is empty and is expected to stay that way: at the time the
+# gate went on, zero entries were drifted, so there was no backlog to ratchet
+# down. It exists so the escape hatch is present when a batch of MATLAB work
+# lands faster than it can be reviewed -- add the name, port or review it, take
+# the name out again. It is not a place to park an entry indefinitely; an
+# allowlisted entry that has STOPPED drifting is reported, so the list cannot
+# quietly outlive its reason.
+DRIFT_ALLOWLIST: tuple[str, ...] = ()
+
 
 # ---------------------------------------------------------------------------
 # MATLAB source parsing
@@ -628,6 +643,17 @@ def check_status(report, matlab_repo, tracked, not_tracked):
 
 
 def check_drift(report, matlab_repo, tracked):
+    """An entry drifts when DID-matlab has commits touching its matlab_path
+    after the recorded hash.
+
+    Drift is asked by walking history, not by comparing the recorded hash
+    against the file's current last-touching commit. The two differ on a
+    legitimate record: an entry synced in a batch carries a repo-wide commit
+    that never touched its own file, so an equality test calls it stale when
+    nothing about it changed. `git log <hash>..HEAD -- <path>` is empty for
+    that entry, and non-empty exactly when the file really moved.
+    """
+    allowlisted_but_clean = set(DRIFT_ALLOWLIST)
     for entry in tracked:
         sync = entry.get("matlab_last_sync_hash")
         rel = entry.get("matlab_path")
@@ -637,12 +663,28 @@ def check_drift(report, matlab_repo, tracked):
         if not os.path.exists(os.path.join(matlab_repo, path)):
             continue
         log = git(matlab_repo, "log", "--oneline", f"{sync}..HEAD", "--", path)
-        if log:
-            first = log.splitlines()[0]
-            report.add(
-                "drift",
-                f"{entry['name']} ({path}) changed since {sync}: {first}",
-            )
+        if not log:
+            continue
+        if entry["name"] in DRIFT_ALLOWLIST:
+            allowlisted_but_clean.discard(entry["name"])
+            continue
+        first = log.splitlines()[0]
+        report.add(
+            "drift",
+            f"{entry['name']} ({path}) changed since {sync}: {first}. "
+            "Review the MATLAB diff and either port the behavioral change or "
+            "record in the decision_log that there is none, then bump the hash.",
+        )
+
+    # A ratchet only ratchets if it tightens. An entry that has stopped drifting
+    # -- because someone reviewed it -- must come off the list, or the list
+    # keeps exempting an entry nobody is exempting on purpose any more.
+    for name in sorted(allowlisted_but_clean):
+        report.add(
+            "drift",
+            f"{name}: in DRIFT_ALLOWLIST but is not drifting. Remove it from "
+            "the list in bin/check_bridge_coverage.py.",
+        )
 
 
 def _matlab_surface(entry, matlab_repo, by_name, seen=None):

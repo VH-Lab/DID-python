@@ -20,7 +20,8 @@ appear to conflict, `PORTING_INSTRUCTIONS.md` is right and this file is stale.
 | Which MATLAB files are deliberately untracked | § `not_tracked` |
 | What `matlab_last_sync_hash` holds, and what a squash merge does to it | § `matlab_last_sync_hash` is a commit |
 | How to port a MATLAB change | § Porting a MATLAB Change to Python |
-| What CI checks, and why one check does not gate | § What the coverage checks are for |
+| What CI checks | § What the coverage checks are for |
+| Why an upstream MATLAB change fails this repo's CI | § Drift gates |
 
 ## Architecture
 
