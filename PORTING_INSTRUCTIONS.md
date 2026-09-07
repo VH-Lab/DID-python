@@ -82,6 +82,12 @@ Settled across DID-python, NDI-python and NDR-python in
 [NDI-python issue #211](https://github.com/Waltham-Data-Science/NDI-python/issues/211);
 the three repos had three different answers, one of which was silence.
 
+**The cross-repo statement of this rule lives in NDI-python, § 7 of
+`docs/developer_notes/ndi_matlab_python_bridge.yaml`**, beside the
+commit-vs-blob rule and the status vocabulary. This section is DID-python's
+enforcement of it plus the mechanics local to this repo; where the two could
+ever disagree, § 7 is the rule and this is the implementation.
+
 Until 2026-09-07 this check ran non-gating here, on the argument that drift
 turns red when DID-matlab moves — which no commit in this repo causes, and none
 can fix until someone does the port. That is right about the cause and wrong
@@ -99,9 +105,10 @@ file really moved. Both spellings of a sync hash therefore stay valid — see
 
 **The escape hatch is a ratchet, not a switch.** `DRIFT_ALLOWLIST` in
 `bin/check_bridge_coverage.py` names entries permitted to be drifted right now.
-(Ratchet-vs-clean-first is decision 3 of #211 and is still open; it is moot for
-this repo either way, because there was no backlog to clean or to ratchet down.
-If #211 settles on a different shape, this is the piece that changes.)
+(Decision 3 of #211: ratchet, *for the moment* — the list is a staging post
+toward clearing the debt, not a settlement. It is moot for this repo either
+way, because there was no backlog to clean or to ratchet down, and the list has
+been empty since the gate went on.)
 It is empty in this repo, and was empty when the gate went on — nothing here was
 drifted, so there was no backlog to ratchet down. Use it when a batch of MATLAB
 work lands faster than it can be reviewed: add the name, review or port it, take
@@ -284,7 +291,12 @@ After porting, update the entry in the bridge YAML:
 2. Remove `matlab_current_hash` and `out_of_sync` / `out_of_sync_reason` if present.
 3. Set or clear `status` if the port's shape changed — see
    [Status vocabulary](#status-vocabulary).
-4. Update the `decision_log` with the sync date.
+4. Add a `decision_log` note **only if there is something to explain** — a
+   divergence, or a MATLAB change you deliberately did not follow. A routine
+   re-sync that found nothing to port owes no prose: the bumped hash is itself
+   the record that somebody examined it, and drift gates on the hash, not on
+   the note. See [Status vocabulary](#status-vocabulary) for when a
+   `decision_log` *is* required.
 
 ### Step 5: Run the checks CI runs
 
@@ -330,7 +342,7 @@ If MATLAB is available, run the full 3-step symmetry cycle:
 | `inherits_python` | No | Python parent class(es) |
 | `out_of_sync` | No | `true` if MATLAB has diverged |
 | `out_of_sync_reason` | No | Human-readable explanation of the divergence |
-| `decision_log` | Enforced only where there is something to explain | Sync status, dates, deviation rationale. **Enforced** on any entry carrying a `status`, and on every `not_tracked` entry — those record a judgement, and a recorded decision with no reason gets re-investigated. **Not enforced** on a plain port, which has no divergence to explain and whose `python_path` / `python_name` already say what happened. Nearly every entry here carries one anyway; that is the habit, not a gate. (Whether a plain port should owe one *at all* is decision 4 of [NDI-python #211](https://github.com/Waltham-Data-Science/NDI-python/issues/211), still open across the three repos. This row states what the checker does today, which has not changed) |
+| `decision_log` | Enforced only where there is something to explain | Sync status, dates, deviation rationale. **Enforced** on any entry carrying a `status`, and on every `not_tracked` entry — those record a judgement, and a recorded decision with no reason gets re-investigated. **Not enforced** on a plain port, which has no divergence to explain and whose `python_path` / `python_name` already say what happened. Nearly every entry here carries one anyway; that is the habit, not a gate. Settled as decision 4 of [NDI-python #211](https://github.com/Waltham-Data-Science/NDI-python/issues/211): a `decision_log` explains a **divergence**, and a regular port has none — re-examining one against a newer MATLAB commit and finding nothing to follow does not create one |
 | `properties` | No | List of property mappings |
 | `methods` | No | List of method mappings |
 

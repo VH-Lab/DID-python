@@ -280,6 +280,42 @@ class TestTheDriftAllowlistNamesRealEntries:
         assert len(seen) == len(set(seen)), f"duplicate names: {seen}"
 
 
+class TestEveryTrackedEntryCanShowDrift:
+    """An entry with a `matlab_path` and no `matlab_last_sync_hash` is exempt
+    from the drift gate by omission.
+
+    It asserts its port is current forever and nothing can contradict it --
+    the same false assurance as a stale hash, but silent instead of red.
+    Settled as decision 2 of NDI-python #211.
+
+    WHY THIS LIVES HERE AND NOT ONLY IN check_bridge_coverage.py. That script's
+    `hash` check enforces two rules at once: that the field is PRESENT, and
+    that its value resolves to a real commit. Only the second needs a
+    DID-matlab checkout. The first reads nothing but this repo, so keeping it
+    exclusively in the MATLAB-dependent bridge job would leave the cheaper,
+    more basic rule enforced in exactly one place -- and a hashless entry is
+    the kind of omission that arrives with a hurried port, which is when a job
+    is most likely to be the one that got skipped. Checked in both places on
+    purpose: here in every matrix job, there against DID-matlab.
+    """
+
+    @pytest.mark.parametrize("source", BRIDGE_FILES, ids=lambda p: p.name)
+    def test_a_tracked_matlab_path_carries_a_sync_hash(self, source: Path):
+        data = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+        offenders = [
+            entry.get("name", "<unnamed>")
+            for entry in _tracked(data)
+            if entry.get("matlab_path") and not entry.get("matlab_last_sync_hash")
+        ]
+        assert not offenders, (
+            f"{source.name}: entries naming a matlab_path with no "
+            f"matlab_last_sync_hash:\n  " + "\n  ".join(offenders) + "\n\n"
+            "Without one the entry can never drift, so it claims to be current "
+            "forever. Record the MATLAB commit you examined: "
+            "git -C <DID-matlab> log -1 --format=%h -- src/did/<matlab_path>"
+        )
+
+
 def _documented_retired_statuses() -> set[str]:
     """Names in PORTING_INSTRUCTIONS.md § Retired status names.
 

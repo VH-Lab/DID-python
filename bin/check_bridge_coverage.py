@@ -95,11 +95,10 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # rollout is a RATCHET: list what is already drifted, gate everything else, and
 # shrink the list as entries get reviewed.
 #
-# The ratchet shape is decision 3 of #211 and is NOT yet settled (the
-# alternative is clean the backlog first, then switch on). It is moot here --
-# this repo had no backlog to do either to -- so this list is the anticipated
-# shape, not a decided one, and is the piece to revisit if #211 lands
-# differently.
+# Decision 3 of #211 settled on the ratchet, *for the moment*: the list is a
+# staging post toward clearing the debt, not a permanent exemption mechanism.
+# Moot here -- this repo had no backlog to ratchet down, and the list has been
+# empty since the gate went on.
 #
 # DID-python's list is empty and is expected to stay that way: at the time the
 # gate went on, zero entries were drifted, so there was no backlog to ratchet
