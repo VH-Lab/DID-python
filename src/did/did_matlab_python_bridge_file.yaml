@@ -4,6 +4,12 @@
 # In MATLAB, the file module is split across multiple files in +did/+file/.
 # In Python, these are consolidated into a single did/file.py module.
 #
+# Status convention: an entry with NO `status:` is a plain 1:1 port -- its
+# python_path / python_name say where it lives. A `status:` marks a deviation,
+# and is the exception rather than the norm. The values are defined once, in
+# PORTING_INSTRUCTIONS.md ("Status vocabulary") -- this file points there
+# rather than restating them.
+#
 # To check for drift, run:
 #   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
 

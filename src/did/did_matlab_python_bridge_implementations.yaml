@@ -1,6 +1,12 @@
 # did_matlab_python_bridge_implementations.yaml — Database implementations
 # Contract for did.implementations namespace.
 #
+# Status convention: an entry with NO `status:` is a plain 1:1 port -- its
+# python_path / python_name say where it lives. A `status:` marks a deviation,
+# and is the exception rather than the norm. The values are defined once, in
+# PORTING_INSTRUCTIONS.md ("Status vocabulary") -- this file points there
+# rather than restating them.
+#
 # To check for drift, run:
 #   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
 

@@ -7,7 +7,15 @@
 #   - matlab_last_sync_hash  : short SHA of the MATLAB commit last ported to Python
 #   - python_path            : location inside the Python repo (relative to src/did/)
 #   - python_class           : Python class name
+#   - status                 : absent for a plain port; otherwise names the
+#                              deviation (see the status convention below)
 #   - decision_log           : notes on deviations, sync dates, and rationale
+#
+# Status convention: an entry with NO `status:` is a plain 1:1 port -- its
+# python_path / python_name say where it lives. A `status:` marks a deviation,
+# and is the exception rather than the norm. The values are defined once, in
+# PORTING_INSTRUCTIONS.md ("Status vocabulary") -- this file points there
+# rather than restating them.
 #
 # To check for drift, run:
 #   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
