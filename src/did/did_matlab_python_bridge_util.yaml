@@ -481,14 +481,19 @@ functions:
       did_matlab_python_bridge_file.yaml.
 
 # =========================================================================
-# Not applicable in Python
+# Not tracked by a bridge entry
 # =========================================================================
-not_applicable:
-  - name: did.datastructures.table_cross_join (duplicate)
-    rationale: >
-      Stale entry, corrected 2026-08-28: MATLAB has no
-      +did/+datastructures/tableCrossJoin.m -- tableCrossJoin lives only
-      in +did/+db/, which is covered by the tableCrossJoin function entry
-      above (python: did.db.table_cross_join, via pandas). There is no
-      duplicate to reconcile. Kept as a note so the claim is not
-      reintroduced.
+not_tracked:
+  # MATLAB entities deliberately given no tracked bridge entry. `status`
+  # values are defined once, in PORTING_INSTRUCTIONS.md ("Status vocabulary").
+  - name: did.datastructures.tableCrossJoin
+    status: retired
+    decision_log: >
+      Tombstone, recorded 2026-08-28: DID-matlab has no
+      +did/+datastructures/tableCrossJoin.m and never did -- tableCrossJoin
+      lives only in +did/+db/, which is covered by the tableCrossJoin
+      function entry above (python: did.db.table_cross_join, via pandas).
+      A bridge entry once claimed the +datastructures path; it was removed.
+      Kept as a tombstone so the claim is not reintroduced. Being retired,
+      this entry names no MATLAB file that exists and so excuses none from
+      the coverage check -- that is the point of the status.

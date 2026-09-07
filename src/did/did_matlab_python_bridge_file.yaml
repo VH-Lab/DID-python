@@ -979,16 +979,22 @@ functions:
       DID-python #58) and both now enforce the same predicate.
 
 # =========================================================================
-# Not applicable in Python
+# Not tracked by a bridge entry
 # =========================================================================
-not_applicable:
+not_tracked:
+  # MATLAB entities deliberately given no tracked bridge entry. `status`
+  # values are defined once, in PORTING_INSTRUCTIONS.md ("Status vocabulary").
+  #
   # did.file.fileCache was listed here until 2026-08-28. It has a real (if
   # stub-level) Python counterpart, so it is now tracked as a class entry
   # above and is covered by the drift check.
   - name: did.file.dumbjsondb
-    rationale: >
-      Deliberately not ported. DID-python's storage backend is SQLiteDB;
-      there is no plan to carry the JSON-file document store across.
+    status: porting_deferred
+    decision_log: >
+      Not ported for now. DID-python's storage backend is SQLiteDB; there is
+      no current plan to carry the JSON-file document store across, but the
+      door is deliberately left open -- see the last sentence below, which is
+      why this is porting_deferred rather than matlab_only.
       NOTE (2026-08-28): the previous rationale here read "MATLAB
       dumbjsondb has a Python equivalent (DumbJsonDB in file.py)", which
       overstated the situation. A DumbJsonDB class does exist in file.py,

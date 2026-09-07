@@ -46,7 +46,7 @@ classes:
       ndi.cloud.api.files.getFile() for URL file downloads. Python has no
       URL download path at all -- SQLiteDB.open_doc() resolves only local
       (absolute or db-relative) locations -- so there is nothing to port;
-      see the not_applicable entry for ndi.cloud.api.files.getFile and the
+      see the not_tracked entry for ndi.cloud.api.files.getFile and the
       "Not Yet Ported" table in PORTING_INSTRUCTIONS.md.
 
       MATLAB 6edd765 (2026-07-22) fixed two lifecycle defects on the add
@@ -652,8 +652,9 @@ classes:
     type: class
     matlab_path: "+did/+implementations/sqldb.m"
     matlab_last_sync_hash: "13463d1"
-    python_path: "(not separately implemented)"
-    python_class: "(merged into Database)"
+    status: ported_elsewhere
+    python_path: "did/database.py"
+    python_class: "Database"
 
     methods:
       - name: alldocids
@@ -669,6 +670,12 @@ classes:
       MATLAB has an intermediate abstract class sqldb between database
       and sqlitedb. Python merges this layer directly into Database
       and SQLiteDB. Synchronized 2026-03-15.
+      2026-09-07: given an explicit `status: ported_elsewhere`. The fields
+      previously read python_path: "(not separately implemented)" and
+      python_class: "(merged into Database)" -- prose in fields the checker
+      parses as paths, which it skipped on the leading "(", so the entry's
+      real state was invisible to every check. They now name where the
+      capability actually lives.
 
   # -----------------------------------------------------------------------
   # did.implementations.matlabdumbjsondb
@@ -677,7 +684,7 @@ classes:
     type: class
     matlab_path: "+did/+implementations/matlabdumbjsondb.m"
     matlab_last_sync_hash: "13463d1"
-    python_path: "(not applicable)"
+    status: porting_deferred
 
     properties:
       - name: db
@@ -704,13 +711,23 @@ classes:
       without one it could never show drift -- the same blind spot that had
       hidden dumbjsondb and fileCache. Unported does not have to mean
       unwatched, so the file is tracked even though nothing is ported from it.
+      2026-09-07: given an explicit `status: porting_deferred`, and the
+      placeholder python_path: "(not applicable)" removed. An absent
+      python_path claims nothing; that string claimed something the checker
+      could not read, and read identically to sqldb's placeholder even though
+      the two entries mean opposite things (sqldb's capability exists in
+      Python; this one's does not).
 
 # =========================================================================
-# Not applicable in Python
+# Not tracked by a bridge entry
 # =========================================================================
-not_applicable:
+not_tracked:
+  # MATLAB entities deliberately given no tracked bridge entry. `status`
+  # values are defined once, in PORTING_INSTRUCTIONS.md ("Status vocabulary").
   - name: ndi.cloud.api.files.getFile
-    rationale: >
+    status: porting_deferred
+    external: true
+    decision_log: >
       MATLAB uses NDI cloud API for URL file downloads (added in sqlitedb.m
       commit 926c430). Not a direct port target: the NDI cloud API is
       MATLAB-ecosystem-specific. Python currently has no URL download path
@@ -718,3 +735,7 @@ not_applicable:
       db-relative) file locations -- so if remote locations are ever needed
       in Python it should be built with requests/urllib rather than ported.
       Tracked in the "Not Yet Ported" table in PORTING_INSTRUCTIONS.md.
+      `external: true` because this names a function in NDI-matlab, not a
+      file under DID-matlab/src/did: it excuses no DID-matlab file from the
+      coverage check and must say so, or it reads as an exemption that
+      silently covers nothing.

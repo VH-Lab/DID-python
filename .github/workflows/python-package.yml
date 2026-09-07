@@ -46,7 +46,13 @@ jobs:
         with:
           repository: VH-Lab/DID-matlab
           path: DID-matlab
-          fetch-depth: 0   # drift check walks history from each sync hash
+          # Not optional. The hash and drift checks walk MATLAB history
+          # backwards from each entry's sync hash; actions/checkout is shallow
+          # by default and does not have it, so `git cat-file -e <hash>` would
+          # report "missing" for nearly every entry. The script now detects a
+          # shallow checkout and stops with one message instead of sixty, but
+          # stopping is still a failure -- keep this at 0.
+          fetch-depth: 0
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -56,13 +62,18 @@ jobs:
       - name: Install PyYAML
         run: pip install pyyaml
 
-      # These four checks depend only on the current state of the two repos,
+      # These five checks depend only on the current state of the two repos,
       # so a PR can break them and a PR can fix them. They gate.
+      #
+      # Each check is named explicitly, so adding one to CHECKS in
+      # bin/check_bridge_coverage.py does NOT make it run here: it has to be
+      # listed below too, or it runs nowhere and its silence reads as a pass.
       - name: Check bridge coverage
         run: |
           python bin/check_bridge_coverage.py \
             --matlab-repo DID-matlab \
-            --check file --check hash --check member --check missing
+            --check file --check hash --check status \
+            --check member --check missing
 
       # Drift is different: it turns red when DID-matlab moves, which no commit
       # here causes and no commit here can fix until someone does the port. Kept

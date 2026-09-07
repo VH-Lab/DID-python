@@ -51,15 +51,37 @@ will never show up. The script checks that the bridge has no such blind spots.
 
 | Check | What it enforces |
 |---|---|
-| `file` | Every `.m` file under `DID-matlab/src/did` is either tracked by an entry or listed under `not_applicable`; every `.py` module under `src/did` is some entry's `python_path`. Both `matlab_path` and `python_path` point at files that exist. |
+| `file` | Every `.m` file under `DID-matlab/src/did` is either tracked by an entry or listed under `not_tracked`; every `.py` module under `src/did` is some entry's `python_path`. Both `matlab_path` and `python_path` point at files that exist. |
 | `hash` | Every entry with a `matlab_path` has a `matlab_last_sync_hash`, and that hash is a real commit. An entry without one can never show drift. |
+| `status` | Every `status` is one of the values in [Status vocabulary](#status-vocabulary), carries a `decision_log` saying why, and agrees with the rest of its entry. Every `not_tracked` entry either excuses a real MATLAB file or declares that it does not. |
 | `drift` | No MATLAB commits touch a tracked file after its sync hash. |
 | `member` | Every method/property entry names a symbol that exists in the MATLAB class (or one it inherits from), and its `python_name` exists in the Python class. |
 | `missing` | Every public MATLAB method and property has a bridge entry. Protected, private and `delete` members are skipped as implementation detail. |
 
-CI runs `file`, `hash`, `member` and `missing` as gating checks, and `drift`
-non-gating: drift turns red when DID-matlab moves, which no commit here causes
-and none can fix until someone does the port.
+CI runs `file`, `hash`, `status`, `member` and `missing` as gating checks, and
+`drift` non-gating: drift turns red when DID-matlab moves, which no commit here
+causes and none can fix until someone does the port.
+
+A check only gates if the CI job names it. The bridge job passes each one
+explicitly on the command line, so **adding a check to `CHECKS` in
+`bin/check_bridge_coverage.py` is half the work** — add `--check <name>` to
+`.github/workflows/python-package.yml` too, or the new check runs nowhere and
+its silence reads as a pass.
+
+`tests/test_bridge_contract.py` holds the rules that need no MATLAB checkout at
+all (duplicate entries, the status vocabulary, docs-vs-code agreement). It is a
+plain pytest file, so it runs in every `test` matrix job — a job with no
+DID-matlab checkout, where a MATLAB-dependent test would skip green.
+
+### The MATLAB checkout must not be shallow
+
+`hash` and `drift` walk DID-matlab history backwards from each entry's sync
+hash. A shallow clone does not have that history: `git cat-file -e <hash>`
+reports "missing" for nearly every entry and `git log <hash>..HEAD` cannot
+resolve its left side. `bin/check_bridge_coverage.py` detects this and stops
+with one message rather than emitting a failure per entry. CI checks DID-matlab
+out with `fetch-depth: 0`; locally, `git clone --depth N` needs a
+`git fetch --unshallow` before these two checks mean anything.
 
 ### Member entry conventions
 
@@ -76,6 +98,86 @@ The `member` check relies on two fields, both required for it to mean anything:
 
 One entry must describe one member. A combined `name: "a / b / c"` hides
 whether `b` and `c` are bridged at all.
+
+## Status vocabulary
+
+**This section is normative.** It is the only definition of these values in the
+repository; the bridge YAML comments, `bin/check_bridge_coverage.py` and
+`AGENTS.md` point here rather than restating it, because a rule written in
+three places is a rule that will disagree with itself. The tuple `STATUSES` in
+`bin/check_bridge_coverage.py` is the mechanism, and
+`tests/test_bridge_contract.py` asserts that it and the table below name the
+same set — so neither can move without the other.
+
+The bridge is the answer to "is this ported?". `status` is how an entry answers
+when the answer is not a plain yes.
+
+| `status` | Meaning | Allowed in `not_tracked`? |
+|---|---|---|
+| *(absent)* | **ported.** A 1:1 Python counterpart under the mirrored name, at `python_path`. This is the default, and it is spelled by leaving `status` out — writing `status: ported` is rejected, because if the value were sometimes explicit then its absence would be ambiguous between "ported" and "nobody filled this in". | no |
+| `ported_elsewhere` | Python has the capability, but not 1:1 — a different name, folded into another class, different machinery. `python_path` must say where it actually lives. | no |
+| `porting_deferred` | No Python counterpart today. Known, and it may happen later; the `decision_log` says why not now, or what blocks it. Must not carry a `python_path`. | yes |
+| `matlab_only` | Exists because MATLAB works that way, and never gets a counterpart by design (`filesep`, `toolboxdir`, `Contents.m`). Must not carry a `python_path`. | yes |
+| `retired` | The MATLAB entity this entry names does not exist in DID-matlab today — removed upstream, or claimed here in error. A tombstone, kept so the decision is not re-litigated. | yes |
+
+Two distinctions worth stating outright, because collapsing them is what makes
+a status field worse than none:
+
+- **`ported_elsewhere` is not `porting_deferred`.** One says the capability is
+  there and names where; the other says it is absent. A reader who cannot tell
+  them apart has to go read the Python tree, which is the work the bridge
+  exists to save. `sqldb` (merged into `Database`) and `matlabdumbjsondb`
+  (genuinely unported) sat in this repo for months with the *same* placeholder
+  shape, `python_path: "(not ...)"`, and the checker skipped both on the
+  leading `(`.
+- **`porting_deferred` is not `matlab_only`.** "Not yet" and "never" invite
+  different follow-up. `did.file.dumbjsondb` is deferred, not MATLAB-only: its
+  log says what promoting it would take.
+
+Every entry with a `status` needs a `decision_log` explaining it. A gap
+recorded with no reason still gets re-investigated by the next reader, which is
+the cost recording it was meant to avoid.
+
+### Statuses are never prose in a path field
+
+`python_path` and `python_class` name files and classes. They do not carry
+sentences. `python_path: "(not separately implemented)"` is a status wearing a
+path's clothes: the checker cannot act on it, and it silently disables every
+check keyed on that path. Say it with `status:` instead.
+
+### `not_tracked`
+
+Each bridge YAML ends with a `not_tracked:` list — the MATLAB entities
+deliberately given no tracked entry, and the only thing that excuses a `.m`
+file from the `file` check. Each entry takes:
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | Yes | The MATLAB entity, bare (`Contents.m`), by stem, or dotted (`did.file.dumbjsondb`) |
+| `status` | Yes | `porting_deferred`, `matlab_only` or `retired` — see the table above |
+| `decision_log` | Yes | Why it is not tracked |
+| `external` | No | `true` when the name is a file outside `DID-matlab/src/did` |
+
+**An entry here must excuse a real MATLAB file, or say that it does not.** The
+list reads as a set of coverage exemptions, so an entry naming nothing is
+inert: it looks like it is holding a file out of the check while holding
+nothing. `retired` and `external: true` are the two ways to declare that on
+purpose — a tombstone for something that is gone, and a note about a file in
+another repository (`ndi.cloud.api.files.getFile` lives in NDI-matlab). The
+`status` check enforces this in both directions; a name that resolves *and*
+carries `external: true` is flagged too.
+
+This list is not the place for `ported_elsewhere`. If Python has the
+capability, the entity belongs in `classes` or `functions`, where the drift
+check can see the MATLAB file it came from.
+
+The key was called `not_applicable:` until 2026-09-07. It was renamed because
+the name asserted the wrong thing about most of what was in it: three entries
+meant "MATLAB-only by design", one meant "deferred", one was a tombstone and
+one named a file in another repository. "Not applicable" reads as a single
+decision, and it was six entries making four different ones. Historical audit
+notes further down this file still use the old key name; they are dated records
+of what was true then, and are left as written.
 
 ## Porting a MATLAB Change to Python
 
@@ -115,10 +217,30 @@ After porting, update the entry in the bridge YAML:
    ```bash
    git -C /path/to/DID-matlab log -1 --format="%h" -- src/did/<matlab_path>
    ```
+   This prints a **commit**, which is what the field holds — see
+   [`matlab_last_sync_hash` is a commit](#matlab_last_sync_hash-is-a-commit).
+   Never bump a hash you have not actually examined the diff for: the field's
+   whole claim is that somebody looked.
 2. Remove `matlab_current_hash` and `out_of_sync` / `out_of_sync_reason` if present.
-3. Update the `decision_log` with the sync date.
+3. Set or clear `status` if the port's shape changed — see
+   [Status vocabulary](#status-vocabulary).
+4. Update the `decision_log` with the sync date.
 
-### Step 5: Run symmetry tests
+### Step 5: Run the checks CI runs
+
+Run these before pushing; each is a gating CI job, and they are cheap.
+
+```bash
+black src/ tests/            # CI runs `black --check`
+ruff check src/ tests/
+pytest
+python bin/check_bridge_coverage.py --matlab-repo /path/to/DID-matlab
+```
+
+The DID-matlab checkout must not be shallow — see
+[The MATLAB checkout must not be shallow](#the-matlab-checkout-must-not-be-shallow).
+
+### Step 6: Run symmetry tests
 
 ```bash
 # Python tests
@@ -138,9 +260,10 @@ If MATLAB is available, run the full 3-step symmetry cycle:
 | `name` | Yes | MATLAB function/class name |
 | `type` | Yes | `class` or `function` |
 | `matlab_path` | Yes | Path relative to `src/did/` in DID-matlab |
-| `matlab_last_sync_hash` | Yes | Short SHA of the MATLAB commit last ported to Python |
+| `matlab_last_sync_hash` | Yes | Short SHA of the MATLAB **commit** last ported to Python — a commit, never a blob (see below) |
 | `matlab_current_hash` | No | Current MATLAB hash when out of sync (for tracking) |
-| `python_path` | Yes | Path relative to `src/did/` in DID-python |
+| `status` | No | Absent means ported; otherwise see [Status vocabulary](#status-vocabulary) |
+| `python_path` | Yes, unless `status` says there is no counterpart | Path relative to `src/did/` in DID-python. A path, never prose |
 | `python_class` | If class | Python class name |
 | `python_name` | If function | Python function name |
 | `inherits_matlab` | No | MATLAB parent class(es) |
@@ -150,6 +273,45 @@ If MATLAB is available, run the full 3-step symmetry cycle:
 | `decision_log` | Yes | Sync status, dates, deviation rationale |
 | `properties` | No | List of property mappings |
 | `methods` | No | List of method mappings |
+
+`name` is unique across all four bridge files, and one MATLAB file gets one
+entry. Two entries for one thing do not fail the `file` check — that check asks
+whether a MATLAB file is *recorded*, and twice is recorded — so a stale copy
+sits there disagreeing with a real one until somebody reads both, and whichever
+a reader hits first is the answer they get. `name` also indexes the
+`inherits_matlab` lookup in `bin/check_bridge_coverage.py`, so a repeated name
+silently shadows an entry there. `tests/test_bridge_contract.py` enforces both.
+
+Entries may legitimately *share* a `matlab_path` or a `python_path` — the
+twenty-four function entries under `did/file.py` are twenty-four different
+functions in one module. The duplicate guard is therefore keyed on
+**(`name`, `matlab_path`)** together: same name and same file is one thing
+recorded twice; anything else is different things in one file.
+
+### `matlab_last_sync_hash` is a commit
+
+`git log -1 --format=%h -- <path>` (a commit) — never `git hash-object` (a
+blob). Freshness is asked by walking history:
+
+```bash
+git -C /path/to/DID-matlab log <hash>..HEAD -- src/did/<matlab_path>
+```
+
+and `git log` does **not** error on a blob; it returns commits. A blob hash
+therefore reads as merely "stale" rather than "unusable", which is how such
+hashes survive unnoticed. The `hash` check resolves each value as `<hash>^{commit}`
+so a blob is rejected outright. (Every entry in this repo already holds a
+commit; the rule is written down so it stays that way.)
+
+Both spellings of a commit are fine: the file's own last-touching commit, or a
+repo-wide commit from a batch sync. The check tests the object *type*, not
+whether the commit touched the file.
+
+One caveat worth knowing before you chase a phantom drift report: if DID-matlab
+**squash-merges** a PR, the commit an entry recorded stops existing on `main`.
+The fix is to re-point the entry at the squashed commit, not to re-review the
+file — nothing about the port changed. A merge commit leaves the original
+reachable and needs no adjustment.
 
 Each entry in `methods` / `properties` takes:
 
@@ -171,6 +333,13 @@ When a new file is added to DID-matlab that needs a Python counterpart:
 2. Add an entry to the appropriate bridge YAML file.
 3. Set `matlab_last_sync_hash` to the MATLAB commit that introduced the file.
 4. Run symmetry tests to verify cross-language compatibility.
+
+If it will *not* be ported, it still needs recording — the `file` check fails
+on an unrecorded `.m` file. Add a tracked entry with a `status` (so the file
+stays under the drift check even though nothing is ported from it, which is how
+`matlabdumbjsondb` is handled), or a `not_tracked` entry when there is nothing
+to watch. Either way it needs a `status` and a `decision_log`; see
+[Status vocabulary](#status-vocabulary).
 
 ## Current Sync Status
 

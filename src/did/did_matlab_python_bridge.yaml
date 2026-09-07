@@ -1564,21 +1564,28 @@ classes:
     decision_log: "Exact match. Synchronized 2026-03-15."
 
 # =========================================================================
-# Not applicable in Python
+# Not tracked by a bridge entry
 # =========================================================================
-not_applicable:
+not_tracked:
+  # MATLAB entities deliberately given no tracked bridge entry. Every entry
+  # carries a `status` from the vocabulary in PORTING_INSTRUCTIONS.md
+  # ("Status vocabulary"), which is the single normative definition of these
+  # values -- do not restate it here.
   - name: did.filesep
-    rationale: >
+    status: matlab_only
+    decision_log: >
       MATLAB-only utility. Python uses os.sep / pathlib natively.
 
   - name: Contents.m
-    rationale: >
+    status: matlab_only
+    decision_log: >
       MATLAB toolbox contents/version listing (a comment-only .m file read
       by MATLAB's `ver`/`help`). Not code, and Python carries its version in
       pyproject.toml. Recorded 2026-08-28 so the bridge-coverage audit has
       no unexplained MATLAB files.
 
   - name: did.toolboxdir
-    rationale: >
+    status: matlab_only
+    decision_log: >
       MATLAB-only utility for locating the DID toolbox directory.
       Python uses importlib.resources or __file__.
