@@ -95,6 +95,12 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # rollout is a RATCHET: list what is already drifted, gate everything else, and
 # shrink the list as entries get reviewed.
 #
+# The ratchet shape is decision 3 of #211 and is NOT yet settled (the
+# alternative is clean the backlog first, then switch on). It is moot here --
+# this repo had no backlog to do either to -- so this list is the anticipated
+# shape, not a decided one, and is the piece to revisit if #211 lands
+# differently.
+#
 # DID-python's list is empty and is expected to stay that way: at the time the
 # gate went on, zero entries were drifted, so there was no backlog to ratchet
 # down. It exists so the escape hatch is present when a batch of MATLAB work

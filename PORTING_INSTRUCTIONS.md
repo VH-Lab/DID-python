@@ -99,6 +99,9 @@ file really moved. Both spellings of a sync hash therefore stay valid — see
 
 **The escape hatch is a ratchet, not a switch.** `DRIFT_ALLOWLIST` in
 `bin/check_bridge_coverage.py` names entries permitted to be drifted right now.
+(Ratchet-vs-clean-first is decision 3 of #211 and is still open; it is moot for
+this repo either way, because there was no backlog to clean or to ratchet down.
+If #211 settles on a different shape, this is the piece that changes.)
 It is empty in this repo, and was empty when the gate went on — nothing here was
 drifted, so there was no backlog to ratchet down. Use it when a batch of MATLAB
 work lands faster than it can be reviewed: add the name, review or port it, take
@@ -327,7 +330,7 @@ If MATLAB is available, run the full 3-step symmetry cycle:
 | `inherits_python` | No | Python parent class(es) |
 | `out_of_sync` | No | `true` if MATLAB has diverged |
 | `out_of_sync_reason` | No | Human-readable explanation of the divergence |
-| `decision_log` | Only where there is something to explain | Sync status, dates, deviation rationale. **Required** on any entry carrying a `status`, and on every `not_tracked` entry — those record a judgement, and a recorded decision with no reason gets re-investigated. **Not required** on a plain port: it has no divergence to explain, and its `python_path` / `python_name` already say what happened. Most entries here carry one anyway, and that is welcome, not mandatory |
+| `decision_log` | Enforced only where there is something to explain | Sync status, dates, deviation rationale. **Enforced** on any entry carrying a `status`, and on every `not_tracked` entry — those record a judgement, and a recorded decision with no reason gets re-investigated. **Not enforced** on a plain port, which has no divergence to explain and whose `python_path` / `python_name` already say what happened. Nearly every entry here carries one anyway; that is the habit, not a gate. (Whether a plain port should owe one *at all* is decision 4 of [NDI-python #211](https://github.com/Waltham-Data-Science/NDI-python/issues/211), still open across the three repos. This row states what the checker does today, which has not changed) |
 | `properties` | No | List of property mappings |
 | `methods` | No | List of method mappings |
 
@@ -379,7 +382,7 @@ Each entry in `methods` / `properties` takes:
 | `matlab_name` | No | `~` marks a Python-only member with no MATLAB counterpart |
 | `python_path` | No | Only when the counterpart lives outside the entry's `python_path` |
 | `kind` | No | `constructor`, `static` or `hidden` |
-| `decision_log` | Only where there is something to explain | Deviations, sync date, rationale — same rule as the entry-level field above |
+| `decision_log` | Enforced only where there is something to explain | Deviations, sync date, rationale — same as the entry-level field above |
 | `input_arguments` / `output_arguments` | No | Argument type mappings |
 
 ## Adding a New MATLAB File
