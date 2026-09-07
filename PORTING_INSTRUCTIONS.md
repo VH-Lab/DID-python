@@ -115,7 +115,7 @@ when the answer is not a plain yes.
 | `status` | Meaning | Allowed in `not_tracked`? |
 |---|---|---|
 | *(absent)* | **ported.** A 1:1 Python counterpart under the mirrored name, at `python_path`. This is the default, and it is spelled by leaving `status` out — writing `status: ported` is rejected, because if the value were sometimes explicit then its absence would be ambiguous between "ported" and "nobody filled this in". | no |
-| `ported_elsewhere` | Python has the capability, but not 1:1 — a different name, folded into another class, different machinery. `python_path` must say where it actually lives. | no |
+| `ported_differently` | Python has the capability, but not 1:1 — a different name, folded into another class, a dependency doing the job, a different design. `python_path` must still say where it lives. | no |
 | `porting_deferred` | No Python counterpart today. Known, and it may happen later; the `decision_log` says why not now, or what blocks it. Must not carry a `python_path`. | yes |
 | `matlab_only` | Exists because MATLAB works that way, and never gets a counterpart by design (`filesep`, `toolboxdir`, `Contents.m`). Must not carry a `python_path`. | yes |
 | `retired` | The MATLAB entity this entry names does not exist in DID-matlab today — removed upstream, or claimed here in error. A tombstone, kept so the decision is not re-litigated. | yes |
@@ -123,9 +123,9 @@ when the answer is not a plain yes.
 Two distinctions worth stating outright, because collapsing them is what makes
 a status field worse than none:
 
-- **`ported_elsewhere` is not `porting_deferred`.** One says the capability is
-  there and names where; the other says it is absent. A reader who cannot tell
-  them apart has to go read the Python tree, which is the work the bridge
+- **`ported_differently` is not `porting_deferred`.** One says the capability
+  is there and names where; the other says it is absent. A reader who cannot
+  tell them apart has to go read the Python tree, which is the work the bridge
   exists to save. `sqldb` (merged into `Database`) and `matlabdumbjsondb`
   (genuinely unported) sat in this repo for months with the *same* placeholder
   shape, `python_path: "(not ...)"`, and the checker skipped both on the
@@ -137,6 +137,29 @@ a status field worse than none:
 Every entry with a `status` needs a `decision_log` explaining it. A gap
 recorded with no reason still gets re-investigated by the next reader, which is
 the cost recording it was meant to avoid.
+
+### Retired status names
+
+These names were used and replaced. `bin/check_bridge_coverage.py` rejects each
+with a message naming its replacement, rather than a bare "not in the
+vocabulary" that leaves the reader guessing.
+
+| Retired name | Write instead | Why |
+|---|---|---|
+| `ported_elsewhere` | `ported_differently` | "Elsewhere" names a *place*, and `python_path` already answers where. The manner is the part a reader cannot recover from any other field — and most entries carrying it involved nothing moving anywhere (NDR-python issue #21) |
+| `not_yet_ported` | `porting_deferred` | Vague about whether anyone decided |
+| `not_applicable` | `matlab_only`, `porting_deferred` or `retired` | Conflated all three; it was this repo's own key name until 2026-09-07 |
+| `implemented` | *(no status)* | A synonym for the default |
+| `does_not_exist` | `retired` | Same claim, and `retired` says it is a tombstone |
+
+Several of these were never written in this repository — `not_yet_ported`,
+`implemented` and `does_not_exist` come from NDI-python, and NDR-python's
+agent instructions still tell contributors to write `not_yet_ported` or
+`not_applicable`. They are rejected here anyway, by name, because the
+vocabulary is shared across the three repositories and somebody arriving from
+one of the others should be told the current name rather than merely told no.
+Drift between these three repos is the thing this whole contract exists to
+prevent, and a helpful error is cheaper than a doc nobody reads.
 
 ### Statuses are never prose in a path field
 
@@ -167,7 +190,7 @@ another repository (`ndi.cloud.api.files.getFile` lives in NDI-matlab). The
 `status` check enforces this in both directions; a name that resolves *and*
 carries `external: true` is flagged too.
 
-This list is not the place for `ported_elsewhere`. If Python has the
+This list is not the place for `ported_differently`. If Python has the
 capability, the entity belongs in `classes` or `functions`, where the drift
 check can see the MATLAB file it came from.
 

@@ -248,6 +248,32 @@ def _documented_status_table() -> list[tuple[str, str]]:
     return rows
 
 
+def _documented_retired_statuses() -> set[str]:
+    """Names in PORTING_INSTRUCTIONS.md § Retired status names.
+
+    Anchored on the header row, like the vocabulary table above, so the two
+    tables in this section cannot be confused for each other.
+    """
+    text = INSTRUCTIONS.read_text(encoding="utf-8")
+    start = text.index("### Retired status names")
+    section = text[start : text.index("\n### ", start + 1)]
+    lines = section.splitlines()
+    header = "| Retired name | Write instead | Why |"
+    assert header in lines, (
+        "the retired-names table header in PORTING_INSTRUCTIONS.md is not "
+        f"{header!r} any more, so this test is reading the wrong table."
+    )
+    names = set()
+    for line in lines[lines.index(header) + 1 :]:
+        if not line.strip().startswith("|"):
+            break
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        match = re.fullmatch(r"`([a-z_]+)`", cells[0]) if cells else None
+        if match:
+            names.add(match.group(1))
+    return names
+
+
 class TestDocumentationMatchesTheMechanism:
     """PORTING_INSTRUCTIONS.md § Status vocabulary is normative, and
     `bin/check_bridge_coverage.py` is what actually enforces it. Nothing keeps
@@ -284,6 +310,24 @@ class TestDocumentationMatchesTheMechanism:
             f"NOT_TRACKED_STATUSES.\n  documented: {sorted(documented)}\n  "
             f"enforced:   {sorted(checker.NOT_TRACKED_STATUSES)}"
         )
+
+    def test_documented_retired_names_are_exactly_the_rejected_ones(self):
+        """The rename is only safe if every place that names the value moves
+        together. NDR-python issue #21 lists four such places per repo, and a
+        half-finished rename is strictly worse than either name -- so bind the
+        table to the dict the checker actually rejects on."""
+        documented = _documented_retired_statuses()
+        assert documented == set(checker.REPLACED_STATUSES), (
+            "PORTING_INSTRUCTIONS.md and check_bridge_coverage.py disagree "
+            f"about retired status names.\n  documented: {sorted(documented)}\n"
+            f"  rejected:   {sorted(checker.REPLACED_STATUSES)}"
+        )
+
+    def test_no_name_is_both_current_and_retired(self):
+        """A name in both tuples would make the checker reject a value its own
+        vocabulary allows, in whichever order the branches happen to run."""
+        overlap = set(checker.STATUSES) & set(checker.REPLACED_STATUSES)
+        assert not overlap, f"status names both current and retired: {sorted(overlap)}"
 
     def test_ported_is_documented_as_the_absent_default(self):
         """`ported` is spelled by leaving `status` out, so it is the one value
@@ -329,9 +373,29 @@ class TestStatusValuesInUse:
         assert not offenders, f"{source.name}:\n  " + "\n  ".join(offenders)
 
     @pytest.mark.parametrize("source", BRIDGE_FILES, ids=lambda p: p.name)
+    def test_no_entry_uses_a_retired_status_name(self, source: Path):
+        """Catches a rename that changed the constants but missed an entry.
+
+        `test_tracked_statuses_are_in_the_vocabulary` would also fail on this,
+        but with "outside the documented vocabulary" -- true, and unhelpful.
+        This one names the replacement.
+        """
+        data = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+        entries = list(_tracked(data)) + list(data.get("not_tracked") or [])
+        offenders = [
+            f"{entry.get('name')}: {entry['status']!r} -> use "
+            f"{checker.REPLACED_STATUSES[entry['status']]}"
+            for entry in entries
+            if entry.get("status") in checker.REPLACED_STATUSES
+        ]
+        assert not offenders, f"{source.name}: retired status names:\n  " + "\n  ".join(
+            offenders
+        )
+
+    @pytest.mark.parametrize("source", BRIDGE_FILES, ids=lambda p: p.name)
     def test_no_status_is_hidden_as_prose_in_a_path_field(self, source: Path):
         """`python_path: "(not separately implemented)"` was how this repo said
-        `ported_elsewhere` before the field existed, and
+        `ported_differently` before the field existed, and
         `python_path: "(not applicable)"` was how it said `porting_deferred` --
         the same shape for opposite claims, and the checker skipped both on the
         leading `(`, which disabled every check keyed on that path. Paths name

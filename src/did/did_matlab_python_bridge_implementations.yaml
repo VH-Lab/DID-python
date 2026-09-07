@@ -652,7 +652,7 @@ classes:
     type: class
     matlab_path: "+did/+implementations/sqldb.m"
     matlab_last_sync_hash: "13463d1"
-    status: ported_elsewhere
+    status: ported_differently
     python_path: "did/database.py"
     python_class: "Database"
 
@@ -670,12 +670,16 @@ classes:
       MATLAB has an intermediate abstract class sqldb between database
       and sqlitedb. Python merges this layer directly into Database
       and SQLiteDB. Synchronized 2026-03-15.
-      2026-09-07: given an explicit `status: ported_elsewhere`. The fields
+      2026-09-07: given an explicit `status: ported_differently`. The fields
       previously read python_path: "(not separately implemented)" and
       python_class: "(merged into Database)" -- prose in fields the checker
       parses as paths, which it skipped on the leading "(", so the entry's
       real state was invisible to every check. They now name where the
       capability actually lives.
+      The status was written `ported_elsewhere` for part of that day, before
+      NDR-python issue #21 settled the name across all three repos: sqldb is
+      not a file that moved, it is a layer Python does not have, so the
+      manner is the informative part and python_path already answers "where".
 
   # -----------------------------------------------------------------------
   # did.implementations.matlabdumbjsondb

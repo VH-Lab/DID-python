@@ -53,12 +53,33 @@ CHECKS = ("file", "hash", "status", "drift", "member", "missing")
 # plus a `python_path`. Allowing it to also be written out would make a
 # missing status ambiguous between "ported" and "nobody filled this in",
 # which is the ambiguity the field exists to remove.
-STATUSES = ("ported_elsewhere", "porting_deferred", "matlab_only", "retired")
+STATUSES = ("ported_differently", "porting_deferred", "matlab_only", "retired")
 
-# Statuses an entry in a `not_tracked` list may carry. `ported_elsewhere`
+# Statuses an entry in a `not_tracked` list may carry. `ported_differently`
 # is excluded: if Python has the capability, the entry belongs in `classes`
 # or `functions` where the drift check can see it.
 NOT_TRACKED_STATUSES = ("porting_deferred", "matlab_only", "retired")
+
+# Status names that were used and then replaced, mapped to what to write
+# instead. A retired name gets a targeted error saying what it became, rather
+# than a bare "not in the vocabulary" that leaves the reader to guess.
+#
+# This matters more than it looks: the vocabulary is shared by DID-python,
+# NDI-python and NDR-python, and the three drifted apart once already. Someone
+# arriving from a repo (or a doc) that still carries an old name should be told
+# the new one, not just told no. `not_applicable` is here because it was this
+# repo's own key name until 2026-09-07, and it conflated three claims -- so
+# there is no single replacement to name, and the message says so.
+REPLACED_STATUSES = {
+    "ported_elsewhere": "ported_differently (NDR-python issue #21: python_path "
+    "already says WHERE; the manner is the part a reader cannot recover)",
+    "not_yet_ported": "porting_deferred",
+    "not_applicable": "matlab_only, porting_deferred or retired -- pick the one "
+    "you mean; not_applicable conflated all three",
+    "implemented": "no status at all (ported is the default: no status plus a "
+    "python_path)",
+    "does_not_exist": "retired",
+}
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -507,6 +528,14 @@ def check_status(report, matlab_repo, tracked, not_tracked):
                 )
             continue
 
+        if status in REPLACED_STATUSES:
+            report.add(
+                "status",
+                f"{where}: {status!r} is a retired status name; "
+                f"use {REPLACED_STATUSES[status]}. "
+                "See PORTING_INSTRUCTIONS.md, 'Retired status names'.",
+            )
+            continue
         if status not in STATUSES:
             report.add(
                 "status",
@@ -524,19 +553,19 @@ def check_status(report, matlab_repo, tracked, not_tracked):
                 "what recording it was supposed to prevent.",
             )
 
-        if status == "ported_elsewhere" and not entry.get("python_path"):
+        if status == "ported_differently" and not entry.get("python_path"):
             report.add(
                 "status",
-                f"{where}: ported_elsewhere must give the python_path where the "
-                "capability actually lives, or it is indistinguishable from "
-                "porting_deferred.",
+                f"{where}: ported_differently must give the python_path where "
+                "the capability actually lives, or it is indistinguishable "
+                "from porting_deferred.",
             )
         if status in ("porting_deferred", "matlab_only") and entry.get("python_path"):
             report.add(
                 "status",
                 f"{where}: status {status} says there is no Python counterpart, "
                 f"but python_path names one ({entry['python_path']}). If the "
-                "capability exists in Python, the status is ported_elsewhere.",
+                "capability exists in Python, the status is ported_differently.",
             )
 
     matlab_files = [
@@ -548,6 +577,14 @@ def check_status(report, matlab_repo, tracked, not_tracked):
     for entry in not_tracked:
         where = f"{entry.get('name', '<unnamed>')} ({entry['_bridge']})"
         status = entry.get("status")
+        if status in REPLACED_STATUSES:
+            report.add(
+                "status",
+                f"{where}: {status!r} is a retired status name; "
+                f"use {REPLACED_STATUSES[status]}. "
+                "See PORTING_INSTRUCTIONS.md, 'Retired status names'.",
+            )
+            continue
         if status not in NOT_TRACKED_STATUSES:
             report.add(
                 "status",
