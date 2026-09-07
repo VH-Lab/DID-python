@@ -1457,3 +1457,387 @@ def text_to_cellstr(filename):
     This is an alias for read_lines.
     """
     return read_lines(filename)
+
+
+# ---------------------------------------------------------------------------
+# File series manifest, format version 1
+# ---------------------------------------------------------------------------
+#
+# The wire format is documented in DID-matlab docs/notes/file_series_manifest.md.
+# Both languages must agree exactly, byte for byte, or a manifest written by one
+# is unreadable to the other. Keep this module's constants and layout in step
+# with did.file.readSeriesManifest / writeSeriesManifest / readSeriesManifestUid.
+
+_MANIFEST_MAGIC = b"DIDFSER1"
+_MANIFEST_FORMAT_VERSION = 1
+_MANIFEST_HEADER_SIZE = 32  # magic(8) + version(4) + flags(4) + count(4) +
+#                             uid_width(4) + reserved(8)
+_MANIFEST_FLAG_HAS_SOURCE_NAMES = 1
+
+
+class SeriesManifestError(ValueError):
+    """A file series manifest is not readable, in the same shape MATLAB reports.
+
+    ``identifier`` carries the MATLAB identifier (e.g.
+    ``'DID:FileSeries:readSeriesManifest:badMagic'``) so callers written against
+    either language can branch on the same strings.
+    """
+
+    def __init__(self, identifier, message):
+        super().__init__(message)
+        self.identifier = identifier
+
+
+def is_safe_uid(uid):
+    """Is ``uid`` safe to use as a filename under a cache or file root?
+
+    A uid stands in for a file basename under ``<root>/<uid>``, so any value
+    that would leave that directory once joined -- a path separator, a dot
+    segment, a NUL, an empty or whitespace-padded string -- is refused.
+    Mirrors did.file.isSafeUid; see DID-matlab issue #167.
+
+    This is the public form; ``did.implementations.sqlitedb._is_safe_uid``
+    delegates here so code outside the sqlitedb implementation -- notably
+    ``cached_path_for_uid`` -- can apply the same guard without depending on a
+    database implementation.
+    """
+    if not isinstance(uid, str) or not uid:
+        return False
+    if uid.strip() != uid:
+        return False
+    if uid in (".", ".."):
+        return False
+    if "/" in uid or "\\" in uid or "\x00" in uid:
+        return False
+    return os.path.basename(uid) == uid
+
+
+def cached_path_for_uid(uid, additional_roots=None):
+    """Local path of a file already on disk, with NO database lookup.
+
+    Returns the full path of the file stored under ``uid``, or ``None`` if no
+    such file is on disk. Unsafe uids (see :func:`is_safe_uid`) return
+    ``None``.
+
+    Both roots a DID file can live in are named by the file's uid: the global
+    file cache at ``PathConstants().filecachepath``, and a database's own
+    ``FileDir``. This is a pure function of the uid: no query, no network, so
+    it is safe from any thread and any process. Callers that already hold the
+    document hold the uid too, and can use this to resolve members without
+    opening the database.
+
+    ``additional_roots`` is searched AFTER the global cache, in order.
+    ``did.database.cached_path_for_file`` passes the database's own
+    ``FileDir`` here. The order matches ``SQLiteDB.open_doc``, which prefers
+    the global cache: a file retrieved from a remote location once is kept
+    there, so a second open of the same document does not fetch it again.
+
+    Mirrors did.file.cachedPathForUid.
+    """
+    from .common import PathConstants
+
+    if not is_safe_uid(uid):
+        return None
+
+    additional_roots = additional_roots or []
+
+    try:
+        cache_root = PathConstants().filecachepath
+    except OSError:
+        cache_root = None
+
+    roots = []
+    if cache_root:
+        roots.append(cache_root)
+    roots.extend(str(r) for r in additional_roots if r)
+
+    for root in roots:
+        candidate = os.path.join(root, uid)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def read_series_manifest(filename):
+    """Read a file series manifest (format version 1).
+
+    Returns a dict with keys:
+
+    - ``count``           - number of member slots
+    - ``uid_width``       - bytes per uid record, as the file declares
+    - ``uids``            - list of length ``count``; entry i is member i's
+                            uid (zero-based on disk), or ``""`` when absent
+    - ``source_names``    - list of length ``count`` when the name section is
+                            present, else ``[]``. An empty entry means that
+                            member has no recorded name.
+    - ``has_source_names`` - whether the name section was present
+
+    Member indices are zero-based on disk, matching MATLAB's reader.
+
+    Raises :class:`SeriesManifestError` for a bad magic, wrong version, bad
+    uid width, a decreasing name offset, or a truncated file.
+
+    Mirrors did.file.readSeriesManifest.
+    """
+    with open(filename, "rb") as fid:
+        header = fid.read(_MANIFEST_HEADER_SIZE)
+        if len(header) < 8:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifest:badMagic",
+                f"'{filename}' is not a file series manifest (magic is '').",
+            )
+        magic = header[:8]
+        if magic != _MANIFEST_MAGIC:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifest:badMagic",
+                f"'{filename}' is not a file series manifest "
+                f"(magic is '{magic.decode('ascii', errors='replace')}').",
+            )
+        if len(header) < _MANIFEST_HEADER_SIZE:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifest:truncated",
+                f"'{filename}' ends before its header is complete.",
+            )
+        (
+            format_version,
+            flags,
+            count,
+            uid_width,
+        ) = struct.unpack("<IIII", header[8:24])
+        # header[24:32] is reserved
+
+        if format_version != 1:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifest:badVersion",
+                f"'{filename}' declares manifest format version "
+                f"{format_version}; this reader understands version 1.",
+            )
+        if uid_width < 1:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifest:badUidWidth",
+                f"'{filename}' declares uid_width {uid_width}.",
+            )
+
+        uid_block = fid.read(int(count) * int(uid_width))
+        expected = int(count) * int(uid_width)
+        if len(uid_block) < expected:
+            got_records = len(uid_block) // uid_width if uid_width else 0
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifest:truncated",
+                f"'{filename}' declares {count} members but holds only "
+                f"{got_records} uid records; the file is truncated.",
+            )
+
+        uids = []
+        for i in range(count):
+            record = uid_block[i * uid_width : (i + 1) * uid_width]
+            # Strip NUL padding; an all-NUL record means absent (isSafeUid
+            # rejects NUL, so no real uid can collide with the sentinel).
+            trimmed = record.replace(b"\x00", b"")
+            uids.append(trimmed.decode("ascii") if trimmed else "")
+
+        has_source_names = bool(flags & _MANIFEST_FLAG_HAS_SOURCE_NAMES)
+        source_names = []
+
+        if has_source_names:
+            offset_block = fid.read(4 * (count + 1))
+            if len(offset_block) < 4 * (count + 1):
+                got = len(offset_block) // 4
+                raise SeriesManifestError(
+                    "DID:FileSeries:readSeriesManifest:truncated",
+                    f"'{filename}' declares source names but its offset "
+                    f"table is truncated ({got} of {count + 1} entries).",
+                )
+            name_offset = list(struct.unpack(f"<{count + 1}I", offset_block))
+            # Validate the whole table before it is used to index anything.
+            for i in range(count):
+                if name_offset[i + 1] < name_offset[i]:
+                    raise SeriesManifestError(
+                        "DID:FileSeries:readSeriesManifest:badOffsets",
+                        f"'{filename}' has a decreasing name offset at "
+                        f"member {i}; offsets must be non-decreasing.",
+                    )
+            total_bytes = name_offset[-1]
+            name_bytes = fid.read(total_bytes)
+            if len(name_bytes) < total_bytes:
+                raise SeriesManifestError(
+                    "DID:FileSeries:readSeriesManifest:truncated",
+                    f"'{filename}' declares {total_bytes} bytes of source "
+                    f"names but holds {len(name_bytes)}.",
+                )
+            source_names = []
+            for i in range(count):
+                start = name_offset[i]
+                end = name_offset[i + 1]
+                if end == start:
+                    source_names.append("")
+                else:
+                    source_names.append(name_bytes[start:end].decode("utf-8"))
+
+    return {
+        "count": int(count),
+        "uid_width": int(uid_width),
+        "uids": uids,
+        "source_names": source_names,
+        "has_source_names": has_source_names,
+    }
+
+
+def read_series_manifest_uid(filename, slot):
+    """One member's uid from a series manifest, in O(1).
+
+    Returns ``(uid, count)``: the uid recorded for member ``slot`` (or ``""``
+    when that member is absent or ``slot`` is beyond the manifest), and the
+    total number of member slots the manifest declares.
+
+    ``slot`` is one-based -- the same index that addresses
+    ``read_series_manifest`` result's ``uids[slot-1]`` -- and matches the
+    ``NAME_<slot>`` member name in a document. This mirrors MATLAB's
+    ``did.file.readSeriesManifestUid`` and its slot convention.
+
+    This is the property the manifest format was chosen for: reading one
+    member is one seek and ``uid_width`` bytes, not the whole uid block.
+
+    Raises :class:`SeriesManifestError` for a bad header (magic, version, uid
+    width) or a truncated file.
+    """
+    if not isinstance(slot, int) or slot < 1:
+        raise ValueError("slot must be a positive integer (one-based)")
+
+    with open(filename, "rb") as fid:
+        header = fid.read(_MANIFEST_HEADER_SIZE)
+        if len(header) < 8:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifestUid:badMagic",
+                f"'{filename}' is not a file series manifest (magic is '').",
+            )
+        magic = header[:8]
+        if magic != _MANIFEST_MAGIC:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifestUid:badMagic",
+                f"'{filename}' is not a file series manifest "
+                f"(magic is '{magic.decode('ascii', errors='replace')}').",
+            )
+        if len(header) < _MANIFEST_HEADER_SIZE:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifestUid:truncated",
+                f"'{filename}' ends before its header is complete.",
+            )
+        format_version, _flags, count, uid_width = struct.unpack("<IIII", header[8:24])
+        if format_version != 1:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifestUid:badVersion",
+                f"'{filename}' declares manifest format version "
+                f"{format_version}; this reader understands version 1.",
+            )
+        if uid_width < 1:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifestUid:badUidWidth",
+                f"'{filename}' declares uid_width {uid_width}.",
+            )
+        if slot > count:
+            # Not an error: a sparse series is asked about slots it does not
+            # have, and "no such member" is an answer the caller acts on.
+            return "", int(count)
+
+        offset = _MANIFEST_HEADER_SIZE + (slot - 1) * uid_width
+        try:
+            fid.seek(offset)
+        except OSError as error:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifestUid:truncated",
+                f"'{filename}' declares {count} members but is too short "
+                f"to hold member {slot}.",
+            ) from error
+
+        record = fid.read(uid_width)
+        if len(record) < uid_width:
+            raise SeriesManifestError(
+                "DID:FileSeries:readSeriesManifestUid:truncated",
+                f"'{filename}' declares {count} members but holds only "
+                f"{len(record)} bytes of member {slot}.",
+            )
+        trimmed = record.replace(b"\x00", b"")
+        uid = trimmed.decode("ascii") if trimmed else ""
+        return uid, int(count)
+
+
+def write_series_manifest(filename, uids, source_names=None, uid_width=33):
+    """Write a file series manifest (format version 1).
+
+    ``uids`` is a list, one entry per member slot in one-based order (member
+    ``i`` on disk is index ``i-1`` here). An absent member takes ``""`` -- a
+    series is sparse.
+
+    ``source_names``: pass a list the same length as ``uids`` to record each
+    member's source path RELATIVE to the series' ``source_root``. ``None``
+    records no name section (the whole flag is off). Absolute paths do not
+    belong here.
+
+    ``uid_width`` defaults to 33 (fits ``did.ido.unique_id``). A uid wider
+    than ``uid_width`` is an error rather than a silent truncation.
+
+    Mirrors did.file.writeSeriesManifest.
+    """
+    if uid_width < 1 or int(uid_width) != uid_width:
+        raise ValueError("uid_width must be a positive integer")
+    uid_width = int(uid_width)
+
+    n = len(uids)
+    have_names = source_names is not None
+    if have_names and len(source_names) != n:
+        raise SeriesManifestError(
+            "DID:FileSeries:writeSeriesManifest:lengthMismatch",
+            f"source_names must have one entry per member slot ({n}), not "
+            f"{len(source_names)}. A member with no recorded name takes an "
+            f"empty entry.",
+        )
+
+    # Build the uid block: fixed-width, NUL-padded. An absent slot is all-NUL.
+    uid_block = bytearray(uid_width * n)
+    for i, uid in enumerate(uids):
+        if uid is None or uid == "":
+            continue  # absent
+        if not isinstance(uid, str):
+            raise SeriesManifestError(
+                "DID:FileSeries:writeSeriesManifest:badUid",
+                f"Member {i} has a uid that is not a string.",
+            )
+        raw = uid.encode("ascii")
+        if len(raw) > uid_width:
+            raise SeriesManifestError(
+                "DID:FileSeries:writeSeriesManifest:uidTooWide",
+                f"Member {i} has a {len(raw)}-character uid, wider than "
+                f"uid_width ({uid_width}). Raise uid_width rather than "
+                f"truncating: a truncated uid resolves to the wrong file "
+                f"or to none.",
+            )
+        uid_block[i * uid_width : i * uid_width + len(raw)] = raw
+
+    # Optional name section.
+    name_bytes = b""
+    name_offset = [0] * (n + 1)
+    if have_names:
+        parts = []
+        for i, name in enumerate(source_names):
+            if not name:
+                parts.append(b"")
+            else:
+                parts.append(str(name).encode("utf-8"))
+            name_offset[i + 1] = name_offset[i] + len(parts[i])
+        name_bytes = b"".join(parts)
+
+    flags = _MANIFEST_FLAG_HAS_SOURCE_NAMES if have_names else 0
+
+    with open(filename, "wb") as fid:
+        fid.write(_MANIFEST_MAGIC)
+        fid.write(struct.pack("<I", _MANIFEST_FORMAT_VERSION))
+        fid.write(struct.pack("<I", flags))
+        fid.write(struct.pack("<I", n))
+        fid.write(struct.pack("<I", uid_width))
+        fid.write(b"\x00" * 8)  # reserved
+        fid.write(bytes(uid_block))
+        if have_names:
+            fid.write(struct.pack(f"<{n + 1}I", *name_offset))
+            if name_bytes:
+                fid.write(name_bytes)

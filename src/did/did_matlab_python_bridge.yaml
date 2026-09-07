@@ -31,7 +31,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "b2fe427"
+    matlab_last_sync_hash: "ec1e733"
     python_path: "did/database.py"
     python_class: "Database"
     inherits: "abc.ABC"
@@ -577,6 +577,72 @@ classes:
           never a leak -- what was missing was the explicit call. Coverage:
           tests/test_ported_database_methods.py.
 
+      - name: cachedPathForFile
+        python_name: cached_path_for_file
+        input_arguments:
+          - name: document_obj
+            type_matlab: "did.document"
+            type_python: "Document"
+          - name: filename
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: tf_and_path
+            type_matlab: "[logical, char]"
+            type_python: "tuple[bool, str|None]"
+        decision_log: >
+          PORTED 2026-09-07 (DID-python#64 / DID-matlab#173, b233226). Resolves
+          a document's file to a local path with NO SQL query -- the uid is
+          taken from the in-memory document. Global file cache first, then the
+          implementation's own roots (see SQLiteDB._do_cached_path_roots), the
+          same order as open_doc's local pass. A file series member is handled
+          by falling through to the manifest via read_series_manifest_uid, so
+          member resolution stays O(1) and involves no database session.
+
+      - name: seriesHas
+        python_name: series_has
+        input_arguments:
+          - name: document_obj
+            type_matlab: "did.document"
+            type_python: "Document"
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+          - name: index
+            type_matlab: "positive integer"
+            type_python: "int (one-based)"
+        output_arguments:
+          - name: tf
+            type_matlab: "logical"
+            type_python: "bool"
+        decision_log: >
+          PORTED 2026-09-07 (DID-python#64 / DID-matlab#173, 9b86b47). Reads
+          one slot of the manifest via read_series_manifest_uid (O(1)). Answers
+          about the manifest, not the disk: True means the series records a
+          member; use cached_path_for_file / exist_doc to check bytes are
+          local. Returns False when the manifest itself is not on this
+          machine (never fetches to answer).
+
+      - name: seriesMembers
+        python_name: series_members
+        input_arguments:
+          - name: document_obj
+            type_matlab: "did.document"
+            type_python: "Document"
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: indices_and_uids
+            type_matlab: "[double, cell]"
+            type_python: "tuple[list[int], list[str]]"
+        decision_log: >
+          PORTED 2026-09-07 (DID-python#64 / DID-matlab#173, 78583f6). Reads
+          the manifest once and returns every filled slot's (index, uid).
+          Sparse: absent slots are skipped. Callers walk a whole pyramid
+          level with one manifest read plus one cached_path_for_uid per
+          member -- no SQL per file, no session per worker.
+
       - name: validate_docs
         python_name: validate_docs
         input_arguments:
@@ -830,7 +896,7 @@ classes:
   - name: document
     type: class
     matlab_path: "+did/document.m"
-    matlab_last_sync_hash: "13463d1"
+    matlab_last_sync_hash: "78583f6"
     python_path: "did/document.py"
     python_class: "Document"
 
@@ -988,49 +1054,192 @@ classes:
             type_python: "tuple(bool, dict, int)"
         decision_log: "Exact match. Synchronized 2026-03-16."
 
-      - name: validate
-        python_name: ~   # not ported
-        input_arguments:
-          - name: did_database
-            type_matlab: "did.database"
-            type_python: "(deliberately not ported)"
-        decision_log: >
-          DO NOT PORT. Verified 2026-08-28: MATLAB's did.document.validate is
-          dead code. It calls did.validate(), and there is no validate.m
-          anywhere in DID-matlab -- so calling it raises (with nargin==1,
-          "You must pass in an instance of did.database"; with a database
-          argument, an undefined-function error). Its only callers are the
-          retired tests under tests/+did/+test/_old/. This entry previously
-          read "Not yet ported", which implied a real capability worth
-          mirroring. Document validation in both languages goes through
-          database.add_docs -> validate_docs; see the database entry.
+      # `did.document.validate` was removed on the MATLAB side in
+      # e7e375f ("Remove did.document.validate: it could never have run").
+      # The bridge previously carried an entry marking it "DO NOT PORT" for
+      # the same reason the removal cites -- the method delegated to a
+      # non-existent did.validate() function. With the MATLAB method gone,
+      # there is nothing left to bridge; the entry has been removed. See
+      # also the database.validate_docs entry, which is the live path in
+      # both languages.
 
       - name: plus
         python_name: ~   # not ported
         decision_log: >
-          MATLAB operator overload for merging documents.
-          Not ported to Python (use set_properties instead).
+          MATLAB operator overload for merging documents. MATLAB's plus
+          gained a B-wins-collision fix (a6ba4a2) and dependency-merge
+          behaviour matching structmerge; Python still has no counterpart.
+          Callers merge Documents by hand (or use structmerge-shaped
+          helpers). Kept unported: no test in DID-python currently needs it.
 
       - name: eq
-        python_name: ~   # not ported
-        do_not_port: true
+        python_name: __eq__
         decision_log: >
-          DO NOT PORT -- dead code in MATLAB, reclassified 2026-08-28. It was
-          listed as "not yet ported", which invited someone to port a bug.
-          MATLAB's eq compares
-          document_properties.did_document.id, and no such field exists
-          anywhere in either repo: documents carry base.id. Calling it on a
-          real document raises "Reference to non-existent field". Same status
-          as document.validate.
+          PORTED 2026-09-07 (DID-matlab 5d0b5d0 fixed eq to compare base.id).
+          MATLAB's eq now compares the id returned by id(); Python
+          Document.__eq__ does the same, and __hash__ is defined for
+          consistency. The previous "DO NOT PORT" entry reflected the
+          MATLAB defect that has now been fixed on both sides.
 
-          Note for Python callers: with no __eq__, `doc_a == doc_b` falls back
-          to identity, so two Document objects holding the same base.id compare
-          unequal. If an id comparison is ever wanted, implement it against
-          base.id rather than mirroring MATLAB here.
+      # -------------------------------------------------------------------
+      # File series API (DID-matlab #173). All ported 2026-09-07 in the
+      # same batch. A series member has no file_info entry of its own --
+      # membership is the manifest's to answer -- so the accessors below
+      # walk the manifest instead of file_info.
+      # -------------------------------------------------------------------
 
-          Original note follows:
-          MATLAB operator overload for comparing document IDs.
-          Not ported to Python (use doc.id() == other.id()).
+      - name: fileUids
+        python_name: file_uids
+        input_arguments:
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: uids
+            type_matlab: "cell"
+            type_python: "list[str]"
+        decision_log: >
+          PORTED 2026-09-07 (DID-matlab b233226). Returns every uid recorded
+          for a named file in the in-memory document. Runs no query and
+          reaches no manifest, so callable from any thread. Empty list if
+          this document has no such file.
+
+      - name: seriesNames
+        python_name: series_names
+        input_arguments: []
+        output_arguments:
+          - name: names
+            type_matlab: "cell"
+            type_python: "list[str]"
+        decision_log: >
+          PORTED 2026-09-07. Names in files.file_series, or [] when this
+          class declares none. A declared name IS its manifest -- an
+          ordinary file in file_list -- so this reads the DECLARATION,
+          not the manifest.
+
+      - name: isFileSeries
+        python_name: is_file_series
+        input_arguments:
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: tf
+            type_matlab: "logical"
+            type_python: "bool"
+        decision_log: >
+          PORTED 2026-09-07. Case-insensitive, matching is_in_file_list.
+
+      - name: seriesMemberOf
+        python_name: series_member_of
+        input_arguments:
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: stem_and_index
+            type_matlab: "[char, double]"
+            type_python: "tuple[str, int|None]"
+        decision_log: >
+          PORTED 2026-09-07. Parses NAME_<i> and returns (declared_stem,
+          one_based_index) if STEM is a declared series. index is 1-based
+          and matches read_series_manifest_uid's slot argument; the
+          conversion to the manifest's own zero-based numbering happens
+          inside the reader.
+
+      - name: seriesCount
+        python_name: series_count
+        input_arguments:
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: n_and_present
+            type_matlab: "[double, double]"
+            type_python: "tuple[int, int]"
+        decision_log: >
+          PORTED 2026-09-07. Returns (n, n_present) from series_info
+          without reading anything -- a count is recorded per series when
+          the series is added.
+
+      - name: seriesSourceRoot
+        python_name: series_source_root
+        input_arguments:
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: root
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: >
+          PORTED 2026-09-07. Directory members' relative names are
+          resolved against; kept as one string so a document shared with
+          someone else exposes ONE path to review rather than 28,000
+          embedded copies in a manifest.
+
+      - name: seriesIngestLocations
+        python_name: series_ingest_locations
+        input_arguments:
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+        output_arguments:
+          - name: entries
+            type_matlab: "struct array"
+            type_python: "list[dict]"
+        decision_log: >
+          PORTED 2026-09-07. Transient record: sqlitedb reads it to
+          ingest each member and strips it via
+          strip_series_ingest_locations before the document's JSON is
+          stored, so member paths never persist.
+
+      - name: addFileSeries
+        python_name: add_file_series
+        input_arguments:
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+          - name: locations
+            type_matlab: "cell"
+            type_python: "list[str]"
+          - name: options
+            type_matlab: "name-value"
+            type_python: "keyword arguments"
+        decision_log: >
+          PORTED 2026-09-07. Records member paths + uids and writes the
+          manifest file. Supports indices (default dense), source_root,
+          record_source_names, uid_width, delete_original and ingest,
+          matching MATLAB's name-value arguments.
+
+      - name: removeFileSeries
+        python_name: remove_file_series
+        input_arguments:
+          - name: name
+            type_matlab: "char"
+            type_python: "str"
+        decision_log: >
+          PORTED 2026-09-07. Drops the series' series_info entry and its
+          manifest file_info entry. The DECLARATION in files.file_series
+          is untouched -- it belongs to the class, not to this document.
+
+      - name: stripSeriesIngestLocations
+        python_name: strip_series_ingest_locations
+        kind: static
+        input_arguments:
+          - name: props
+            type_matlab: "struct"
+            type_python: "dict"
+        output_arguments:
+          - name: props
+            type_matlab: "struct"
+            type_python: "dict"
+        decision_log: >
+          PORTED 2026-09-07. Empties every files.series_info(:).ingest_locations
+          before storing. The field is EMPTIED, not removed: rmfield
+          would leave a stored document's series_info with one fewer
+          field than a fresh one and adding a series to it would then
+          fail. Called from SQLiteDB._do_add_doc on the way to JSON.
 
       - name: readblankdefinition
         python_name: read_blank_definition

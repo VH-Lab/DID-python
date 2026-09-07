@@ -173,7 +173,14 @@ class TestCustomFileHandler(TestOpenDocLocations):
         self.assertEqual(len(calls), 1)
         dest_path, source_path = calls[0]
         self.assertEqual(source_path, self.NDIC)
-        self.assertTrue(dest_path.endswith("f-abc"))
+        # Unique temp names per fetch (DID-matlab #185): the scratch file
+        # is <uid>.<random>.part rather than a bare <uid>, so two
+        # concurrent fetches of the same uid cannot collide on it.
+        self.assertTrue(
+            os.path.basename(dest_path).startswith("f-abc.")
+            and dest_path.endswith(".part"),
+            f"expected f-abc.<random>.part, got {dest_path!r}",
+        )
 
         file_obj.fopen()
         self.assertEqual(file_obj.fread(), b"downloaded")

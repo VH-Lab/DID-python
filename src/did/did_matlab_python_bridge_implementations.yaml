@@ -22,7 +22,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "85c119e"
+    matlab_last_sync_hash: "717fbad"
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
     inherits_matlab: "did.database"

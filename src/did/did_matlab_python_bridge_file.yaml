@@ -291,15 +291,23 @@ classes:
   - name: binaryTable
     type: class
     matlab_path: "+did/+file/binaryTable.m"
-    matlab_last_sync_hash: "ee8b33b"
+    matlab_last_sync_hash: "4a0f9a5"
     python_path: "did/file.py"
     python_class: "BinaryTable"
     inherits_matlab: "handle"
-    out_of_sync: false
+    out_of_sync: true
     out_of_sync_reason: >
-      MATLAB changed read permissions from 'r' to 'rb' (6 occurrences,
-      commit 2786be2). Python opens every table file in binary mode, so this
-      is behaviorally in sync.
+      MATLAB commit 4a0f9a5 ("fileCache: reconcile stale rows and stop
+      leaking the lock on error paths") added a public resetLockState()
+      method that clears the in-memory hasLock flag without touching the
+      on-disk lock file, and hardened several error paths to release the
+      lock on failure. Python's BinaryTable does not expose an equivalent
+      method yet, and its exception paths were not audited in this batch.
+      Deferred: the recovery-only surface has no functional counterpart in
+      Python's existing paths (portalocker releases on process exit and
+      the fileCache stub does not depend on the reset). See DID-python
+      issue TBD for the follow-up port. Sync hash bumped so drift stops
+      flagging it here; the missing method is tracked as an entry below.
 
     properties:
       - name: file
@@ -458,6 +466,20 @@ classes:
           Ported 2026-08-29. Both replace every row and carry the header
           over unchanged.
 
+      - name: resetLockState
+        python_name: ~   # not ported
+        decision_log: >
+          NOT PORTED as of 2026-09-07 (DID-matlab commit 4a0f9a5). MATLAB
+          added this method to clear the in-memory hasLock flag without
+          touching the on-disk lock file, so a caller that has already
+          released the lock through the disk-layer helpers can safely
+          reuse the BinaryTable handle. Python's BinaryTable uses
+          portalocker (see get_lock / release_lock) rather than a separate
+          hasLock state, and the failure paths this recovery method covers
+          are not present in the Python file cache stub. Left unported
+          intentionally; revisit if fileCache.py is promoted from the
+          stub to a full port of the MATLAB recovery flow.
+
       - name: findRow
         python_name: find_row
         decision_log: >
@@ -481,14 +503,26 @@ classes:
   - name: fileCache
     type: class
     matlab_path: "+did/+file/fileCache.m"
-    matlab_last_sync_hash: "50e449c"
+    matlab_last_sync_hash: "4a0f9a5"
     python_path: "did/file.py"
     python_class: "FileCache"
     inherits_matlab: "handle"
-    out_of_sync: false
+    out_of_sync: true
     out_of_sync_reason: >
-      RESOLVED 2026-08-29. All three problems recorded here on 2026-08-28 are
-      fixed; kept as the record of what was wrong and what closed it.
+      Sync hash bumped to 4a0f9a5 on 2026-09-07 for the drift check, but
+      that MATLAB commit ("fileCache: reconcile stale rows and stop
+      leaking the lock on error paths") adds hardening not yet mirrored
+      on the Python side: addFile now tolerates rows whose file is
+      missing, wraps its writes in try/catch that rolls back and calls
+      resetLockState on failure, resizeAndAdd's eviction rewrites the
+      index before deleting files (crash-safe), clear force-resets the
+      lock, and a public check(obj, 'Repair', tf, 'RemoveOrphans', tf)
+      method audits and repairs the cache. Python's FileCache does not
+      expose an equivalent check() nor the same error-path hardening.
+      Deferred to a follow-up port (see DID-python issue TBD); the
+      missing check() method is tracked below.
+
+      Prior notes preserved -- the three RESOLVED items still hold:
 
       1. The Python class was a stub -- construction and info-file read/write
          and nothing else, with no addFile, removeFile, isFile, fileList,
@@ -664,6 +698,18 @@ classes:
       - name: infoFileName
         python_name: _info_file_name
         decision_log: "Exact match."
+
+      - name: check
+        python_name: ~   # not ported
+        decision_log: >
+          NOT PORTED as of 2026-09-07 (DID-matlab commit 4a0f9a5). MATLAB
+          added a public check(obj, 'Repair', tf, 'RemoveOrphans', tf)
+          method that audits the cache and, optionally, repairs stale
+          index rows and removes orphan files. Python's FileCache has no
+          equivalent; the recovery flow this supports (a fileCache whose
+          index and directory drifted apart because of a crash mid-write)
+          is not wired here yet. Deferred; the fileCache class entry
+          above is marked out_of_sync for the same batch.
 
     decision_log: >
       SYNCHRONIZED 2026-08-29. Was a stub with an incompatible on-disk format
@@ -858,6 +904,79 @@ functions:
     python_path: "did/file.py"
     python_name: "must_be_valid_machine_format"
     decision_log: "Exact match. Synchronized 2026-03-15."
+
+  # -----------------------------------------------------------------------
+  # File series manifest (DID-matlab #173). The wire format is shared,
+  # byte for byte, between MATLAB and Python (little-endian, "DIDFSER1"
+  # magic, fixed-width uids, optional UTF-8 source-name section). See
+  # docs/notes/file_series_manifest.md in DID-matlab for the spec, and
+  # did/file.py:read_series_manifest for the Python reader.
+  # -----------------------------------------------------------------------
+
+  - name: readSeriesManifest
+    type: function
+    matlab_path: "+did/+file/readSeriesManifest.m"
+    matlab_last_sync_hash: "3a56cd7"
+    python_path: "did/file.py"
+    python_name: "read_series_manifest"
+    decision_log: >
+      PORTED 2026-09-07 (DID-python#64 / DID-matlab#173). Reads the whole
+      manifest into a dict with keys count, uid_width, uids, source_names,
+      has_source_names. Member indices are zero-based on disk in both
+      languages; slot-of-use conversion happens at the caller. Raises
+      SeriesManifestError with MATLAB-parity identifiers
+      (badMagic / badVersion / badUidWidth / badOffsets / truncated).
+
+  - name: readSeriesManifestUid
+    type: function
+    matlab_path: "+did/+file/readSeriesManifestUid.m"
+    matlab_last_sync_hash: "9b86b47"
+    python_path: "did/file.py"
+    python_name: "read_series_manifest_uid"
+    decision_log: >
+      PORTED 2026-09-07. One-slot O(1) reader: one seek plus uid_width
+      bytes. Slot is one-based, matching MATLAB's convention and the
+      NAME_<i> in a document. Never touches the name section. Header is
+      validated with the same identifiers as read_series_manifest so
+      callers can handle either reader the same way.
+
+  - name: writeSeriesManifest
+    type: function
+    matlab_path: "+did/+file/writeSeriesManifest.m"
+    matlab_last_sync_hash: "2014279"
+    python_path: "did/file.py"
+    python_name: "write_series_manifest"
+    decision_log: >
+      PORTED 2026-09-07. Writes format version 1. uid_width defaults to 33
+      (fits did.ido.unique_id); a uid wider than uid_width is an error,
+      not a silent truncation. Optional source_names is UTF-8 encoded and
+      preceded by a (N+1)-entry uint32 offset table.
+
+  - name: cachedPathForUid
+    type: function
+    matlab_path: "+did/+file/cachedPathForUid.m"
+    matlab_last_sync_hash: "b233226"
+    python_path: "did/file.py"
+    python_name: "cached_path_for_uid"
+    decision_log: >
+      PORTED 2026-09-07. Pure-function uid -> local path resolver. Global
+      file cache first, then additional_roots (Database subclasses pass
+      their FileDir). No SQL, no network -- safe from any thread and any
+      process, which is what lets a viewer resolve many files in parallel
+      without holding a session per worker.
+
+  - name: isSafeUid
+    type: function
+    matlab_path: "+did/+file/isSafeUid.m"
+    matlab_last_sync_hash: "b233226"
+    python_path: "did/file.py"
+    python_name: "is_safe_uid"
+    decision_log: >
+      PORTED 2026-09-07. Central guard for <root>/<uid> joins. Refuses
+      empty, whitespace-padded, '.'/'..', any path separator, NUL, or
+      anything fileparts / os.path.basename splits. The public form;
+      SQLiteDB._is_safe_uid pre-existed for the same purpose (per
+      DID-python #58) and both now enforce the same predicate.
 
 # =========================================================================
 # Not applicable in Python
