@@ -489,6 +489,162 @@ class Database(abc.ABC):
 
     # ... other abstract do_* methods for documents ...
 
+    # ------------------------------------------------------------------
+    # File series accessors. See DID-matlab issue #173.
+    # ------------------------------------------------------------------
+
+    def _do_cached_path_roots(self):
+        """Extra directories, besides the global file cache, where this
+        database stores files under their uid.
+
+        The default is ``[]`` (global file cache only). An implementation
+        that keeps a uid-named file root of its own -- see
+        :class:`SQLiteDB._file_dir` -- overrides this to return it. Mirrors
+        MATLAB ``did.database/do_cachedPathRoots``.
+        """
+        return []
+
+    def cached_path_for_file(self, document_obj, filename):
+        """Where a document's file is on disk, with NO database query.
+
+        Returns ``(tf, file_path)``: whether ``filename`` of
+        ``document_obj`` is present on this machine, and its full path if
+        so (``None`` if not). ``document_obj`` must be a
+        :class:`did.document.Document` -- the uid is taken from the object
+        in memory, which is the whole point: no SQL, no network, safe from
+        any thread.
+
+        A ``False`` answer means "not on this machine yet", not "no such
+        file"; use :meth:`SQLiteDB.open_doc` to retrieve it.
+
+        It answers about the DOCUMENT YOU HOLD rather than the document in
+        the database. See :meth:`did.document.Document.file_uids`.
+
+        Mirrors MATLAB ``did.database/cachedPathForFile``.
+        """
+        from .file import cached_path_for_uid
+
+        additional_roots = self._do_cached_path_roots()
+
+        uids = document_obj.file_uids(filename)
+        if not uids:
+            # A file series member has no file_info entry of its own; the
+            # miss above is what a member looks like. Resolve it through
+            # the series manifest -- still no SQL, still no network.
+            return _series_member_path(document_obj, filename, additional_roots)
+
+        for uid in uids:
+            candidate = cached_path_for_uid(uid, additional_roots=additional_roots)
+            if candidate:
+                return True, candidate
+        return False, None
+
+    def series_has(self, document_obj, name, index):
+        """Does the file series ``name`` record a member at ``index``?
+
+        ``index`` is one-based. A series is sparse -- an empty chunk of a
+        pyramid is never written -- so "no member here" is an ordinary
+        answer.
+
+        THIS ANSWERS ABOUT THE MANIFEST, NOT THE DISK. ``True`` means the
+        series records a member; it does not promise the bytes are on this
+        machine. Use :meth:`cached_path_for_file` or :meth:`SQLiteDB.exist_doc`
+        for that. Returns ``False`` when the manifest is not on this machine
+        (nothing is fetched to answer).
+
+        Mirrors MATLAB ``did.database/seriesHas``.
+        """
+        from .file import SeriesManifestError, read_series_manifest_uid
+
+        manifest_path = _series_manifest_path(
+            document_obj, name, self._do_cached_path_roots()
+        )
+        if manifest_path is None:
+            return False
+        try:
+            uid, _count = read_series_manifest_uid(manifest_path, index)
+        except (OSError, SeriesManifestError, ValueError):
+            return False
+        return bool(uid)
+
+    def series_members(self, document_obj, name):
+        """Return ``(indices, uids)``: the one-based slots the series fills.
+
+        Absent slots are skipped, so a sparse series gives back only what
+        it holds. Both are empty when the series has no members or its
+        manifest is not on this machine.
+
+        This is THE iterator: it reads the manifest once and returns all
+        present members, so a caller walking a whole pyramid level does
+        one manifest read plus one :func:`did.file.cached_path_for_uid`
+        per member.
+
+        Mirrors MATLAB ``did.database/seriesMembers``.
+        """
+        from .file import SeriesManifestError, read_series_manifest
+
+        manifest_path = _series_manifest_path(
+            document_obj, name, self._do_cached_path_roots()
+        )
+        if manifest_path is None:
+            return [], []
+        try:
+            manifest = read_series_manifest(manifest_path)
+        except (OSError, SeriesManifestError, ValueError):
+            return [], []
+        indices = []
+        uids = []
+        for i, uid in enumerate(manifest["uids"], start=1):
+            if uid:
+                indices.append(i)
+                uids.append(uid)
+        return indices, uids
+
     @abc.abstractmethod
     def do_run_sql_query(self, query_str, **kwargs):
         pass
+
+
+def _series_manifest_path(document_obj, name, additional_roots):
+    """Where a series' manifest is on disk, or ``None``.
+
+    The manifest is an ordinary file of the document, so its uid is in
+    file_info and finding it needs nothing but the document and the
+    filesystem. Shared by the member lookup and the series accessors so
+    they all agree on which copy is authoritative.
+    """
+    from .file import cached_path_for_uid
+
+    if not document_obj.is_file_series(name):
+        return None
+    for uid in document_obj.file_uids(name):
+        candidate = cached_path_for_uid(uid, additional_roots=additional_roots)
+        if candidate:
+            return candidate
+    return None
+
+
+def _series_member_path(document_obj, filename, additional_roots):
+    """Where a series member is on disk. ``(True, path)`` or ``(False, None)``."""
+    from .file import (
+        SeriesManifestError,
+        cached_path_for_uid,
+        read_series_manifest_uid,
+    )
+
+    stem, index = document_obj.series_member_of(filename)
+    if not stem or index is None or index < 1:
+        return False, None
+    manifest_path = _series_manifest_path(document_obj, stem, additional_roots)
+    if manifest_path is None:
+        return False, None
+    try:
+        member_uid, _count = read_series_manifest_uid(manifest_path, index)
+    except (OSError, SeriesManifestError, ValueError):
+        return False, None
+    if not member_uid:
+        return False, None
+    path = cached_path_for_uid(member_uid, additional_roots=additional_roots)
+    if not path:
+        return False, None
+    return True, path

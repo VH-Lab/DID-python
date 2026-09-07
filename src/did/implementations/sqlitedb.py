@@ -91,6 +91,23 @@ def _is_within(root, path):
         return False
 
 
+class _SeriesMemberLocations(list):
+    """An empty locations list that carries the document + member filename.
+
+    Returned by :meth:`SQLiteDB._locations_for_file` when the requested
+    filename is a file series member: series members carry no ``file_info``
+    entry and no files-table row (resolution goes through the manifest), so
+    the "no locations" answer here is legitimate rather than a miss. The
+    tuple stashed on the list lets ``open_doc`` / ``exist_doc`` resolve the
+    member without re-fetching the document.
+    """
+
+    def __init__(self, document_obj, filename):
+        super().__init__()
+        self.document_obj = document_obj
+        self.filename = filename
+
+
 class SQLiteDB(Database):
     def __init__(self, filename):
         super().__init__(connection=filename)
@@ -477,9 +494,20 @@ class SQLiteDB(Database):
             if row:
                 doc_idx = row["doc_idx"]
             else:
-                json_code = json.dumps(
+                # Refuse a document whose series declares present members
+                # but records no ingest_locations -- the shape a document
+                # has after a round trip through storage. Only for a
+                # document new to this database, and before any write.
+                self._reject_series_without_ingest_locations(document_obj)
+
+                # Strip series members' transient ingest paths from the
+                # JSON before storing: member paths never persist.
+                from ..document import Document
+
+                props_for_storage = Document.strip_series_ingest_locations(
                     self._matlab_compatible_props(document_obj.document_properties)
                 )
+                json_code = json.dumps(props_for_storage)
                 cursor.execute(
                     "INSERT INTO docs (doc_id, json_code, timestamp) VALUES (?, ?, ?)",
                     (doc_id, json_code, time.time()),
@@ -688,7 +716,13 @@ class SQLiteDB(Database):
 
         INSERT OR IGNORE because a document added to a second branch reaches
         this path again with the same (doc_idx, filename, uid) primary key.
+
+        Series members are also copied to ``<FileDir>/<uid>`` here, using
+        the same machinery as ``file_info`` locations, but NO row is
+        inserted for them: resolution goes through the manifest. This
+        mirrors MATLAB's ``do_add_doc``.
         """
+        self._ingest_series_members(document_obj, custom_file_handler)
         for name, entry in self._file_entries(document_obj):
             cached_location = self._ingest_location(name, entry, custom_file_handler)
             cursor.execute(
@@ -1203,6 +1237,15 @@ class SQLiteDB(Database):
         """MATLAB's FileDir: `files/` beside the database file."""
         return os.path.join(os.path.dirname(os.path.abspath(self.connection)), "files")
 
+    def _do_cached_path_roots(self):
+        """Override: this implementation keeps a uid-named file root of its own.
+
+        Returned to :meth:`Database.cached_path_for_file` in the order MATLAB
+        searches after the global file cache. Mirrors MATLAB
+        ``did.implementations.sqlitedb/do_cachedPathRoots``.
+        """
+        return [self._file_dir()]
+
     @staticmethod
     def _file_cache():
         """The process-wide file cache, or None if it cannot be opened.
@@ -1278,6 +1321,16 @@ class SQLiteDB(Database):
 
         is_in, info, _ = doc.is_in_file_list(filename)
         if not is_in:
+            # A file series member has no file_info entry of its own --
+            # membership is the manifest's to answer -- so a miss above is
+            # what a member looks like. Return no locations here (an empty
+            # list, not None): the caller (open_doc / exist_doc) uses
+            # the document + manifest path directly for members.
+            if doc.is_series_member(filename):
+                # Attach the document so the caller can consult it without a
+                # second fetch. Stashed as a tuple field on the empty list.
+                empty = _SeriesMemberLocations(doc, filename)
+                return empty
             if missing == "ignore":
                 return None
             raise FileNotFoundError(f"File {filename} not found in document {doc_id}.")
@@ -1342,6 +1395,22 @@ class SQLiteDB(Database):
         locations = self._locations_for_file(
             self._document_id(doc_id), filename, missing="ignore"
         )
+        if locations is None:
+            return False, None
+
+        if isinstance(locations, _SeriesMemberLocations):
+            # Series members are resolved through the manifest without any
+            # SQL. `exist_doc` reports on local state, so it never fetches
+            # to answer: the answer is whatever `cached_path_for_file` gives.
+            from ..database import _series_member_path
+
+            tf, path = _series_member_path(
+                locations.document_obj,
+                locations.filename,
+                self._do_cached_path_roots(),
+            )
+            return tf, (os.path.abspath(path) if tf else None)
+
         if not locations:
             return False, None
 
@@ -1370,6 +1439,9 @@ class SQLiteDB(Database):
         doc_id = self._document_id(doc_id)
         locations = self._locations_for_file(doc_id, filename)
 
+        if isinstance(locations, _SeriesMemberLocations):
+            return self._open_series_member(locations, custom_file_handler)
+
         # First pass: anything already on disk, as MATLAB does before it tries
         # to retrieve anything. exist_doc reports on exactly this pass.
         entry, resolved = self._first_local_file(locations)
@@ -1390,40 +1462,39 @@ class SQLiteDB(Database):
         ]
 
         # Second pass: hand each remote location to the caller's retriever.
+        # Each uid is fetched at most once per call; on the concurrent path a
+        # per-uid lock in temppath serialises fetches across processes, matching
+        # DID-matlab#185. A unique temp name per fetch guarantees no two writers
+        # can share a scratch file, and the partial is deleted on any failure --
+        # KeyboardInterrupt included -- so nothing is left to be mistaken for a
+        # completed download.
         if remote and custom_file_handler is not None:
             temp_dir = PathConstants().temppath
             failures = []
+            attempted_uids = set()
             for entry in remote:
                 location = entry["location"]
                 uid = entry.get("uid") or os.path.basename(location) or "did_download"
-                dest_path = os.path.join(temp_dir, str(uid))
+                uid_str = str(uid)
+                if uid_str in attempted_uids:
+                    continue  # each uid gets one attempt
+                attempted_uids.add(uid_str)
 
-                # Clear any earlier download at this path first. temppath
-                # persists between calls and uids are only unique per
-                # document, so without this a stale file would be served as
-                # though freshly retrieved -- and a handler that produced
-                # nothing would look like it had succeeded.
-                if os.path.exists(dest_path):
-                    try:
-                        os.remove(dest_path)
-                    except OSError as error:
-                        failures.append(
-                            f"{location}: cannot clear {dest_path}: {error}"
-                        )
-                        continue
-
-                try:
-                    custom_file_handler(dest_path, location)
-                except Exception as error:  # noqa: BLE001 - reported below
-                    failures.append(f"{location}: {error}")
-                    continue
-                if os.path.isfile(dest_path):
-                    cached_path = self._add_to_file_cache(dest_path, uid)
-                    return ReadOnlyFileobj(cached_path or dest_path)
-                failures.append(
-                    f"{location}: custom_file_handler did not produce a file "
-                    f'at "{dest_path}"'
+                fetched_path, fetch_error = self._fetch_remote_to_cache(
+                    uid_str,
+                    location,
+                    temp_dir,
+                    custom_file_handler,
+                    context={
+                        "documentId": doc_id,
+                        "filename": filename,
+                        "uid": uid_str,
+                        "mode": "open",
+                    },
                 )
+                if fetched_path is not None:
+                    return ReadOnlyFileobj(fetched_path)
+                failures.append(f"{location}: {fetch_error}")
             raise FileAccessError(
                 "DID:SQLITEDB:FileRetrieval:CustomHandlerFailed",
                 f'The file "{filename}" in document "{doc_id}" could not be '
@@ -1447,6 +1518,449 @@ class SQLiteDB(Database):
             "DID:SQLITEDB:open",
             f'The file "{filename}" in document "{doc_id}" cannot be accessed.',
         )
+
+    def _reject_series_without_ingest_locations(self, document_obj):
+        """Refuse a document whose series declares members with no ingest paths.
+
+        Mirrors the MATLAB guard in ``sqlitedb/do_add_doc``: a document that
+        went through the round trip through storage has empty
+        ``ingest_locations`` on every series (stripped by
+        :meth:`Document.strip_series_ingest_locations`), so adding it again to
+        another database would silently record no series members. Refuse
+        rather than add half a series.
+        """
+        for name in document_obj.series_names():
+            _n, n_present = document_obj.series_count(name)
+            if n_present > 0 and not document_obj.series_ingest_locations(name):
+                raise ValueError(
+                    f'Refusing to add document "{document_obj.id()}": series '
+                    f'"{name}" declares {n_present} members but records no '
+                    f"ingest_locations. This is the shape a document has "
+                    f"after a round trip through storage; add it before "
+                    f"stripping series ingest paths, or re-populate them."
+                )
+
+    def _ingest_series_members(self, document_obj, custom_file_handler):
+        """Copy each series member into ``<FileDir>/<uid>``.
+
+        Series members carry no ``files`` row: resolution goes through the
+        manifest, so no ``INSERT`` here. Mirrors the member loop in MATLAB
+        ``sqlitedb/do_add_doc``.
+        """
+        file_dir = self._file_dir()
+        for name in document_obj.series_names():
+            for member in document_obj.series_ingest_locations(name):
+                uid = str(member.get("uid", ""))
+                location = str(member.get("location", ""))
+                if not uid or not location or not member.get("ingest"):
+                    continue
+                if not _is_safe_uid(uid):
+                    raise ValueError(
+                        f'Refusing to ingest series member of "{name}" (index '
+                        f'{member.get("index")}): uid {uid!r} is not a plain '
+                        f"filename. See DID-python issue #58."
+                    )
+                is_remote = self._is_remote_location(
+                    location, member.get("location_type")
+                )
+                if is_remote and custom_file_handler is None:
+                    warnings.warn(
+                        f'Series member "{name}_{member.get("index")}" '
+                        f'location "{location}" is marked for ingestion but '
+                        f"is not a local path, and no custom_file_handler "
+                        f"was supplied. The member is skipped.",
+                        stacklevel=2,
+                    )
+                    continue
+
+                os.makedirs(file_dir, exist_ok=True)
+                dest_path = os.path.join(file_dir, uid)
+                if os.path.exists(dest_path):
+                    # Adding the same doc again: the copy is already in place.
+                    continue
+
+                source_path = location if is_remote else self._resolve_local(location)
+                try:
+                    if is_remote:
+                        handler_context = {
+                            "documentId": document_obj.id(),
+                            "filename": f"{name}_{member.get('index')}",
+                            "seriesName": name,
+                            "uid": uid,
+                            "mode": "ingest",
+                        }
+                        self._dispatch_custom_file_handler(
+                            custom_file_handler,
+                            dest_path,
+                            source_path,
+                            handler_context,
+                        )
+                    else:
+                        shutil.copyfile(source_path, dest_path)
+                except Exception as error:  # noqa: BLE001 - warn and continue
+                    warnings.warn(
+                        f'Failed to ingest series member "{name}_'
+                        f'{member.get("index")}" from "{location}": {error}',
+                        stacklevel=2,
+                    )
+                    continue
+
+                if member.get("delete_original") and not is_remote:
+                    try:
+                        os.remove(source_path)
+                    except OSError as error:
+                        warnings.warn(
+                            f"Ingested series member but could not delete "
+                            f'the original "{source_path}": {error}',
+                            stacklevel=2,
+                        )
+
+    def _open_series_member(self, series_locations, custom_file_handler):
+        """Open a file series member: local first, then fetch through handler.
+
+        A member has no ``orig_location`` -- that is a per-member record a
+        series deliberately does not keep. But the series MANIFEST has a
+        location, and a handler that can reach that store can reach a
+        sibling object in it given the member's uid. Following
+        DID-matlab#188, we hand the handler the manifest's location as
+        ``sourcePath`` and the member's uid in the context, plus
+        ``seriesName``, so the handler can decide how to fetch it. DID
+        composes no URL and learns no scheme.
+
+        Returns a :class:`ReadOnlyFileobj`, or raises
+        :class:`FileAccessError`.
+        """
+        from ..database import (
+            FileAccessError,
+            _series_manifest_path,
+        )
+        from ..file import (
+            ReadOnlyFileobj,
+            SeriesManifestError,
+            cached_path_for_uid,
+            read_series_manifest_uid,
+        )
+
+        doc = series_locations.document_obj
+        filename = series_locations.filename
+        stem, index = doc.series_member_of(filename)
+        additional_roots = self._do_cached_path_roots()
+
+        manifest_path = _series_manifest_path(doc, stem, additional_roots)
+        if manifest_path is None:
+            # We cannot open the manifest, so we cannot know what member the
+            # series records. This is the same "not here" cached_path_for_file
+            # reports; open_doc says which series is missing.
+            raise FileAccessError(
+                "DID:SQLITEDB:FileSeries:ManifestNotLocal",
+                f'Cannot open series member "{filename}" of document '
+                f'"{doc.id()}": the series "{stem}" manifest is not on this '
+                f"machine.",
+            )
+
+        try:
+            member_uid, _count = read_series_manifest_uid(manifest_path, index)
+        except (OSError, SeriesManifestError, ValueError) as error:
+            raise FileAccessError(
+                "DID:SQLITEDB:FileSeries:ManifestUnreadable",
+                f'Cannot read the manifest for series "{stem}" of document '
+                f'"{doc.id()}": {error}',
+            ) from error
+
+        if not member_uid:
+            raise FileAccessError(
+                "DID:SQLITEDB:FileSeries:NoSuchMember",
+                f'No such member "{filename}" in series "{stem}" of document '
+                f'"{doc.id()}": the manifest records no uid at slot {index}.',
+            )
+
+        # Local first: same two roots, same order, that every other file uses.
+        local_path = cached_path_for_uid(member_uid, additional_roots=additional_roots)
+        if local_path:
+            return ReadOnlyFileobj(local_path)
+
+        # Not here; try to fetch via the manifest's location. Series members
+        # get exactly one shot per open_doc.
+        if custom_file_handler is None:
+            raise FileAccessError(
+                "DID:SQLITEDB:FileSeries:MemberNotHere",
+                f'Series member "{filename}" of series "{stem}" (uid '
+                f'"{member_uid}") is not on this machine and no '
+                f"custom_file_handler was supplied.",
+            )
+
+        # Offer every location of the manifest to the handler, remote first
+        # so a handler that can answer from the manifest's store is not
+        # given a local copy it can only re-download from itself.
+        manifest_locations = self._manifest_locations_for_handler(doc, stem)
+        if not manifest_locations:
+            raise FileAccessError(
+                "DID:SQLITEDB:FileSeries:MemberNotHere",
+                f'Series member "{filename}" of series "{stem}" (uid '
+                f'"{member_uid}") is not on this machine and the manifest '
+                f"records no location a handler could reach.",
+            )
+
+        # DID-matlab#191: guard against a handler that resolves the manifest
+        # location instead of the member uid -- it would return the
+        # manifest's bytes, cache them under the member's uid, and silently
+        # corrupt every later member read.
+        from ..common import PathConstants
+
+        try:
+            manifest_size = os.path.getsize(manifest_path)
+        except OSError:
+            manifest_size = None
+        temp_dir = PathConstants().temppath
+        failures = []
+        for src_location in manifest_locations:
+            fetched_path, error = self._fetch_remote_to_cache(
+                member_uid,
+                src_location,
+                temp_dir,
+                custom_file_handler,
+                context={
+                    "documentId": doc.id(),
+                    "filename": filename,
+                    "seriesName": stem,
+                    "uid": member_uid,
+                    "mode": "open",
+                },
+            )
+            if fetched_path is None:
+                failures.append(f"{src_location}: {error}")
+                continue
+
+            if manifest_size is not None:
+                try:
+                    fetched_size = os.path.getsize(fetched_path)
+                except OSError:
+                    fetched_size = None
+                if fetched_size == manifest_size:
+                    try:
+                        with (
+                            open(fetched_path, "rb") as f_fetched,
+                            open(manifest_path, "rb") as f_manifest,
+                        ):
+                            if f_fetched.read() == f_manifest.read():
+                                with contextlib.suppress(OSError):
+                                    os.remove(fetched_path)
+                                failures.append(
+                                    f"{src_location}: handler returned the "
+                                    f"manifest's own bytes (see DID-matlab #191)"
+                                )
+                                continue
+                    except OSError:
+                        pass  # comparison unavailable; accept the fetch
+
+            return ReadOnlyFileobj(fetched_path)
+
+        raise FileAccessError(
+            (
+                "DID:SQLITEDB:FileSeries:HandlerReturnedManifest"
+                if failures and "DID-matlab #191" in failures[-1]
+                else "DID:SQLITEDB:FileSeries:MemberFetchFailed"
+            ),
+            f'Cannot fetch series member "{filename}" of "{stem}" in document '
+            f'"{doc.id()}": ' + "; ".join(failures),
+        )
+
+    def _manifest_locations_for_handler(self, document_obj, stem):
+        """Locations the handler should be offered to fetch a series member.
+
+        Remote first, then any local locations recorded for the manifest.
+        Following DID-matlab#191, EVERY location is offered (including a
+        local one for the manifest itself); the guard in
+        :meth:`_open_series_member` refuses a handler that returns the
+        manifest's own bytes, so an offered local location is harmless
+        rather than incorrect.
+        """
+        # Get every location for the manifest file.
+        is_in, info, _ = document_obj.is_in_file_list(stem)
+        if not is_in or not isinstance(info, dict):
+            return []
+        locations = info.get("locations")
+        if isinstance(locations, dict):
+            locations = [locations]
+        if not isinstance(locations, list):
+            return []
+
+        remote_locations = []
+        local_locations = []
+        for entry in locations:
+            loc = entry.get("location")
+            if not loc:
+                continue
+            if self._is_remote_location(loc, entry.get("location_type")):
+                remote_locations.append(loc)
+            else:
+                # Only offer a local path that actually exists; a stale
+                # entry would just be a failing round-trip.
+                resolved = self._resolve_local(loc)
+                if os.path.isfile(resolved):
+                    local_locations.append(resolved)
+        return remote_locations + local_locations
+
+    def _fetch_remote_to_cache(
+        self, uid, location, temp_dir, custom_file_handler, context=None
+    ):
+        """Fetch ``location`` through ``custom_file_handler``, holding a
+        per-uid lock and using a unique scratch name.
+
+        Mirrors DID-matlab issue #185 / #173: the fetch lock is
+        ``<temppath>/<uid>-fetch-lock`` with ``checkloops=30``,
+        ``throwerror=False``, ``expiration=300``. Two processes fetching the
+        same uid serialise here; correctness rests on the unique scratch
+        name and the ``add_file`` fallback, so a lock the caller cannot get
+        must not fail the read. After the lock, the cache is re-checked:
+        the whole point is that the second caller finds the file already
+        there instead of re-downloading.
+
+        Returns ``(fetched_path, error)``: on success ``fetched_path`` is
+        the path to use, and ``error`` is ``None``. On failure the reverse.
+
+        The handler is called with either ``(dest_path, source_path)`` or
+        ``(dest_path, source_path, context)`` depending on its declared
+        signature (DID-matlab#186 -- widen customFileHandler with document
+        context). A handler that accepts fewer positional args is called
+        with two; anything else is called with three.
+        """
+        import tempfile
+
+        from ..file import checkout_lock_file, release_lock_file
+
+        os.makedirs(temp_dir, exist_ok=True)
+        lock_path = os.path.join(temp_dir, f"{uid}-fetch-lock")
+        lock_result = checkout_lock_file(
+            lock_path, check_loops=30, throw_error=False, expiration=300
+        )
+        # ``checkout_lock_file`` returns ``(handle, key)``. ``throw_error=False``
+        # falls through as ``(None, None)`` if the lock could not be taken;
+        # correctness rests on the unique scratch name and the ``add_file``
+        # fallback, so proceeding without the lock is safe.
+        lock_key = lock_result[1] if lock_result and lock_result[0] else None
+
+        try:
+            # After the lock, re-check the cache: the whole point is that
+            # the second caller does not re-download.
+            cache = self._file_cache()
+            if cache is not None and uid:
+                try:
+                    if cache.is_file(uid):
+                        return cache.full_path(uid), None
+                except (OSError, ValueError, struct.error):
+                    pass  # cache unusable; carry on and refetch
+
+                # Any earlier partial at temppath is not ours to reuse.
+                # (New downloads use unique names below.)
+
+            # Unique temp name per fetch: <uid>.<random>.part in temppath.
+            fd, dest_path = tempfile.mkstemp(
+                dir=temp_dir, prefix=f"{uid}.", suffix=".part"
+            )
+            os.close(fd)
+            # Make the destination available to the handler; MATLAB's own
+            # scratch also starts non-existent.
+            try:
+                os.remove(dest_path)
+            except OSError:
+                pass
+
+            try:
+                handler_context = self._handler_context(context)
+                self._dispatch_custom_file_handler(
+                    custom_file_handler, dest_path, location, handler_context
+                )
+            except BaseException as error:
+                # Delete the partial so nothing is left to be mistaken for a
+                # completed download; catch BaseException so KeyboardInterrupt
+                # cleans up too -- that is one way a partial gets created.
+                with contextlib.suppress(OSError):
+                    os.remove(dest_path)
+                if isinstance(error, Exception):
+                    return None, str(error)
+                raise
+
+            if not os.path.isfile(dest_path):
+                # Handler returned no file. Clean up and report.
+                with contextlib.suppress(OSError):
+                    os.remove(dest_path)
+                return None, (
+                    f'custom_file_handler did not produce a file at "{dest_path}"'
+                )
+
+            # Race with another fetch of the same uid: the cache may have
+            # gained a copy while we were downloading. Losing the race at
+            # add_file is benign -- those are the same bytes, so use them.
+            cached = self._add_to_file_cache(dest_path, uid)
+            if cached is not None:
+                # add_file moved the copy in; remove the partial we wrote.
+                with contextlib.suppress(OSError):
+                    os.remove(dest_path)
+                return cached, None
+            # No cache available -- return the temp path itself.
+            return dest_path, None
+        finally:
+            if lock_key is not None:
+                with contextlib.suppress(OSError):
+                    release_lock_file(lock_path, lock_key)
+
+    @staticmethod
+    def _handler_context(context):
+        """Return a defensive copy of the handler-context dict.
+
+        DID-matlab#186 widens the customFileHandler signature to receive a
+        scalar struct with per-call document context (documentId, filename,
+        seriesName, uid, mode). Pass ``None`` when no context is available.
+        """
+        if context is None:
+            return None
+        return dict(context)
+
+    @staticmethod
+    def _dispatch_custom_file_handler(handler, dest_path, source_path, context):
+        """Call ``handler`` with two or three arguments per its signature.
+
+        A handler declared with three or more positional inputs (or with
+        ``*args``) is called with ``(dest_path, source_path, context)``. A
+        handler declared with two inputs is called without context, so the
+        older two-argument signature still works. Mirrors MATLAB's
+        ``did.implementations.sqlitedb.dispatchCustomFileHandler``.
+        """
+        import inspect
+
+        if context is None:
+            handler(dest_path, source_path)
+            return
+        try:
+            signature = inspect.signature(handler)
+        except (TypeError, ValueError):
+            # Builtin or C-implemented callable: fall back to positional try.
+            try:
+                handler(dest_path, source_path, context)
+                return
+            except TypeError:
+                handler(dest_path, source_path)
+                return
+
+        params = list(signature.parameters.values())
+        # Count positional-capable parameters (POSITIONAL_ONLY /
+        # POSITIONAL_OR_KEYWORD / VAR_POSITIONAL).
+        positional = 0
+        has_var_positional = False
+        for p in params:
+            if p.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            ):
+                positional += 1
+            elif p.kind == inspect.Parameter.VAR_POSITIONAL:
+                has_var_positional = True
+
+        if has_var_positional or positional >= 3:
+            handler(dest_path, source_path, context)
+        else:
+            handler(dest_path, source_path)
 
     def _add_to_file_cache(self, source_path, uid):
         """Move a freshly retrieved file into the file cache.

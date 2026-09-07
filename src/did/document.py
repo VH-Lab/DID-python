@@ -1,3 +1,4 @@
+import contextlib
 import os
 from datetime import datetime, timezone
 
@@ -69,9 +70,15 @@ class Document:
         reset_file_info clears the field unconditionally whenever `files`
         exists -- its emptystruct('name','locations') is an empty struct
         *array*, i.e. an empty list of records, not an empty record.
+
+        Also resets file series' per-instance record. The DECLARATION
+        (files.file_series, from the class definition) is left alone: it says
+        which names are series, which is a property of the class and not of
+        this instance.
         """
         if "files" in self.document_properties:
             self.document_properties["files"]["file_info"] = []
+            self.document_properties["files"]["series_info"] = []
 
     @staticmethod
     def _normalize_file_info(file_info):
@@ -87,6 +94,14 @@ class Document:
         return file_info
 
     def is_in_file_list(self, filename):
+        """Is ``filename`` in this document's file_info list?
+
+        Kept as a file_info-only lookup for backward compatibility with
+        existing callers and tests. Use :meth:`is_series_member` to test
+        whether ``filename`` is a file-series member (which has no
+        ``file_info`` entry by design -- membership is the manifest's to
+        answer).
+        """
         file_info = self.document_properties.get("files", {}).get("file_info", [])
         file_info = self._normalize_file_info(file_info)
 
@@ -521,3 +536,536 @@ class Document:
                 "name"
             ] = f"{dependency_name}_{i - 1}"
         return self
+
+    # ------------------------------------------------------------------
+    # File series API. See DID-matlab issue #173.
+    #
+    # A file series is a `NAME_#` entry in a document's file_list whose
+    # members are indexed by a MANIFEST rather than by one file_info struct
+    # each. The manifest is a single binary file belonging to the document,
+    # named ``NAME`` in file_list. A series member gets no file_info entry
+    # and no files-table row: resolution goes through the manifest, so a
+    # 28,000-member pyramid level does not carry 8-11 MB of JSON per read.
+    # ------------------------------------------------------------------
+
+    def file_uids(self, name):
+        """Uids recorded for a named file, from the in-memory document only.
+
+        Returns a list of uid strings for the file ``name``, in the order the
+        locations were added by :meth:`add_file`. Returns ``[]`` if this
+        document has no such file.
+
+        This reads only the in-memory document; it runs no query. It is the
+        first half of resolving a file without touching the database, the
+        second half being :func:`did.file.cached_path_for_uid`, and
+        :meth:`did.database.Database.cached_path_for_file` is the two
+        together.
+
+        IMPORTANT: this answers about the DOCUMENT YOU HOLD, which is not
+        necessarily the document in the database. A file added to a stored
+        copy after this object was read is not visible here.
+
+        Mirrors ``did.document/fileUids``.
+        """
+        files = self.document_properties.get("files")
+        if not isinstance(files, dict):
+            return []
+        file_info = self._normalize_file_info(files.get("file_info", []))
+        for info in file_info:
+            if str(info.get("name", "")).lower() == str(name).lower():
+                locations = info.get("locations")
+                if isinstance(locations, dict):
+                    locations = [locations]
+                elif not isinstance(locations, list):
+                    return []
+                return [loc.get("uid", "") for loc in locations if loc.get("uid")]
+        return []
+
+    def series_names(self):
+        """Names of the file series this document's class declares.
+
+        Returns the list from ``files.file_series``, or ``[]`` if this class
+        declares none. A declared name IS the series' manifest: it is an
+        ordinary file in file_list, and its members are ``NAME_1`` ...
+        ``NAME_N``.
+
+        Mirrors ``did.document/seriesNames``.
+        """
+        files = self.document_properties.get("files")
+        if not isinstance(files, dict):
+            return []
+        names = files.get("file_series")
+        if not names:
+            return []
+        if isinstance(names, str):
+            return [names]
+        return list(names)
+
+    def is_file_series(self, name):
+        """Is ``name`` declared as a file series by this document?
+
+        Case-insensitive, matching :meth:`is_in_file_list`.
+        Mirrors ``did.document/isFileSeries``.
+        """
+        lowered = str(name).lower()
+        return any(str(n).lower() == lowered for n in self.series_names())
+
+    def series_member_of(self, name):
+        """Is ``name`` a member of one of this document's series?
+
+        Returns ``(stem, index)`` if ``name`` parses as ``STEM_<number>`` and
+        ``STEM`` is declared as a file series. Otherwise returns ``("", None)``.
+
+        ``index`` is ONE-BASED, the number as written in the name: the
+        member ``NAME_1`` is index 1. It addresses the manifest's slots
+        directly (see :func:`did.file.read_series_manifest_uid`).
+
+        The number is parsed exactly as ``NAME_#`` files are parsed in
+        :meth:`is_in_file_list`, so a name is a member here on precisely the
+        terms that would make it a valid file name there.
+
+        Mirrors ``did.document/seriesMemberOf``.
+        """
+        if not isinstance(name, str) or not name:
+            return "", None
+        if "_" not in name:
+            return "", None
+        stem_part, _, tail = name.rpartition("_")
+        if not tail.isdigit():
+            return "", None
+        try:
+            index = int(tail)
+        except ValueError:
+            return "", None
+        if not self.is_file_series(stem_part):
+            return "", None
+        # Return the DECLARED spelling rather than the caller's.
+        for declared in self.series_names():
+            if str(declared).lower() == stem_part.lower():
+                return str(declared), index
+        return stem_part, index
+
+    def is_series_member(self, name):
+        """Convenience: True when ``name`` is a member of any declared series."""
+        stem, _index = self.series_member_of(name)
+        return bool(stem)
+
+    def _series_info_index(self, name):
+        """Index of ``name``'s entry in files.series_info, or None if absent."""
+        files = self.document_properties.get("files")
+        if not isinstance(files, dict):
+            return None
+        series_info = files.get("series_info")
+        if not series_info:
+            return None
+        if isinstance(series_info, dict):
+            series_info = [series_info]
+        lowered = str(name).lower()
+        for i, entry in enumerate(series_info):
+            if str(entry.get("name", "")).lower() == lowered:
+                return i
+        return None
+
+    def _series_info(self, name):
+        """Return the series_info entry for ``name``, or None."""
+        index = self._series_info_index(name)
+        if index is None:
+            return None
+        series_info = self.document_properties["files"]["series_info"]
+        if isinstance(series_info, dict):
+            series_info = [series_info]
+        return series_info[index]
+
+    def series_count(self, name):
+        """Return ``(n, n_present)``: total slots and how many exist.
+
+        ``n`` is the series' declared count -- the series runs ``NAME_1`` to
+        ``NAME_N``. ``n_present`` is how many actually exist; a sparse series
+        has fewer, because a member with nothing to store is not written.
+        Both are 0 for a declared series that has not been populated.
+
+        Mirrors ``did.document/seriesCount``.
+        """
+        entry = self._series_info(name)
+        if entry is None:
+            return 0, 0
+        return int(entry.get("count", 0) or 0), int(entry.get("n_present", 0) or 0)
+
+    def series_source_root(self, name):
+        """Return the directory a series' members came from, or ``""``.
+
+        Mirrors ``did.document/seriesSourceRoot``.
+        """
+        entry = self._series_info(name)
+        if entry is None:
+            return ""
+        return str(entry.get("source_root", "") or "")
+
+    def series_ingest_locations(self, name):
+        """Return the transient list of member paths pending ingestion.
+
+        A list of dicts with keys ``index``, ``uid``, ``location``,
+        ``location_type``, ``ingest``, ``delete_original``, ``parameters``.
+        Empty when the series has not been added, or the document has
+        already been ingested (:meth:`strip_series_ingest_locations` removes
+        the entries before storage).
+
+        Mirrors ``did.document/seriesIngestLocations``.
+        """
+        entry = self._series_info(name)
+        if entry is None:
+            return []
+        ingest = entry.get("ingest_locations")
+        if not ingest:
+            return []
+        if isinstance(ingest, dict):
+            return [ingest]
+        return list(ingest)
+
+    def add_file_series(
+        self,
+        name,
+        locations,
+        indices=None,
+        source_root="",
+        record_source_names=True,
+        uid_width=33,
+        delete_original=None,
+        ingest=None,
+    ):
+        """Add a whole file series to this document at once.
+
+        ``name`` must be declared in this class's ``files.file_series``. The
+        members become ``NAME_1`` ... ``NAME_N``; ``NAME`` itself is the
+        manifest that records them, and is added as an ordinary file.
+
+        ``locations`` is a list of source paths, one per member being added.
+
+        ``indices`` (default ``None``): one-based member numbers, one per
+        entry of ``locations``. ``None`` defaults to ``[1..len(locations)]``
+        (dense). Pass them explicitly for a SPARSE series.
+
+        ``source_root`` (default ``""``): the directory the members came
+        from. ``""`` derives the longest common directory prefix.
+
+        ``record_source_names`` (default ``True``): record each member's
+        path relative to the root, as permanent provenance in the manifest.
+        Absolute paths never persist.
+
+        ``uid_width`` (default 33): passed through to
+        :func:`did.file.write_series_manifest`.
+
+        ``delete_original`` / ``ingest`` follow :meth:`add_file`'s per-type
+        defaults when ``None``.
+
+        Mirrors ``did.document/addFileSeries``.
+        """
+        import tempfile
+
+        from .file import write_series_manifest
+
+        if not self.is_file_series(name):
+            raise ValueError(
+                f'"{name}" is not declared as a file series by this document '
+                f"class. Add it to files.file_series in the class definition."
+            )
+        if self._series_info_index(name) is not None:
+            raise ValueError(
+                f'The series "{name}" has already been added to this '
+                f"document. Use remove_file_series first to replace it."
+            )
+
+        n_locs = len(locations)
+        if indices is None:
+            indices = list(range(1, n_locs + 1))
+        else:
+            indices = list(indices)
+        if len(indices) != n_locs:
+            raise ValueError(
+                f"indices has {len(indices)} entries but locations has {n_locs}."
+            )
+        for idx in indices:
+            if not isinstance(idx, int) or idx < 1:
+                raise ValueError(
+                    "Member indices must be positive integers (one-based)."
+                )
+        if len(set(indices)) != len(indices):
+            raise ValueError("Member indices must be unique.")
+
+        # Derive the root and the relative names, unless told not to.
+        source_names = None
+        root = source_root or ""
+        if record_source_names:
+            if not root:
+                root = _longest_common_directory(locations)
+            if root:
+                source_names = _relative_names(locations, root)
+            else:
+                # No meaningful common root; record none.
+                source_names = None
+        else:
+            root = ""
+
+        max_index = max(indices) if indices else 0
+
+        # Slot i of these arrays is member i (one-based); the manifest
+        # writes them zero-based, which is the only place the two differ.
+        uids = [""] * max_index
+        rel_names = [""] * max_index
+        for i, idx in enumerate(indices):
+            uids[idx - 1] = ido.IDO.unique_id()
+            if source_names is not None:
+                rel_names[idx - 1] = source_names[i]
+
+        # Write the manifest to a temp file; add_file will record it under
+        # the series' declared name.
+        with tempfile.NamedTemporaryFile(
+            prefix="did_manifest_", suffix=".manifest", delete=False
+        ) as f:
+            manifest_path = f.name
+        try:
+            if source_names is None:
+                write_series_manifest(manifest_path, uids, uid_width=uid_width)
+            else:
+                write_series_manifest(
+                    manifest_path, uids, source_names=rel_names, uid_width=uid_width
+                )
+            # The manifest is an ORDINARY file under the series' own name.
+            self.add_file(name, manifest_path)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.remove(manifest_path)
+            raise
+
+        # Where each member's bytes are right now, so ingestion can find
+        # them. Transient: strip_series_ingest_locations removes it before
+        # a document's JSON is stored.
+        ingest_locations = _series_ingest_records(
+            locations, indices, uids, delete_original, ingest
+        )
+        entry = {
+            "name": name,
+            "count": max_index,
+            "n_present": n_locs,
+            "source_root": root,
+            "ingest_locations": ingest_locations,
+        }
+        files = self.document_properties.setdefault("files", {})
+        series_info = files.get("series_info") or []
+        if isinstance(series_info, dict):
+            series_info = [series_info]
+        series_info.append(entry)
+        files["series_info"] = series_info
+        return self
+
+    def remove_file_series(self, name):
+        """Drop a file series' record from this document.
+
+        Removes the series' record and its manifest file entry. The
+        DECLARATION in ``files.file_series`` is untouched -- that belongs
+        to the class, not to this document -- so the series may be added
+        again.
+
+        Mirrors ``did.document/removeFileSeries``.
+        """
+        index = self._series_info_index(name)
+        if index is None:
+            raise ValueError(
+                f'The series "{name}" has not been added to this document.'
+            )
+        series_info = self.document_properties["files"]["series_info"]
+        if isinstance(series_info, dict):
+            series_info = [series_info]
+        del series_info[index]
+        self.document_properties["files"]["series_info"] = series_info
+
+        # Drop the manifest's file_info entry too, if one was recorded.
+        files = self.document_properties["files"]
+        file_info = self._normalize_file_info(files.get("file_info", []))
+        lowered = str(name).lower()
+        files["file_info"] = [
+            info for info in file_info if str(info.get("name", "")).lower() != lowered
+        ]
+        return self
+
+    @staticmethod
+    def strip_series_ingest_locations(props):
+        """Empty every ``files.series_info[i].ingest_locations``.
+
+        Call this on the way to storing or shipping a document's JSON. A
+        series' member paths are recorded so ingestion can find the bytes;
+        they are of no use afterwards, and a level of a lightsheet pyramid
+        has tens of thousands of them.
+
+        The field is EMPTIED rather than removed, mirroring MATLAB: rmfield
+        would leave a stored document's series_info with one fewer field
+        than a fresh one, and adding a series to such a document would then
+        fail because the shapes disagree.
+
+        Safe to call on a document with no series, and safe to call twice.
+        Mirrors ``did.document.stripSeriesIngestLocations``.
+        """
+        if not isinstance(props, dict):
+            return props
+        files = props.get("files")
+        if not isinstance(files, dict):
+            return props
+        series_info = files.get("series_info")
+        if not series_info:
+            return props
+        if isinstance(series_info, dict):
+            series_info = [series_info]
+        for entry in series_info:
+            if isinstance(entry, dict) and "ingest_locations" in entry:
+                entry["ingest_locations"] = []
+        files["series_info"] = series_info
+        return props
+
+    def __eq__(self, other):
+        """Two documents are equal iff their ids are equal.
+
+        Mirrors MATLAB ``did.document/eq``, which since DID-matlab commit
+        5d0b5d0 compares the id returned by :meth:`id`. Prior to that, the
+        MATLAB implementation read a non-existent field and raised, so the
+        Python bridge previously marked eq "not portable"; the fix makes it
+        portable in both directions.
+        """
+        if not isinstance(other, Document):
+            return NotImplemented
+        return self.id() == other.id()
+
+    def __hash__(self):
+        # Consistent with __eq__: equal documents hash equal.
+        return hash(self.id())
+
+
+# ---------------------------------------------------------------------------
+# File series helpers (module-level so :meth:`Document.add_file_series` stays
+# readable). See DID-matlab document.m for the reference implementation.
+# ---------------------------------------------------------------------------
+
+
+def _longest_common_directory(locations):
+    """Longest common DIRECTORY prefix of ``locations``, or ``""``.
+
+    ``""`` is returned for a trivial result -- the filesystem root, or
+    paths with nothing in common -- because the alternative is recording
+    absolute paths in the manifest, which discloses a directory layout.
+    A URL is likewise given no root: it carries no home directory to leak,
+    and is stored whole. Mirrors MATLAB ``localCommonRoot``.
+    """
+    if not locations:
+        return ""
+    parents = []
+    for loc in locations:
+        text = str(loc)
+        if not text:
+            return ""
+        if "://" in text:
+            return ""
+        parents.append(os.path.dirname(text))
+    common = parents[0]
+    for parent in parents[1:]:
+        common = _common_prefix_dir(common, parent)
+        if not common:
+            return ""
+    if not common or common in (os.sep, "."):
+        return ""
+    return common
+
+
+def _common_prefix_dir(a, b):
+    """Common leading path components of A and B, joined."""
+    import re
+
+    parts_a = [p for p in re.split(r"[\\/]", a) if p or a.startswith(("/", "\\"))]
+    parts_b = [p for p in re.split(r"[\\/]", b) if p or b.startswith(("/", "\\"))]
+    # Preserve a leading empty (POSIX root) as an empty first segment.
+    if a.startswith(("/", "\\")):
+        parts_a = [""] + [p for p in parts_a if p]
+    if b.startswith(("/", "\\")):
+        parts_b = [""] + [p for p in parts_b if p]
+    n = min(len(parts_a), len(parts_b))
+    k = 0
+    for i in range(n):
+        if parts_a[i] == parts_b[i]:
+            k = i + 1
+        else:
+            break
+    if k == 0:
+        return ""
+    if k == 1 and parts_a[0] == "":
+        return os.sep
+    joined = os.sep.join(parts_a[:k])
+    if parts_a[0] == "" and not joined.startswith(os.sep):
+        joined = os.sep + joined
+    return joined
+
+
+def _relative_names(locations, root):
+    """Each location's path RELATIVE to ROOT, forward-slash separated.
+
+    Uses ``/`` as the separator so a manifest written on one platform reads
+    the same on another. Raises ``ValueError`` if any location does not
+    live under ``root`` -- recording it would store an absolute path.
+    Mirrors MATLAB ``localRelativeNames``.
+    """
+    import re
+
+    root_parts = [p for p in re.split(r"[\\/]", root) if p]
+    if root.startswith(("/", "\\")):
+        root_parts = [""] + root_parts
+    out = []
+    for loc in locations:
+        parts = [p for p in re.split(r"[\\/]", str(loc)) if p]
+        if str(loc).startswith(("/", "\\")):
+            parts = [""] + parts
+        if len(parts) <= len(root_parts) or parts[: len(root_parts)] != root_parts:
+            raise ValueError(
+                f'Location "{loc}" is not under the series source root '
+                f'"{root}". Recording it would store an absolute path.'
+            )
+        out.append("/".join(parts[len(root_parts) :]))
+    return out
+
+
+def _series_ingest_records(locations, indices, uids, delete_original, ingest_option):
+    """Build the transient uid -> source-path record for a series' members.
+
+    Shaped like a file_info location so the ingestion loop can treat the two
+    the same way, plus ``index`` so the member's files-table filename
+    (``NAME_<index>``) is known without consulting the manifest.
+
+    Defaults follow :meth:`Document.add_file`: a URL is not ingested and its
+    original is not deleted; a local file is ingested and, unless the caller
+    says otherwise, its original is deleted. ``None`` for either override
+    uses the per-type default; a value overrides it for every member.
+    Mirrors MATLAB ``localIngestLocations``.
+    """
+    entries = []
+    for i, raw_location in enumerate(locations):
+        loc = str(raw_location).strip()
+        if loc.lower().startswith(("http://", "https://")):
+            location_type = "url"
+            default_ingest = 0
+            default_delete = 0
+        else:
+            location_type = "file"
+            default_ingest = 1
+            default_delete = 1
+
+        this_delete = default_delete if delete_original is None else delete_original
+        this_ingest = default_ingest if ingest_option is None else ingest_option
+
+        entries.append(
+            {
+                "index": indices[i],
+                "uid": uids[indices[i] - 1],
+                "location": loc,
+                "location_type": location_type,
+                "ingest": this_ingest,
+                "delete_original": this_delete,
+                "parameters": "",
+            }
+        )
+    return entries

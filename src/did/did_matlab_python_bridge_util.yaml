@@ -169,6 +169,23 @@ functions:
 # did.datastructures — Data structure utilities
 # =========================================================================
 
+  - name: assignPropertyPath
+    type: function
+    matlab_path: "+did/+datastructures/assignPropertyPath.m"
+    matlab_last_sync_hash: "5f5f32d"
+    python_path: "did/document.py"
+    python_name: ~   # not ported (see note)
+    decision_log: >
+      NOT PORTED as a standalone helper (2026-09-07, DID-matlab 5f5f32d).
+      MATLAB's assignPropertyPath replaces the earlier eval-based
+      dotted-path assignment (eval(['s.' name '=value'])) with an
+      isvarname + subsasgn implementation that cannot execute code from
+      the property name. Python was never at risk here -- Document.set_properties
+      and Document.__init__ split the dotted name and walk / assign into
+      nested dicts directly, never through eval or exec, and reject nothing
+      (any string is a legal dict key). Kept as a bridge entry so the
+      MATLAB file is tracked for drift.
+
   - name: cell2str
     type: function
     matlab_path: "+did/+datastructures/cell2str.m"
@@ -438,13 +455,21 @@ functions:
   - name: getCache
     type: function
     matlab_path: "+did/+common/getCache.m"
-    matlab_last_sync_hash: "3aa892d"
+    matlab_last_sync_hash: "4a0f9a5"
     python_path: "did/common.py"
     python_name: "get_cache"
     decision_log: >
       Match. Both memoize a single cache object for the process (MATLAB via a
       persistent variable, Python via a module-level global) and construct it
       with (filecachepath, 33), and both return a working file cache.
+
+      Sync hash bumped to 4a0f9a5 on 2026-09-07. That commit added a
+      getCache('reset') form which clears the persistent singleton without
+      ending the session, used by MATLAB's fileCache-recovery flow. Python
+      currently has no equivalent public reset (the module global
+      _cached_cache is not part of the public API). If the fileCache
+      lock-recovery port lands (see the fileCache out-of-sync note),
+      surface a matching reset helper here.
 
       History: this entry read "Exact match" until 2026-08-28, when the audit
       found that the object returned did not match -- Python returned a
