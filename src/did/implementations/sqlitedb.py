@@ -1635,11 +1635,11 @@ class SQLiteDB(Database):
             _series_manifest_path,
         )
         from ..file import (
+            ReadOnlyFileobj,
             SeriesManifestError,
             cached_path_for_uid,
             read_series_manifest_uid,
         )
-        from ..file import ReadOnlyFileobj
 
         doc = series_locations.document_obj
         filename = series_locations.filename
@@ -1871,7 +1871,7 @@ class SQLiteDB(Database):
                 self._dispatch_custom_file_handler(
                     custom_file_handler, dest_path, location, handler_context
                 )
-            except BaseException as error:  # noqa: BLE001 - clean partial then re-raise
+            except BaseException as error:
                 # Delete the partial so nothing is left to be mistaken for a
                 # completed download; catch BaseException so KeyboardInterrupt
                 # cleans up too -- that is one way a partial gets created.
