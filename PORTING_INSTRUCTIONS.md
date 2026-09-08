@@ -106,11 +106,9 @@ file really moved. Both spellings of a sync hash therefore stay valid — see
 **The escape hatch is a ratchet, not a switch.** `DRIFT_ALLOWLIST` in
 `bin/check_bridge_coverage.py` names entries permitted to be drifted right now.
 (Decision 3 of #211: ratchet, *for the moment* — the list is a staging post
-toward clearing the debt, not a settlement. It is moot for this repo either
-way, because there was no backlog to clean or to ratchet down, and the list has
-been empty since the gate went on.)
-It is empty in this repo, and was empty when the gate went on — nothing here was
-drifted, so there was no backlog to ratchet down. Use it when a batch of MATLAB
+toward clearing the debt, not a settlement.) It is moot for this repo either
+way: nothing here was drifted when the gate went on, so there was no backlog to
+ratchet down, and the list has been empty since. Use it when a batch of MATLAB
 work lands faster than it can be reviewed: add the name, review or port it, take
 the name out. An allowlisted entry that has *stopped* drifting is reported as a
 stale allowlist entry, so the list cannot outlive its reason. Turning the gate
