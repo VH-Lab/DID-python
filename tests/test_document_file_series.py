@@ -18,11 +18,13 @@ document-level problems, as ``add_file_series`` already did before these
 tests existed. The refusals are matched on which input is refused, not on an
 identifier.
 
-Two MATLAB refusals from the same commit have NO Python counterpart and are
-deliberately not exercised here: the constructor's file-declaration
-validation, and ``add_file``'s refusal of a series-member name. See
-DID-python#69 -- a test that locked in their absence would be worse than no
-test.
+Two refusals from the same MATLAB commit had no Python counterpart when this
+file was first written, and were left untested rather than pinned as absent:
+the constructor's file-declaration validation, and ``add_file``'s refusal of
+a series-member name. Both are ported now (DID-python#69) and covered by
+``TestFileDeclarationValidation`` and ``TestAddFileRefusesASeriesMember``.
+One deliberate divergence remains inside the first, over which trailing
+parts count as a member's index; it is pinned and explained there.
 """
 
 import copy
@@ -32,6 +34,7 @@ import unittest
 
 from did.document import Document
 from did.file import read_series_manifest
+from did.ido import IDO
 
 SERIES = "chunkdata.bin"
 
@@ -531,6 +534,154 @@ class TestSeriesStripping(SeriesTestCase):
         entries = stored.series_ingest_locations(SERIES)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["location"], second)
+
+
+class TestFileDeclarationValidation(SeriesTestCase):
+    """A name must be served by ONE mechanism, not two.
+
+    These four refusals run in the CONSTRUCTOR rather than in
+    add_file_series, so they are reached by building the properties dict
+    directly. Doing it that way also keeps deliberately malformed
+    declarations out of the example schema, where a future reader would have
+    to work out whether they were broken on purpose.
+
+    Ported from MATLAB's localValidateFileDeclarations; they had no Python
+    counterpart until DID-python#69. MATLAB raises four identified errors
+    here and Python raises ValueError, as the rest of this layer does, so
+    each is matched on which input is refused and on the message.
+    """
+
+    def declaration(self, file_list, file_series):
+        """A minimal properties dict carrying just the file declarations."""
+        return {
+            "base": {"id": IDO.unique_id(), "name": "test"},
+            "files": {"file_list": file_list, "file_series": file_series},
+        }
+
+    def test_a_valid_declaration_constructs(self):
+        """The positive control. Without it, a validator that rejected
+        everything would pass all four refusals below."""
+        doc = Document(self.declaration(["plainfile.ext", SERIES], [SERIES]))
+        self.assertEqual(doc.series_names(), [SERIES])
+
+    def test_the_shipped_class_still_constructs(self):
+        """The other positive control, and the one that matters in practice:
+        the real demoSeries definition must pass its own validator."""
+        self.assertEqual(Document("demoSeries").series_names(), [SERIES])
+
+    def test_a_series_must_also_be_in_the_file_list(self):
+        """The series name IS its manifest, and a manifest is an ordinary
+        file, so it has to be declared as one."""
+        with self.assertRaises(ValueError) as caught:
+            Document(self.declaration(["plainfile.ext"], [SERIES]))
+        self.assertIn("not in file_list", str(caught.exception))
+
+    def test_a_series_beside_a_numbered_entry_is_refused(self):
+        """ "chunkdata.bin_12" would match both mechanisms, and they would
+        disagree: the probe path stops at the first gap, which is the case
+        series exist to serve."""
+        with self.assertRaises(ValueError) as caught:
+            Document(self.declaration([SERIES, f"{SERIES}_#"], [SERIES]))
+        self.assertIn("would match both", str(caught.exception))
+
+    def test_a_literal_entry_shadowed_by_a_series_is_refused(self):
+        """A trailing integer resolves through the series first, so this
+        literal entry could never be reached."""
+        with self.assertRaises(ValueError) as caught:
+            Document(self.declaration([SERIES, f"{SERIES}_3"], [SERIES]))
+        self.assertIn("unreachable", str(caught.exception))
+
+    def test_a_duplicate_series_name_is_refused(self):
+        """Case-insensitive, because membership is matched that way and a
+        difference the matching cannot see is not a difference."""
+        with self.assertRaises(ValueError) as caught:
+            Document(self.declaration([SERIES], [SERIES, SERIES.upper()]))
+        self.assertIn("more than once", str(caught.exception))
+
+    def test_the_check_runs_on_a_document_rebuilt_from_properties(self):
+        """Document(dict) is how a stored document comes back, and it is the
+        only route by which a malformed declaration reaches this at all --
+        so the check cannot live on the class-definition branch alone."""
+        with self.assertRaises(ValueError):
+            Document(self.declaration(["plainfile.ext"], [SERIES]))
+
+    def test_a_class_declaring_no_series_is_unaffected(self):
+        """The validator returns early on the common case; a numbered entry
+        with no series to shadow it is ordinary."""
+        doc = Document(self.declaration(["plainfile.ext", "chunk_3"], []))
+        self.assertEqual(doc.series_names(), [])
+
+    def test_a_single_declared_series_name_is_accepted_as_a_string(self):
+        """MATLAB stores one series as a char row rather than a cell, and a
+        JSON round trip can produce the same shape here."""
+        doc = Document(self.declaration([SERIES], SERIES))
+        self.assertEqual(doc.series_names(), [SERIES])
+
+    def test_a_name_python_does_not_parse_as_a_member_is_not_shadowed(self):
+        """A DELIBERATE DIVERGENCE from MATLAB, pinned so it is not mistaken
+        for an oversight.
+
+        MATLAB catches this case too, because its is_in_file_list resolves
+        the trailing part with str2num, which EVALUATES -- so "_pi" and "_i"
+        parse as numbers there and reach the series path. Python's
+        series_member_of requires str.isdigit(), so "chunkdata.bin_pi" is
+        not a member here, nothing shadows the literal entry, and refusing
+        it would refuse a declaration Python resolves unambiguously.
+
+        The guard has to match THIS language's resolution rule, or it would
+        be enforcing a collision that does not exist. The cost is a
+        portability gap in one direction: such a declaration is valid here
+        and would be refused by MATLAB. Emulating str2num -- which evaluates
+        arbitrary expressions -- is not a reasonable way to close it. See
+        DID-python#69.
+        """
+        doc = Document(self.declaration([SERIES, f"{SERIES}_pi"], [SERIES]))
+
+        self.assertEqual(doc.series_names(), [SERIES])
+        self.assertEqual(
+            doc.series_member_of(f"{SERIES}_pi"),
+            ("", None),
+            "the premise: Python's series path does not claim this name",
+        )
+
+
+class TestAddFileRefusesASeriesMember(SeriesTestCase):
+    """add_file must not give a member an inline file_info entry: the
+    manifest would not know about it, so file_uids would answer for a member
+    series_members and series_count have never heard of."""
+
+    def test_a_member_name_cannot_be_added_directly(self):
+        doc = Document("demoSeries")
+
+        with self.assertRaises(ValueError) as caught:
+            doc.add_file("chunkdata.bin_5", self.write_member("store", "a"))
+        self.assertIn("member of the file series", str(caught.exception))
+        self.assertEqual(doc.file_uids("chunkdata.bin_5"), [])
+
+    def test_the_series_name_itself_is_still_addable(self):
+        """The manifest is an ordinary file, and add_file_series adds it
+        through this very method -- so the guard must not catch it."""
+        doc = Document("demoSeries")
+
+        doc.add_file(SERIES, self.write_member("store", "manifest"))
+
+        self.assertEqual(len(doc.file_uids(SERIES)), 1)
+
+    def test_an_ordinary_numbered_name_is_still_addable(self):
+        """plainfile.ext is not a series, so plainfile.ext_1 is nobody's
+        member and the guard must leave it alone."""
+        doc = Document("demoSeries")
+
+        doc.add_file("plainfile.ext_1", self.write_member("store", "a"))
+
+        self.assertEqual(len(doc.file_uids("plainfile.ext_1")), 1)
+
+    def test_a_class_with_no_series_is_unaffected(self):
+        doc = Document("demoFile", **{"demoFile.value": 1})
+
+        doc.add_file("filename1.ext_1", self.write_member("store", "a"))
+
+        self.assertEqual(len(doc.file_uids("filename1.ext_1")), 1)
 
 
 class TestSeriesRefusals(SeriesTestCase):

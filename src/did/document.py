@@ -48,6 +48,15 @@ class Document:
 
             self._reset_file_info()
 
+        # A name must be served by exactly one mechanism. Checking here
+        # catches a malformed class definition the first time anyone
+        # constructs one, rather than at the point where the two mechanisms
+        # disagree about membership. Outside the else: a document rebuilt
+        # from stored properties gets the same check, which is the only way
+        # a deliberately malformed declaration reaches this at all.
+        # Mirrors MATLAB's localValidateFileDeclarations.
+        _validate_file_declarations(self.document_properties)
+
     def id(self):
         return self.document_properties.get("base", {}).get("id")
 
@@ -135,6 +144,21 @@ class Document:
         list, as MATLAB does, rather than replacing it: the shipped
         demoFile.json template carries a local path and a URL for each file.
         """
+        # A series member must not gain an inline file_info entry: the
+        # manifest would not know about it, so file_uids would answer for a
+        # member that series_members and series_count have never heard of,
+        # and which of the two answered would depend on the code path the
+        # caller took. Members are added together by add_file_series, which
+        # records them in the manifest. Mirrors MATLAB's add_file guard
+        # (DID:Document:add_file:isSeriesMember). See DID-python#69.
+        series_stem, _index = self.series_member_of(filename)
+        if series_stem:
+            raise ValueError(
+                f'"{filename}" is a member of the file series "{series_stem}". '
+                f"Members are added together by add_file_series, which records "
+                f"them in the series manifest."
+            )
+
         if "files" not in self.document_properties:
             self.document_properties["files"] = {"file_info": []}
 
@@ -943,6 +967,90 @@ class Document:
 # File series helpers (module-level so :meth:`Document.add_file_series` stays
 # readable). See DID-matlab document.m for the reference implementation.
 # ---------------------------------------------------------------------------
+
+
+def _validate_file_declarations(props):
+    """Enforce that a file name is served by ONE mechanism, not two.
+
+    If a name were reachable through both the file-entry path (``file_list``
+    plus ``file_info``, with ``NAME_#`` members found by probing) and the
+    series path (a manifest that states membership), the two would give
+    different answers for it -- and the file-entry path's answer stops at the
+    first gap, which is exactly the case series exist to serve. So this is
+    not hygiene; it is what makes the two mechanisms safe to coexist.
+
+    Comparisons are case-insensitive, because :meth:`Document.is_file_series`
+    and :meth:`Document.series_member_of` match that way and a difference
+    they cannot see is not a difference.
+
+    Raises ``ValueError``. MATLAB raises four identified errors here
+    (``DID:Document:fileDeclarations:duplicateSeries`` and friends); Python's
+    document layer uses plain ValueError throughout, as ``add_file_series``
+    already did, so the identifiers live in the messages' wording rather than
+    in a field.
+
+    Mirrors MATLAB ``localValidateFileDeclarations``. See DID-python#69.
+    """
+    if not isinstance(props, dict):
+        return
+    files = props.get("files")
+    if not isinstance(files, dict):
+        return
+    series_names = files.get("file_series")
+    if not series_names:
+        return
+    if isinstance(series_names, str):
+        series_names = [series_names]
+    series_names = [str(n) for n in series_names]
+
+    file_list = files.get("file_list") or []
+    if isinstance(file_list, str):
+        file_list = [file_list]
+    file_list = [str(n) for n in file_list]
+    lowered_list = [n.lower() for n in file_list]
+
+    for this_series in series_names:
+        lowered = this_series.lower()
+
+        if sum(1 for n in series_names if n.lower() == lowered) > 1:
+            raise ValueError(
+                f'The file series "{this_series}" is declared more than once '
+                f"(matching is case-insensitive)."
+            )
+
+        # The series name IS its manifest, so it must be an ordinary file.
+        if lowered not in lowered_list:
+            raise ValueError(
+                f'The file series "{this_series}" is not in file_list. A '
+                f"series name is its manifest, which is an ordinary file, so "
+                f"it must be declared there too."
+            )
+
+        # Collision 1: the same family declared both ways.
+        if f"{lowered}_#" in lowered_list:
+            raise ValueError(
+                f'"{this_series}" is declared as a file series and '
+                f'"{this_series}_#" is also in file_list. '
+                f'"{this_series}_12" would match both, and the two '
+                f"mechanisms would disagree about membership."
+            )
+
+    # Collision 2: a literal entry that a series would shadow. A trailing
+    # integer is resolved before the literal name, so such an entry is
+    # unreachable.
+    lowered_series = {n.lower() for n in series_names}
+    for this_name in file_list:
+        if not this_name or this_name.endswith("#"):
+            continue
+        stem, _, tail = this_name.rpartition("_")
+        if not stem or not tail.isdigit():
+            continue
+        if stem.lower() in lowered_series:
+            raise ValueError(
+                f'file_list entry "{this_name}" is unreachable: it parses as '
+                f'member {tail} of the file series "{stem}", so the series '
+                f"answers for it."
+            )
 
 
 def _longest_common_directory(locations):

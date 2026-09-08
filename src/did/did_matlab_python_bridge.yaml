@@ -933,6 +933,33 @@ classes:
           Python also supports dot-notation kwargs for nested properties.
           Synchronized 2026-03-16.
 
+          Both constructors end by validating the file declarations
+          (MATLAB's localValidateFileDeclarations, Python's
+          _validate_file_declarations), on the properties-dict branch as
+          well as the class-definition one -- the dict branch is the only
+          route by which a malformed declaration reaches the check at all.
+          Four refusals: a series declared twice (case-insensitively), a
+          series not also in file_list, a series beside a NAME_# entry, and
+          a literal NAME_<n> entry a series would shadow. This was missed by
+          the #173 port and added 2026-09-08 (DID-python#69). MATLAB raises
+          four identified errors; Python raises ValueError, as the rest of
+          did.document does.
+
+          DEVIATION inside that check, on which trailing parts count as a
+          member index. MATLAB resolves the part after the last underscore
+          with str2num, which EVALUATES, so "NAME_pi" and "NAME_i" parse as
+          numbers there and are caught as shadowed; MATLAB pins that
+          behaviour in a test. Python's series_member_of requires
+          str.isdigit(), so such a name is not a member here, nothing
+          shadows the literal entry, and refusing it would enforce a
+          collision that does not exist in this language. The guard has to
+          match the resolution rule of the language it guards. Consequence,
+          in one direction only: a declaration carrying NAME_pi beside a
+          NAME series is valid here and would be refused by MATLAB.
+          Emulating str2num, which evaluates arbitrary expressions, is not a
+          reasonable way to close that. Pinned in
+          tests/test_document_file_series.py.
+
       - name: id
         python_name: id
         input_arguments: []
@@ -1042,9 +1069,21 @@ classes:
             type_matlab: "char"
             type_python: "str"
         decision_log: >
-          MATLAB has options: ingest, delete_original, location_type.
-          Python signature: add_file(filename, location).
-          Synchronized 2026-03-16.
+          MATLAB options ingest, delete_original and location_type are all
+          present in Python as keyword arguments with the same per-type
+          defaults (a url is not ingested and its original is not deleted;
+          anything else is both). The 2026-03-16 note that Python's
+          signature was add_file(filename, location) was already stale when
+          the customFileHandler work landed; corrected 2026-09-08.
+
+          MATLAB's guard refusing a series member (c80ba33,
+          DID:Document:add_file:isSeriesMember) was missed by the #173 port
+          and is now present: add_file raises ValueError when
+          series_member_of claims the name. A member must not gain an inline
+          file_info entry, or file_uids would answer for a member the
+          manifest -- and so series_members and series_count -- has never
+          heard of, and which mechanism answered would depend on the code
+          path the caller took. Ported 2026-09-08 (DID-python#69).
 
       - name: remove_file
         python_name: remove_file
@@ -1063,7 +1102,19 @@ classes:
         output_arguments:
           - name: result
             type_python: "tuple(bool, dict, int)"
-        decision_log: "Exact match. Synchronized 2026-03-16."
+        decision_log: >
+          DEVIATION, and NOT the exact match this entry claimed until
+          2026-09-08. MATLAB's is_in_file_list searches files.file_list,
+          maps NAME_12 to a NAME_# entry, falls back to series membership
+          (c80ba33), and returns (b, msg, fI_index). Python's is a
+          file_info-only lookup returning (bool, info_dict, index); its
+          docstring says the narrowing is deliberate and points callers at
+          is_series_member for the membership question, which is the public
+          form of the same rule. The two answer different questions and have
+          since well before the series work; the bridge simply did not say
+          so. Corrected here rather than in the code: no caller in this repo
+          wants MATLAB's shape, and widening it would change what every
+          existing caller gets back. Recorded 2026-09-08 (DID-python#69).
 
       # `did.document.validate` was removed on the MATLAB side in
       # e7e375f ("Remove did.document.validate: it could never have run").
