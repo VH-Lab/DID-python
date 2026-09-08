@@ -231,6 +231,37 @@ class TestSeriesMemberFailures(SeriesReadTestCase):
             caught.exception.identifier, "DID:SQLITEDB:FileSeries:NoSuchMember"
         )
 
+    def test_slot_zero_is_no_such_member_not_a_damaged_manifest(self):
+        """Slots are one-based, so slot 0 is out of bounds exactly as a slot
+        past the end is -- and must be reported the same way.
+
+        It was reported as ManifestUnreadable, because
+        read_series_manifest_uid raises ValueError for an index below 1 and
+        that landed in the same except arm as a genuinely damaged file. The
+        two identifiers point at opposite causes: NoSuchMember means ask for
+        something else, ManifestUnreadable means your store is corrupt and
+        go and investigate it. Sending someone after a corruption that is
+        not there is the expensive direction to be wrong in. MATLAB guards
+        the index before touching the manifest for the same reason.
+        See DID-python#80.
+        """
+        doc = self.stored_series(count=2)
+
+        with self.assertRaises(FileAccessError) as caught:
+            self.db.open_doc(doc.id(), "chunkdata.bin_0")
+
+        self.assertEqual(
+            caught.exception.identifier, "DID:SQLITEDB:FileSeries:NoSuchMember"
+        )
+        self.assertIn("one-based", str(caught.exception))
+
+        # The premise: the manifest it declined to blame is perfectly
+        # readable, and says so one slot over.
+        self.assertEqual(
+            self.read(self.db.open_doc(doc.id(), "chunkdata.bin_1")),
+            b"member-0-bytes",
+        )
+
     def test_an_empty_slot_of_a_sparse_series_is_no_such_member(self):
         doc = self.stored_series(count=2, indices=[1, 5])
 

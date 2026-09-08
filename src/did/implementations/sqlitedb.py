@@ -1705,6 +1705,20 @@ class SQLiteDB(Database):
                 f"machine.",
             )
 
+        if index < 1:
+            # Out of bounds, not damaged. Slots are one-based, so slot 0 is
+            # as absent as a slot past the end -- and read_series_manifest_uid
+            # raises ValueError for it, which the arm below would report as
+            # ManifestUnreadable, sending the caller after a corruption that
+            # is not there. MATLAB guards the same way before touching the
+            # manifest (sqlitedb.m seriesMemberPath: index < 1 || index ~=
+            # round(index)). See DID-python#80.
+            raise FileAccessError(
+                "DID:SQLITEDB:FileSeries:NoSuchMember",
+                f'No such member "{filename}" in series "{stem}" of document '
+                f'"{doc.id()}": member indices are one-based.',
+            )
+
         try:
             member_uid, _count = read_series_manifest_uid(manifest_path, index)
         except (OSError, SeriesManifestError, ValueError) as error:
