@@ -1587,7 +1587,14 @@ class SQLiteDB(Database):
                             "filename": f"{name}_{member.get('index')}",
                             "seriesName": name,
                             "uid": uid,
-                            "mode": "ingest",
+                            # "add", not "ingest": mode is a string the
+                            # CALLER's handler switches on, so it is part of
+                            # the cross-language contract rather than an
+                            # internal name. MATLAB sends 'add' from both of
+                            # do_add_doc's loops (sqlitedb.m:567, :664) and
+                            # 'open' from the read path, which Python already
+                            # matches. See DID-python#71.
+                            "mode": "add",
                         }
                         self._dispatch_custom_file_handler(
                             custom_file_handler,

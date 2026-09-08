@@ -296,11 +296,11 @@ class TestRemoteSeriesMemberIngestion(SeriesDatabaseTestCase):
             self.assertEqual(context["seriesName"], SERIES)
             self.assertEqual(context["filename"], f"{SERIES}_{index}")
             self.assertEqual(context["uid"], uid)
-            # The VALUE of mode is deliberately not pinned: MATLAB sends
-            # 'add' here and Python sends "ingest", and the two cannot both
-            # be right for a handler that switches on it. See
-            # DID-python#71. That the key is there at all is the contract.
-            self.assertIn("mode", context)
+            # "add", matching MATLAB's do_add_doc. mode is a string the
+            # caller's handler switches on, so a value that differed
+            # between the languages would silently fall through a
+            # handler's case. Python sent "ingest" until DID-python#71.
+            self.assertEqual(context["mode"], "add")
 
     def test_a_two_argument_handler_is_still_called(self):
         """The older signature predates the context and must keep working."""
