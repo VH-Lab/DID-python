@@ -424,7 +424,7 @@ def excuses(entry_name: str, matlab_path: str) -> bool:
     than at each call site.
     """
     base = os.path.basename(matlab_path)
-    stem = base[:-2] if base.endswith(".m") else base
+    stem = base.removesuffix(".m")
     return entry_name in (base, stem) or entry_name.endswith("." + stem)
 
 

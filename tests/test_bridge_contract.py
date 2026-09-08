@@ -284,7 +284,10 @@ def _git(*args: str) -> tuple[int, str]:
     import subprocess
 
     r = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True
+        ["git", "-C", str(REPO_ROOT), *args],
+        capture_output=True,
+        text=True,
+        check=False,  # a non-zero exit is an answer here, not an error
     )
     return r.returncode, r.stdout.strip()
 
