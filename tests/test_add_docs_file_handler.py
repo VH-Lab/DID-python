@@ -281,6 +281,59 @@ class TestAddDocsCustomFileHandler(unittest.TestCase):
         self.assertTrue(rows[0]["cached_location"])
         self.assertEqual(rows[1]["cached_location"], "")
 
+    # -- the handler context (DID-matlab#186) -------------------------------
+
+    def test_a_three_argument_handler_is_given_the_document_context(self):
+        """MATLAB's do_add_doc dispatches the full context struct here
+        (sqlitedb.m:567). Python called the handler with two arguments and
+        no context at all until DID-python#71, so a handler that branches on
+        it -- which is the point of having it -- got nothing to branch on.
+
+        seriesName is empty: this is an ordinary file_info location. The
+        series member loop fills it in, and that is how a handler tells the
+        two apart.
+        """
+        seen = []
+
+        def handler(dest_path, source_path, context):
+            seen.append(dict(context))
+            with open(dest_path, "wb") as handle:
+                handle.write(b"downloaded")
+
+        doc = self._doc_with_location(NDIC, "ndicloud")
+
+        self.db.add_docs([doc], validate=False, custom_file_handler=handler)
+
+        self.assertEqual(len(seen), 1)
+        context = seen[0]
+        self.assertEqual(
+            set(context), {"documentId", "filename", "seriesName", "uid", "mode"}
+        )
+        self.assertEqual(context["documentId"], doc.id())
+        self.assertEqual(context["filename"], "filename1.ext")
+        self.assertEqual(context["seriesName"], "", "an ordinary file, not a member")
+        self.assertEqual(context["uid"], "u-remote")
+        self.assertEqual(context["mode"], "add", "'add' at store time, as MATLAB does")
+
+    def test_a_two_argument_handler_is_still_called_with_two(self):
+        """The older signature predates the context and must keep working:
+        the dispatcher decides from the handler's own signature, so adding
+        the context breaks no existing caller."""
+        seen = []
+
+        def handler(dest_path, source_path):
+            seen.append((dest_path, source_path))
+            with open(dest_path, "wb") as handle:
+                handle.write(b"downloaded")
+
+        doc = self._doc_with_location(NDIC, "ndicloud")
+
+        self.db.add_docs([doc], validate=False, custom_file_handler=handler)
+
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0][1], NDIC)
+        self.assertTrue(self.db.exist_doc(doc.id(), "filename1.ext")[0])
+
 
 if __name__ == "__main__":
     unittest.main()

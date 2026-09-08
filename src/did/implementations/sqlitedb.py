@@ -592,7 +592,7 @@ class SQLiteDB(Database):
                 if isinstance(entry, dict) and entry.get("location"):
                     yield name, entry
 
-    def _ingest_location(self, filename, entry, custom_file_handler):
+    def _ingest_location(self, filename, entry, custom_file_handler, document_id=""):
         """Ingest a location marked `ingest`; return the local copy's path.
 
         MATLAB's do_add_doc walks every location whose ``ingest`` flag is set
@@ -672,7 +672,24 @@ class SQLiteDB(Database):
             if os.path.exists(dest_path):
                 os.remove(dest_path)
             if is_remote:
-                custom_file_handler(dest_path, location)
+                # The DID-matlab#186 context, as MATLAB's do_add_doc sends it
+                # (sqlitedb.m:567). seriesName is empty here: this is an
+                # ordinary file_info location, not a series member. A
+                # two-argument handler still gets two arguments -- that is
+                # what _dispatch_custom_file_handler decides. See
+                # DID-python#71.
+                self._dispatch_custom_file_handler(
+                    custom_file_handler,
+                    dest_path,
+                    location,
+                    {
+                        "documentId": document_id,
+                        "filename": filename,
+                        "seriesName": "",
+                        "uid": uid,
+                        "mode": "add",
+                    },
+                )
             else:
                 shutil.copyfile(source_path, dest_path)
         except Exception as error:  # noqa: BLE001 - reported as a warning
@@ -724,7 +741,9 @@ class SQLiteDB(Database):
         """
         self._ingest_series_members(document_obj, custom_file_handler)
         for name, entry in self._file_entries(document_obj):
-            cached_location = self._ingest_location(name, entry, custom_file_handler)
+            cached_location = self._ingest_location(
+                name, entry, custom_file_handler, document_obj.id()
+            )
             cursor.execute(
                 "INSERT OR IGNORE INTO files "
                 "(doc_idx, filename, uid, orig_location, cached_location, "
@@ -1605,9 +1624,30 @@ class SQLiteDB(Database):
                     else:
                         shutil.copyfile(source_path, dest_path)
                 except Exception as error:  # noqa: BLE001 - warn and continue
+                    # Whatever was half-written is not this member's bytes,
+                    # and the short circuit above would accept it as such on
+                    # the next add. Clear it before reporting.
+                    with contextlib.suppress(OSError):
+                        os.remove(dest_path)
                     warnings.warn(
                         f'Failed to ingest series member "{name}_'
                         f'{member.get("index")}" from "{location}": {error}',
+                        stacklevel=2,
+                    )
+                    continue
+
+                if not os.path.isfile(dest_path):
+                    # MATLAB tests isfile(destPath) after the handler returns
+                    # and warns when nothing was produced (sqlitedb.m:669).
+                    # A handler that returns cleanly having written nothing is
+                    # otherwise indistinguishable from one that succeeded, and
+                    # the member is simply absent with nobody told. See
+                    # DID-python#71.
+                    warnings.warn(
+                        f'Failed to ingest series member "{name}_'
+                        f'{member.get("index")}" from "{location}": '
+                        f"{'custom_file_handler did not produce a file' if is_remote else 'no file was produced'} "
+                        f'at "{dest_path}"',
                         stacklevel=2,
                     )
                     continue

@@ -338,25 +338,58 @@ class TestRemoteSeriesMemberIngestion(SeriesDatabaseTestCase):
             "nothing was retrieved, so nothing is there",
         )
 
-    def test_a_handler_that_writes_nothing_leaves_the_document_addable(self):
-        """A handler that returns cleanly having produced nothing must not
-        fail the add, and must not leave a member that is not there.
+    def test_a_handler_that_writes_nothing_warns_and_the_add_survives(self):
+        """A handler that returns cleanly having produced nothing is the
+        quiet failure: no exception, and a member that simply is not there.
 
-        What this deliberately does NOT assert is whether anything is said
-        about it. MATLAB checks isfile(destPath) after the handler returns
-        and warns when it produced nothing; Python's series loop warns only
-        if the handler raises, so this case passes in silence. That is
-        DID-python#71 -- asserting the silence would lock the defect in, and
-        asserting a warning would be a failing test for work this PR is not
-        doing.
+        MATLAB tests isfile(destPath) after the handler returns and warns
+        (sqlitedb.m:669). Python's series loop warned only when the handler
+        RAISED, so this passed in silence until DID-python#71. The document
+        still lands either way -- ingestion has always been non-fatal.
         """
         handler, calls = self._handler(produce=False)
         doc = self.series_doc([REMOTE])
 
-        self.db.add_docs([doc], validate=False, custom_file_handler=handler)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self.db.add_docs([doc], validate=False, custom_file_handler=handler)
 
         self.assertEqual(len(calls), 1, "the handler was given its chance")
+        self.assertTrue(
+            any(
+                "did not produce a file" in str(w.message)
+                and "chunkdata.bin_1" in str(w.message)
+                for w in caught
+            ),
+            [str(w.message) for w in caught],
+        )
         self.assertEqual(self.db.all_doc_ids(), [doc.id()])
+        self.assertFalse(self.db.exist_doc(doc.id(), "chunkdata.bin_1")[0])
+
+    def test_a_partial_from_a_failed_fetch_is_not_kept_as_the_member(self):
+        """The short circuit that skips a member already in place is right
+        for re-adding a document, but it would also accept whatever a
+        crashed handler left behind. So a failed fetch must clear its own
+        wreckage, or the next add takes the partial for the member's bytes
+        and nothing ever produced it. See DID-python#71."""
+        doc = self.series_doc([REMOTE])
+        uid = self.member_uids(doc)[0]
+
+        def half_writes_then_dies(dest_path, source_path, context):
+            with open(dest_path, "wb") as handle:
+                handle.write(b"half a mem")
+            raise RuntimeError("connection dropped")
+
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            self.db.add_docs(
+                [doc], validate=False, custom_file_handler=half_writes_then_dies
+            )
+
+        self.assertFalse(
+            os.path.exists(os.path.join(self.db._file_dir(), uid)),
+            "the partial must not survive as this member's bytes",
+        )
         self.assertFalse(self.db.exist_doc(doc.id(), "chunkdata.bin_1")[0])
 
     def test_a_remote_member_original_is_never_deleted(self):
