@@ -49,15 +49,29 @@ CHECKS = ("file", "hash", "status", "drift", "member", "missing")
 # vocabulary"), and tests/test_bridge_contract.py asserts the two agree, so a
 # value cannot be added here without being documented (or vice versa).
 #
-# "ported" is deliberately absent: it is the DEFAULT, spelled as no `status`
-# plus a `python_path`. Allowing it to also be written out would make a
-# missing status ambiguous between "ported" and "nobody filled this in",
-# which is the ambiguity the field exists to remove.
-STATUSES = ("ported_differently", "porting_deferred", "matlab_only", "retired")
+# `status` is REQUIRED on every tracked entry, and "ported" is one of the
+# values -- it is not spelled by leaving the field out.
+#
+# It was implicit at first, on the argument that an optional-and-sometimes-
+# written value makes a missing status ambiguous between "ported" and "nobody
+# filled this in". Requiring the field removes that ambiguity outright, and
+# does it better: an entry with no status is now simply rejected. What the
+# implicit spelling cost was legibility -- 60 of 62 entries said nothing, so
+# the most common state was the only unlabeled one, and telling a plain port
+# from ported_differently meant noticing an ABSENCE. Both carry a python_path;
+# only one carried a word. Now every entry answers "is this ported?" in its
+# own text.
+STATUSES = (
+    "ported",
+    "ported_differently",
+    "porting_deferred",
+    "matlab_only",
+    "retired",
+)
 
-# Statuses an entry in a `not_tracked` list may carry. `ported_differently`
-# is excluded: if Python has the capability, the entry belongs in `classes`
-# or `functions` where the drift check can see it.
+# Statuses an entry in a `not_tracked` list may carry. `ported` and
+# `ported_differently` are excluded: if Python has the capability, the entry
+# belongs in `classes` or `functions` where the drift check can see it.
 NOT_TRACKED_STATUSES = ("porting_deferred", "matlab_only", "retired")
 
 # Status names that were used and then replaced, mapped to what to write
@@ -79,12 +93,6 @@ REPLACED_STATUSES = {
     "implemented": "no status at all (ported is the default: no status plus a "
     "python_path)",
     "does_not_exist": "retired",
-    # "ported" has no replacement NAME because the default has no name. Writing
-    # it out is the specific mistake this vocabulary is built to prevent: if the
-    # value were sometimes explicit, an absent status would stop meaning
-    # "ported" and start meaning "ported, or nobody filled this in".
-    "ported": "no status at all (a plain port is the default: no status plus a "
-    "python_path)",
 }
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -544,14 +552,12 @@ def check_status(report, matlab_repo, tracked, not_tracked):
         where = f"{entry['name']} ({entry['_bridge']})"
         status = entry.get("status")
         if status is None:
-            # The default, "ported": no status plus a real python_path. An
-            # entry with neither says nothing at all about the Python side.
-            if not entry.get("python_path"):
-                report.add(
-                    "status",
-                    f"{where}: no status and no python_path, so the entry makes "
-                    f"no claim. Add a python_path, or a status from {list(STATUSES)}",
-                )
+            report.add(
+                "status",
+                f"{where}: no status. Every tracked entry states whether it is "
+                f"ported, in its own text: one of {list(STATUSES)}. "
+                "See PORTING_INSTRUCTIONS.md, 'Status vocabulary'.",
+            )
             continue
 
         if status in REPLACED_STATUSES:
@@ -571,7 +577,10 @@ def check_status(report, matlab_repo, tracked, not_tracked):
             )
             continue
 
-        if _decision_log_words(entry) < 5:
+        # A plain port has no divergence to explain (NDI-python #211,
+        # decision 4), so only the statuses that record a JUDGEMENT owe a
+        # reason. Requiring the field did not change that.
+        if status != "ported" and _decision_log_words(entry) < 5:
             report.add(
                 "status",
                 f"{where}: status {status} with no decision_log explaining it. "
@@ -579,6 +588,13 @@ def check_status(report, matlab_repo, tracked, not_tracked):
                 "what recording it was supposed to prevent.",
             )
 
+        if status == "ported" and not entry.get("python_path"):
+            report.add(
+                "status",
+                f"{where}: status ported but no python_path, so the entry names "
+                "no counterpart. If there is none, the status is "
+                "porting_deferred or matlab_only.",
+            )
         if status == "ported_differently" and not entry.get("python_path"):
             report.add(
                 "status",

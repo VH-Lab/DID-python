@@ -152,12 +152,13 @@ three places is a rule that will disagree with itself. The tuple `STATUSES` in
 `tests/test_bridge_contract.py` asserts that it and the table below name the
 same set — so neither can move without the other.
 
-The bridge is the answer to "is this ported?". `status` is how an entry answers
-when the answer is not a plain yes.
+The bridge is the answer to "is this ported?". `status` is how an entry
+answers, and **every tracked entry carries one** — see
+[Every entry states its status](#every-entry-states-its-status).
 
 | `status` | Meaning | Allowed in `not_tracked`? |
 |---|---|---|
-| *(absent)* | **ported.** A 1:1 Python counterpart under the mirrored name, at `python_path`. This is the default, and it is spelled by leaving `status` out — writing `status: ported` is rejected, because if the value were sometimes explicit then its absence would be ambiguous between "ported" and "nobody filled this in". | no |
+| `ported` | A 1:1 Python counterpart under the mirrored name, at `python_path`. Written out like any other value — see [Every entry states its status](#every-entry-states-its-status). Alone among the five, it owes no `decision_log`: there is no divergence to explain. | no |
 | `ported_differently` | Python has the capability, but not 1:1 — a different name, folded into another class, a dependency doing the job, a different design. `python_path` must still say where it lives. | no |
 | `porting_deferred` | No Python counterpart today. Known, and it may happen later; the `decision_log` says why not now, or what blocks it. Must not carry a `python_path`. | yes |
 | `matlab_only` | Exists because MATLAB works that way, and will never get a counterpart by design. MATLAB-runtime shims, MATLAB packaging artifacts (`Contents.m`), MATLAB-interop helpers (`filesep`, `toolboxdir`), and backend dispatch that Python's single backend makes moot (`dumbjsondb`). Not a deferral: nobody is waiting for it. Must not carry a `python_path`. | yes |
@@ -177,9 +178,32 @@ a status field worse than none:
   different follow-up. `did.file.dumbjsondb` is deferred, not MATLAB-only: its
   log says what promoting it would take.
 
-Every entry with a `status` needs a `decision_log` explaining it. A gap
+Every status **except `ported`** needs a `decision_log` explaining it. A gap
 recorded with no reason still gets re-investigated by the next reader, which is
-the cost recording it was meant to avoid.
+the cost recording it was meant to avoid. A plain port has no divergence to
+explain, so it owes no prose (NDI-python #211, decision 4).
+
+### Every entry states its status
+
+`status` is required on every entry under `classes` or `functions`. An entry
+without one is an error, not a plain port.
+
+It was optional at first, with an absent `status` meaning "ported". That
+removed one ambiguity and created a worse problem. The reasoning was that a
+value written out only sometimes makes its absence mean either "ported" or
+"nobody filled this in" — true, but requiring the field settles that outright,
+since an entry with no status is simply rejected.
+
+What the implicit spelling cost was **legibility**, and it cost it where it
+hurt most: 60 of the 62 entries said nothing, so the single most common state
+was the only unlabeled one. `ported` and `ported_differently` both carry a
+`python_path` and a populated Python side; the only thing separating them on
+the page was that one of them had a word and the other had a gap. Telling them
+apart meant noticing an absence — and absences are what a reader skimming a
+1500-line file does not notice.
+
+So: every entry answers the question in its own text. The cost is one line per
+entry, paid once.
 
 ### Retired status names
 
@@ -194,7 +218,6 @@ vocabulary" that leaves the reader guessing.
 | `not_applicable` | `matlab_only`, `porting_deferred` or `retired` | Conflated all three; it was this repo's own key name until 2026-09-07 |
 | `implemented` | *(no status)* | A synonym for the default |
 | `does_not_exist` | `retired` | Same claim, and `retired` says it is a tombstone |
-| `ported` | *(no status)* | The default has no name on purpose — see the vocabulary table above. Naming it would make an absent status ambiguous between "ported" and "not filled in" |
 
 Several of these were never written in this repository — `not_yet_ported`,
 `implemented` and `does_not_exist` come from NDI-python, and NDR-python's
@@ -334,7 +357,7 @@ If MATLAB is available, run the full 3-step symmetry cycle:
 | `matlab_path` | Yes | Path relative to `src/did/` in DID-matlab |
 | `matlab_last_sync_hash` | Yes | Short SHA of the MATLAB **commit** last ported to Python — a commit, never a blob (see below) |
 | `matlab_current_hash` | No | Current MATLAB hash when out of sync (for tracking) |
-| `status` | No | Absent means ported; otherwise see [Status vocabulary](#status-vocabulary) |
+| `status` | Yes | One of the five values in [Status vocabulary](#status-vocabulary). Required on every entry — absence is an error, not a plain port |
 | `python_path` | Yes, unless `status` says there is no counterpart | Path relative to `src/did/` in DID-python. A path, never prose |
 | `python_class` | If class | Python class name |
 | `python_name` | If function | Python function name |

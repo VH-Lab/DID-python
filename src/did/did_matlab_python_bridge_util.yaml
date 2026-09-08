@@ -1,11 +1,12 @@
 # did_matlab_python_bridge_util.yaml — Utilities, graph functions, and helpers
 # Contract for did.util, did.fun, did.datastructures, did.db, and did.common.
 #
-# Status convention: an entry with NO `status:` is a plain 1:1 port -- its
-# python_path / python_name say where it lives. A `status:` marks a deviation,
-# and is the exception rather than the norm. The values are defined once, in
-# PORTING_INSTRUCTIONS.md ("Status vocabulary") -- this file points there
-# rather than restating them.
+# Status convention: every entry carries a `status:`. `ported` is a plain 1:1
+# port; the other four name a deviation. An entry with no status is an error,
+# not a plain port -- the question "is this ported?" is answered in each
+# entry's own text rather than inferred from an absence. The values are
+# defined once, in PORTING_INSTRUCTIONS.md ("Status vocabulary") -- this file
+# points there rather than restating them.
 #
 # To check for drift, run:
 #   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
@@ -29,6 +30,7 @@ functions:
     type: function
     matlab_path: "+did/+util/databaseSummary.m"
     matlab_last_sync_hash: "1966b9d"
+    status: ported
     python_path: "did/util/database_summary.py"
     python_name: "database_summary"
 
@@ -54,6 +56,7 @@ functions:
     type: function
     matlab_path: "+did/+util/compareDatabaseSummary.m"
     matlab_last_sync_hash: "17a798b"
+    status: ported
     python_path: "did/util/compare_database_summary.py"
     python_name: "compare_database_summary"
 
@@ -87,6 +90,7 @@ functions:
     type: function
     matlab_path: "+did/+fun/docs2graph.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/fun.py"
     python_name: "docs_to_graph"
 
@@ -111,6 +115,7 @@ functions:
     type: function
     matlab_path: "+did/+fun/findalldependencies.m"
     matlab_last_sync_hash: "13463d1"
+    status: ported
     python_path: "did/fun.py"
     python_name: "find_all_dependencies"
 
@@ -137,6 +142,7 @@ functions:
     type: function
     matlab_path: "+did/+fun/finddocs_missing_dependencies.m"
     matlab_last_sync_hash: "13463d1"
+    status: ported
     python_path: "did/fun.py"
     python_name: "find_docs_missing_dependencies"
 
@@ -163,6 +169,7 @@ functions:
     type: function
     matlab_path: "+did/+fun/plotinteractivedocgraph.m"
     matlab_last_sync_hash: "13463d1"
+    status: ported
     python_path: "did/fun.py"
     python_name: "plot_interactive_doc_graph"
 
@@ -179,6 +186,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/assignPropertyPath.m"
     matlab_last_sync_hash: "5f5f32d"
+    status: ported
     python_path: "did/document.py"
     python_name: ~   # not ported (see note)
     decision_log: >
@@ -196,6 +204,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/cell2str.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "cell_to_str"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -204,6 +213,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/celloritem.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "cell_or_item"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -212,6 +222,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/colvec.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "col_vec"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -220,6 +231,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/emptystruct.m"
     matlab_last_sync_hash: "13463d1"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "empty_struct"
     decision_log: >
@@ -235,6 +247,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/eqemp.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "eq_emp"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -243,6 +256,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/eqlen.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "eq_len"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -251,6 +265,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/eqtot.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "eq_tot"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -259,6 +274,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/equnique.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "eq_unique"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -267,6 +283,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/fieldsearch.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "field_search"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -275,6 +292,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/findclosest.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "find_closest"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -283,6 +301,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/isfullfield.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "is_full_field"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -291,6 +310,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/jsonencodenan.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "json_encode_nan"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -299,6 +319,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/sizeeq.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "size_eq"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -307,6 +328,7 @@ functions:
     type: function
     matlab_path: "+did/+datastructures/structmerge.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/datastructures.py"
     python_name: "struct_merge"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -319,6 +341,7 @@ functions:
     type: function
     matlab_path: "+did/+db/struct_name_value_search.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/db.py"
     python_name: "struct_name_value_search"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -327,6 +350,7 @@ functions:
     type: function
     matlab_path: "+did/+db/tableCrossJoin.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/db.py"
     python_name: "table_cross_join"
     decision_log: >
@@ -342,6 +366,7 @@ functions:
     type: function
     matlab_path: "+did/+common/homeDirectory.m"
     matlab_last_sync_hash: "d7ac853"
+    status: ported
     python_path: "did/common.py"
     python_name: ~   # not ported
     decision_log: >
@@ -368,6 +393,7 @@ functions:
     type: function
     matlab_path: "+did/+common/userPathOrDefault.m"
     matlab_last_sync_hash: "6cec046"
+    status: ported
     python_path: "did/common.py"
     python_name: ~   # not ported
     decision_log: >
@@ -389,6 +415,7 @@ functions:
     type: class
     matlab_path: "+did/+common/PathConstants.m"
     matlab_last_sync_hash: "d56cc25"
+    status: ported
     python_path: "did/common.py"
     python_class: "PathConstants"
 
@@ -462,6 +489,7 @@ functions:
     type: function
     matlab_path: "+did/+common/getCache.m"
     matlab_last_sync_hash: "4a0f9a5"
+    status: ported
     python_path: "did/common.py"
     python_name: "get_cache"
     decision_log: >

@@ -280,6 +280,30 @@ class TestTheDriftAllowlistNamesRealEntries:
         assert len(seen) == len(set(seen)), f"duplicate names: {seen}"
 
 
+class TestEveryTrackedEntryStatesItsStatus:
+    """`status` is required, so "is this ported?" is answered in each entry's
+    own text rather than inferred from an absence.
+
+    Repo-local, so it runs in every matrix job -- an entry added without a
+    status is caught by the cheap check as well as the MATLAB-dependent one.
+    """
+
+    @pytest.mark.parametrize("source", BRIDGE_FILES, ids=lambda p: p.name)
+    def test_no_tracked_entry_omits_status(self, source: Path):
+        data = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+        offenders = [
+            entry.get("name", "<unnamed>")
+            for entry in _tracked(data)
+            if not entry.get("status")
+        ]
+        assert not offenders, (
+            f"{source.name}: entries with no status:\n  "
+            + "\n  ".join(offenders)
+            + f"\n\nEvery tracked entry carries one of {list(checker.STATUSES)}. "
+            "An absent status is an error, not a plain port."
+        )
+
+
 class TestEveryTrackedEntryCanShowDrift:
     """An entry with a `matlab_path` and no `matlab_last_sync_hash` is exempt
     from the drift gate by omission.
@@ -397,19 +421,23 @@ class TestDocumentationMatchesTheMechanism:
         overlap = set(checker.STATUSES) & set(checker.REPLACED_STATUSES)
         assert not overlap, f"status names both current and retired: {sorted(overlap)}"
 
-    def test_ported_is_documented_as_the_absent_default(self):
-        """`ported` is spelled by leaving `status` out, so it is the one value
-        with no literal to compare -- and the one a reader is most likely to
-        write out anyway. The table must keep saying so."""
-        text = INSTRUCTIONS.read_text(encoding="utf-8")
-        section = text[text.index("## Status vocabulary") :]
+    def test_ported_is_a_written_value_not_an_absence(self):
+        """`ported` is written out like any other status.
+
+        It was implicit once, and the cost was legibility: 60 of 62 entries
+        said nothing, so the commonest state was the only unlabeled one and
+        telling a plain port from ported_differently meant noticing a gap.
+        If someone makes it implicit again, this fails rather than letting the
+        spec and the checker drift apart quietly.
+        """
+        assert "ported" in checker.STATUSES
+        assert "ported" not in checker.REPLACED_STATUSES
+        section = INSTRUCTIONS.read_text(encoding="utf-8")
+        section = section[section.index("## Status vocabulary") :]
         section = section[: section.index("\n## ", 1)]
-        assert "*(absent)*" in section and "ported" in section
-        assert "ported" not in checker.STATUSES, (
-            "`ported` became an explicit status. If that is intended, the "
-            "default's spelling has changed and the table needs rewriting; the "
-            "reason it was implicit is that an absent status would otherwise be "
-            "ambiguous between 'ported' and 'not filled in'."
+        assert "*(absent)*" not in section, (
+            "the vocabulary table still describes an absent status as meaning "
+            "ported; `status` is required on every entry."
         )
 
 

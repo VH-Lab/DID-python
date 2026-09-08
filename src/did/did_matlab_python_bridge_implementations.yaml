@@ -1,11 +1,12 @@
 # did_matlab_python_bridge_implementations.yaml — Database implementations
 # Contract for did.implementations namespace.
 #
-# Status convention: an entry with NO `status:` is a plain 1:1 port -- its
-# python_path / python_name say where it lives. A `status:` marks a deviation,
-# and is the exception rather than the norm. The values are defined once, in
-# PORTING_INSTRUCTIONS.md ("Status vocabulary") -- this file points there
-# rather than restating them.
+# Status convention: every entry carries a `status:`. `ported` is a plain 1:1
+# port; the other four name a deviation. An entry with no status is an error,
+# not a plain port -- the question "is this ported?" is answered in each
+# entry's own text rather than inferred from an absence. The values are
+# defined once, in PORTING_INSTRUCTIONS.md ("Status vocabulary") -- this file
+# points there rather than restating them.
 #
 # To check for drift, run:
 #   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
@@ -29,6 +30,7 @@ classes:
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
     matlab_last_sync_hash: "717fbad"
+    status: ported
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
     inherits_matlab: "did.database"
@@ -540,6 +542,7 @@ classes:
     type: function
     matlab_path: "+did/+implementations/doc2sql.m"
     matlab_last_sync_hash: "c618a05"
+    status: ported
     python_path: "did/implementations/doc2sql.py"
     python_name: "doc_to_sql"
 
@@ -598,6 +601,7 @@ classes:
     type: class
     matlab_path: "+did/+implementations/binarydoc_matfid.m"
     matlab_last_sync_hash: "2786be2"
+    status: ported
     python_path: "did/implementations/binarydoc_matfid.py"
     python_class: "BinaryDocMatfid"
     inherits_matlab: "did.binarydoc & did.file.fileobj"

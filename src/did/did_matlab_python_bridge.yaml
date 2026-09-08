@@ -7,15 +7,16 @@
 #   - matlab_last_sync_hash  : short SHA of the MATLAB commit last ported to Python
 #   - python_path            : location inside the Python repo (relative to src/did/)
 #   - python_class           : Python class name
-#   - status                 : absent for a plain port; otherwise names the
-#                              deviation (see the status convention below)
+#   - status                 : required; `ported` for a plain port, otherwise
+#                              names the deviation (see the convention below)
 #   - decision_log           : notes on deviations, sync dates, and rationale
 #
-# Status convention: an entry with NO `status:` is a plain 1:1 port -- its
-# python_path / python_name say where it lives. A `status:` marks a deviation,
-# and is the exception rather than the norm. The values are defined once, in
-# PORTING_INSTRUCTIONS.md ("Status vocabulary") -- this file points there
-# rather than restating them.
+# Status convention: every entry carries a `status:`. `ported` is a plain 1:1
+# port; the other four name a deviation. An entry with no status is an error,
+# not a plain port -- the question "is this ported?" is answered in each
+# entry's own text rather than inferred from an absence. The values are
+# defined once, in PORTING_INSTRUCTIONS.md ("Status vocabulary") -- this file
+# points there rather than restating them.
 #
 # To check for drift, run:
 #   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
@@ -40,6 +41,7 @@ classes:
     type: class
     matlab_path: "+did/database.m"
     matlab_last_sync_hash: "ec1e733"
+    status: ported
     python_path: "did/database.py"
     python_class: "Database"
     inherits: "abc.ABC"
@@ -905,6 +907,7 @@ classes:
     type: class
     matlab_path: "+did/document.m"
     matlab_last_sync_hash: "78583f6"
+    status: ported
     python_path: "did/document.py"
     python_class: "Document"
 
@@ -1313,6 +1316,7 @@ classes:
     type: class
     matlab_path: "+did/query.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/query.py"
     python_class: "Query"
 
@@ -1413,6 +1417,7 @@ classes:
     type: class
     matlab_path: "+did/ido.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/ido.py"
     python_class: "IDO"
 
@@ -1491,6 +1496,7 @@ classes:
     type: class
     matlab_path: "+did/documentservice.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/documentservice.py"
     python_class: "DocumentService"
     inherits: "abc.ABC"
@@ -1524,6 +1530,7 @@ classes:
     type: class
     matlab_path: "+did/binarydoc.m"
     matlab_last_sync_hash: "13463d1"
+    status: ported
     python_path: "did/binarydoc.py"
     python_class: "BinaryDoc"
     inherits: "abc.ABC"
