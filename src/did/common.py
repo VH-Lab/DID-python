@@ -57,6 +57,18 @@ class PathConstants:
         str(Path.home()), "Documents", "DID", "Preferences"
     )
 
+    #: Environment variable that overrides :attr:`filecachepath`.
+    #:
+    #: Set this to redirect the file cache into a chosen directory -- the
+    #: whole point is that downstream test suites (NDI-python#261) can scope
+    #: DID's otherwise machine-global cache to a per-session tmp directory
+    #: without poking at private attributes or ``get_cache`` internals. Read
+    #: on every ``filecachepath`` access, so setting or unsetting it takes
+    #: effect immediately for the next lookup; ``get_cache()`` still memoizes
+    #: its handle, so call ``get_cache("reset")`` after changing the env var
+    #: if a cache was already constructed.
+    FILE_CACHE_ENV = "DID_FILE_CACHE_PATH"
+
     @property
     def temppath(self):
         must_be_writable(self._temp_path)
@@ -64,8 +76,9 @@ class PathConstants:
 
     @property
     def filecachepath(self):
-        must_be_writable(self._file_cache_path)
-        return self._file_cache_path
+        path = os.environ.get(self.FILE_CACHE_ENV) or self._file_cache_path
+        must_be_writable(path)
+        return path
 
     @property
     def preferences(self):
