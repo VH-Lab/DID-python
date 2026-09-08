@@ -73,4 +73,7 @@ appear to conflict, `PORTING_INSTRUCTIONS.md` is right and this file is stale.
 ## Environment
 
 - Python 3.10+ (CI tests 3.10, 3.11 and 3.12)
-- `black==26.5.1` and `ruff==0.16.5`, pinned to match CI
+- `pip install -e ".[dev]"` — the dev extra pins the same `black` and `ruff`
+  the lint job installs, so a clean local run means a clean CI run. If you have
+  a global `ruff` on PATH it may shadow it; check `ruff --version` against the
+  pin, or run `python -m ruff`.

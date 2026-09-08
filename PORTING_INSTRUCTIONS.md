@@ -332,6 +332,13 @@ pytest
 python bin/check_bridge_coverage.py --matlab-repo /path/to/DID-matlab
 ```
 
+**Use the pinned versions.** `pip install -e ".[dev]"` installs the same
+`black` and `ruff` the lint job does. A different `ruff` will not report the
+same findings — its default rule set changes between releases, which is why CI
+pins in the first place — so an unpinned local run can come back clean and the
+build still go red. If a global `ruff` shadows the one you installed
+(`ruff --version` disagreeing with the pin is the tell), run `python -m ruff`.
+
 The DID-matlab checkout must not be shallow — see
 [The MATLAB checkout must not be shallow](#the-matlab-checkout-must-not-be-shallow).
 

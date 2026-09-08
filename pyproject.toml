@@ -25,6 +25,13 @@ dev = [
     "mkdocs-material",
     "mkdocstrings[python]",
     "pytest",
+    # Pinned to the versions the lint job installs. CI pinning alone protects
+    # CI from the tool moving; it does nothing for a contributor whose own ruff
+    # is a different version, who then gets a clean local run and a red build.
+    # These two pins and the ones in .github/workflows/python-package.yml are
+    # checked against each other by tests/test_bridge_contract.py.
+    "ruff==0.16.5",
+    "black==26.5.1",
 ]
 
 [tool.pytest.ini_options]

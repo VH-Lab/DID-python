@@ -280,6 +280,50 @@ class TestTheDriftAllowlistNamesRealEntries:
         assert len(seen) == len(set(seen)), f"duplicate names: {seen}"
 
 
+class TestTheLinterPinsAgree:
+    """`pyproject.toml`'s dev extra and the lint job pin the same versions.
+
+    They are pinned in two places for different reasons -- CI installs them
+    directly so the lint job stays fast and does not build the package, and the
+    dev extra puts them in a contributor's environment. Two places pinning one
+    thing is how they end up disagreeing, and the failure is quiet: a
+    contributor's local run comes back clean against a ruff whose default rule
+    set has moved, and the build goes red on code they just checked.
+
+    That happened on this branch. `ruff` on PATH was 0.15.8, CI pinned 0.16.5,
+    PLW1510 is newly-default in 0.16.x, and "lint clean" was reported several
+    times from the wrong binary.
+    """
+
+    @staticmethod
+    def _pins(text: str, pattern: str) -> dict[str, str]:
+        return {
+            m.group(1): m.group(2)
+            for m in re.finditer(pattern, text)
+            if m.group(1) in ("ruff", "black")
+        }
+
+    def test_the_dev_extra_matches_the_lint_job(self):
+        pyproject = self._pins(
+            (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+            r'"(ruff|black)==([0-9][^"]*)"',
+        )
+        workflow = self._pins(
+            (REPO_ROOT / ".github/workflows/python-package.yml").read_text(
+                encoding="utf-8"
+            ),
+            r"\b(ruff|black)==([0-9][^\s\\]*)",
+        )
+        assert pyproject, "no ruff/black pins found in pyproject.toml's dev extra"
+        assert workflow, "no ruff/black pins found in the lint job"
+        assert pyproject == workflow, (
+            "the dev extra and the lint job pin different linter versions:\n"
+            f"  pyproject.toml: {pyproject}\n"
+            f"  lint job:       {workflow}\n"
+            "Bump both together, with the cleanup a new default rule set needs."
+        )
+
+
 def _git(*args: str) -> tuple[int, str]:
     import subprocess
 
