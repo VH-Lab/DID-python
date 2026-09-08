@@ -76,12 +76,20 @@ class PathConstants:
 _cached_cache = None
 
 
-def get_cache():
+def get_cache(action=None):
     """Return the process-wide did.file.FileCache, creating it on first use.
 
     33 characters is the length of a did unique id, which is the name every
     file takes inside the cache. It matches MATLAB's did.common.getCache(),
     so a cache written by one language is readable by the other.
+
+    With ``action="reset"``, the memoized handle is cleared before a fresh
+    cache is constructed and returned. Use this to recover from a poisoned
+    in-memory state (a stuck :attr:`BinaryTable.has_lock`, a stale
+    :class:`Fileobj` descriptor) without ending the process -- the
+    on-disk cache contents are not touched; only the memoization is
+    discarded. Mirrors MATLAB ``did.common.getCache('reset')``
+    (DID-matlab 4a0f9a5). See DID-python#66.
 
     There used to be a second, unrelated class named FileCache in this
     module -- three lines holding a path and a number -- and this function
@@ -89,6 +97,10 @@ def get_cache():
     cache anything. It is gone; did.file.FileCache is the only FileCache.
     """
     global _cached_cache
+    if action not in (None, "reset"):
+        raise ValueError(f'get_cache: action must be None or "reset"; got {action!r}.')
+    if action == "reset":
+        _cached_cache = None
     if _cached_cache is None:
         from .file import FileCache
 

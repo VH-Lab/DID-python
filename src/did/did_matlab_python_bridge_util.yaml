@@ -497,13 +497,13 @@ functions:
       persistent variable, Python via a module-level global) and construct it
       with (filecachepath, 33), and both return a working file cache.
 
-      Sync hash bumped to 4a0f9a5 on 2026-09-07. That commit added a
-      getCache('reset') form which clears the persistent singleton without
-      ending the session, used by MATLAB's fileCache-recovery flow. Python
-      currently has no equivalent public reset (the module global
-      _cached_cache is not part of the public API). If the fileCache
-      lock-recovery port lands (see the fileCache out-of-sync note),
-      surface a matching reset helper here.
+      Both also accept an optional 'reset' action that clears the memoized
+      handle before returning a freshly constructed cache. Use this to
+      recover from a poisoned in-memory state (a stuck has_lock, a stale
+      Fileobj descriptor) without ending the process; the on-disk cache
+      contents are not touched. MATLAB writes getCache('reset'); Python
+      writes get_cache('reset'). Ported 2026-09-08 (DID-python#66;
+      DID-matlab 4a0f9a5).
 
       History: this entry read "Exact match" until 2026-08-28, when the audit
       found that the object returned did not match -- Python returned a

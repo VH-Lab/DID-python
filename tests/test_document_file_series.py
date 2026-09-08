@@ -23,8 +23,16 @@ file was first written, and were left untested rather than pinned as absent:
 the constructor's file-declaration validation, and ``add_file``'s refusal of
 a series-member name. Both are ported now (DID-python#69) and covered by
 ``TestFileDeclarationValidation`` and ``TestAddFileRefusesASeriesMember``.
-One deliberate divergence remains inside the first, over which trailing
-parts count as a member's index; it is pinned and explained there.
+
+``is_in_file_list``'s series fallback (also c80ba33) is now also ported and
+covered by ``TestIsInFileListSeriesFallback`` -- a series member NAME_<i> is
+a valid name even though it carries no file_info entry of its own.
+
+The numbered-index parse used to differ across languages -- MATLAB's
+``str2num`` evaluated expressions, so ``NAME_pi`` and ``NAME_i`` reached the
+series path there; Python's ``str.isdigit()`` did not. MATLAB tightened its
+parse to strict integers in DID-matlab#199 so the two now agree; the
+divergence entry is retained in the tests as a historical note.
 """
 
 import copy
@@ -618,22 +626,14 @@ class TestFileDeclarationValidation(SeriesTestCase):
         self.assertEqual(doc.series_names(), [SERIES])
 
     def test_a_name_python_does_not_parse_as_a_member_is_not_shadowed(self):
-        """A DELIBERATE DIVERGENCE from MATLAB, pinned so it is not mistaken
-        for an oversight.
+        """Previously a documented divergence from MATLAB, now aligned.
 
-        MATLAB catches this case too, because its is_in_file_list resolves
-        the trailing part with str2num, which EVALUATES -- so "_pi" and "_i"
-        parse as numbers there and reach the series path. Python's
-        series_member_of requires str.isdigit(), so "chunkdata.bin_pi" is
-        not a member here, nothing shadows the literal entry, and refusing
-        it would refuse a declaration Python resolves unambiguously.
-
-        The guard has to match THIS language's resolution rule, or it would
-        be enforcing a collision that does not exist. The cost is a
-        portability gap in one direction: such a declaration is valid here
-        and would be refused by MATLAB. Emulating str2num -- which evaluates
-        arbitrary expressions -- is not a reasonable way to close it. See
-        DID-python#69.
+        MATLAB used to resolve the trailing part with str2num, which
+        EVALUATES -- so "_pi" and "_i" parsed as numbers there and reached
+        the series path. Python's series_member_of requires str.isdigit(),
+        so ``chunkdata.bin_pi`` is a literal name here. MATLAB tightened
+        its parse to strict integers in DID-matlab#199, so both languages
+        now agree the literal is not shadowed. See DID-python#69.
         """
         doc = Document(self.declaration([SERIES, f"{SERIES}_pi"], [SERIES]))
 
@@ -641,8 +641,76 @@ class TestFileDeclarationValidation(SeriesTestCase):
         self.assertEqual(
             doc.series_member_of(f"{SERIES}_pi"),
             ("", None),
-            "the premise: Python's series path does not claim this name",
+            "the premise: doc.series_member_of does not claim this name",
         )
+
+
+class TestIsInFileListSeriesFallback(SeriesTestCase):
+    """is_in_file_list mirrors MATLAB, series fallback included (c80ba33).
+
+    A member NAME_<i> is a valid file name once NAME is a declared series,
+    even before the series is added. The member carries no file_info entry
+    of its own -- membership is the manifest's to answer -- so info/index
+    are None while is_in is True, the same shape MATLAB uses (b=1,
+    fI_index=[]).
+    """
+
+    def test_a_declared_name_is_valid_before_it_is_added(self):
+        doc = Document("demoFile")
+        is_in, info, index = doc.is_in_file_list("filename1.ext")
+        self.assertTrue(is_in, "the name is in files.file_list")
+        self.assertIsNone(info)
+        self.assertIsNone(index)
+
+    def test_a_declared_name_is_matched_case_insensitively(self):
+        doc = Document("demoFile")
+        is_in, _info, _index = doc.is_in_file_list("FILENAME1.EXT")
+        self.assertTrue(is_in)
+
+    def test_a_numbered_name_resolves_to_its_hash_entry(self):
+        """foo.ext_12 matches a foo.ext_# entry in file_list."""
+        props = {
+            "base": {"id": IDO.unique_id(), "name": "test"},
+            "files": {"file_list": ["chunk_#"], "file_series": []},
+        }
+        doc = Document(props)
+        is_in, info, index = doc.is_in_file_list("chunk_12")
+        self.assertTrue(is_in)
+        self.assertIsNone(info)
+        self.assertIsNone(index)
+
+    def test_a_series_member_is_valid_via_the_fallback(self):
+        doc = Document("demoSeries")
+        is_in, info, index = doc.is_in_file_list(f"{SERIES}_5")
+        self.assertTrue(is_in, "a member of a declared series is valid")
+        self.assertIsNone(info, "no file_info entry -- the manifest answers")
+        self.assertIsNone(index)
+
+    def test_an_unrelated_name_still_misses(self):
+        doc = Document("demoFile")
+        is_in, info, index = doc.is_in_file_list("nowhere.dat")
+        self.assertFalse(is_in)
+        self.assertIsNone(info)
+        self.assertIsNone(index)
+
+    def test_a_name_python_does_not_parse_as_a_number_does_not_fall_through(
+        self,
+    ):
+        """The isdigit-based parse: chunkdata.bin_pi is not a member."""
+        doc = Document("demoSeries")
+        is_in, _info, _index = doc.is_in_file_list(f"{SERIES}_pi")
+        self.assertFalse(is_in, "pi is not digits, so no member fallback")
+
+    def test_info_and_index_survive_when_file_info_exists(self):
+        """When the name has a file_info entry, is_in_file_list still
+        returns it: file_list membership does not hide the record."""
+        doc = Document("demoFile")
+        doc.add_file("filename1.ext", "/tmp/somewhere")
+        is_in, info, index = doc.is_in_file_list("filename1.ext")
+        self.assertTrue(is_in)
+        self.assertIsInstance(info, dict)
+        self.assertEqual(info.get("name"), "filename1.ext")
+        self.assertEqual(index, 0)
 
 
 class TestAddFileRefusesASeriesMember(SeriesTestCase):

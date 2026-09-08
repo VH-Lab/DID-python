@@ -252,3 +252,139 @@ class TestGetCache:
 
     def test_it_is_the_same_object_every_time(self):
         assert get_cache() is get_cache()
+
+    def test_reset_returns_a_fresh_cache(self):
+        first = get_cache()
+        second = get_cache("reset")
+        assert isinstance(second, FileCache)
+        assert first is not second, "reset should drop the memoized handle"
+        third = get_cache()
+        assert third is second, "the new cache is memoized until the next reset"
+
+    def test_reset_rejects_an_unknown_action(self):
+        with pytest.raises(ValueError, match='"reset"'):
+            get_cache("clear")
+
+
+class TestStaleRowReconciliation:
+    """add_file tolerates an index row whose file has vanished.
+
+    An interrupted eviction, a failed move, or a lock race can leave the
+    index promising a file that is no longer on disk. Without this the
+    next add_file of the same uid would refuse as "already in cache" and
+    the uid would be permanently poisoned. Mirrors MATLAB fileCache
+    (DID-matlab 4a0f9a5). See DID-python#66.
+    """
+
+    def test_add_file_replaces_a_stale_row_instead_of_refusing(self, cache, tmp_path):
+        first = make_source(tmp_path, 1, 40)
+        cache.add_file(first, name_of(1))
+        # Simulate an interrupted eviction: index row is still there but
+        # the file itself has vanished from the cache directory.
+        os.remove(cache.full_path(name_of(1)))
+
+        second = make_source(tmp_path, 2, 60)
+        cache.add_file(second, name_of(1))
+        assert os.path.isfile(cache.full_path(name_of(1)))
+        assert cache.is_file(name_of(1))
+
+    def test_add_file_still_refuses_a_row_whose_file_is_present(self, cache, tmp_path):
+        cache.add_file(make_source(tmp_path, 1, 40), name_of(1))
+        with pytest.raises(ValueError, match="already"):
+            cache.add_file(make_source(tmp_path, 2, 60), name_of(1))
+
+
+class TestErrorPathReleasesLock:
+    """A failed add_file must not leave the binary table with has_lock=True.
+
+    Without the reset a subsequent get_lock returns (None, None) and the
+    cache is unlocked against itself for the rest of the process.
+    Mirrors MATLAB fileCache addFile/clear hardening (DID-matlab 4a0f9a5).
+    See DID-python#66.
+    """
+
+    def test_a_failed_add_file_leaves_the_lock_reset(self, cache, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            cache.add_file(str(tmp_path / "does-not-exist"), name_of(1))
+        assert cache.binary_table is None or cache.binary_table.has_lock is False
+
+    def test_a_wrong_length_name_still_leaves_the_lock_reset(self, cache, tmp_path):
+        # The length check fires before the lock is taken, so the lock
+        # was never held -- but has_lock must be False either way.
+        with pytest.raises(ValueError):
+            cache.add_file(make_source(tmp_path, 1, 40), "too-short")
+        assert cache.binary_table is None or cache.binary_table.has_lock is False
+
+
+class TestCheck:
+    """FileCache.check reports and optionally repairs index/disk drift.
+
+    Mirrors MATLAB fileCache/check (DID-matlab 4a0f9a5).
+    """
+
+    def test_a_healthy_cache_reports_nothing(self, cache, tmp_path):
+        cache.add_file(make_source(tmp_path, 1, 40), name_of(1))
+        report = cache.check()
+        assert report["staleRows"] == []
+        assert report["orphanFiles"] == []
+        assert report["consistent"] == 1
+        assert report["repaired"] == {"rowsDropped": 0, "filesDeleted": 0}
+
+    def test_a_stale_row_is_reported_but_not_repaired_by_default(self, cache, tmp_path):
+        cache.add_file(make_source(tmp_path, 1, 40), name_of(1))
+        os.remove(cache.full_path(name_of(1)))
+        report = cache.check()
+        assert report["staleRows"] == [name_of(1)]
+        assert report["repaired"]["rowsDropped"] == 0
+        # The row is still there.
+        row, _ = cache._table().find_row(1, name_of(1))
+        assert row > 0
+
+    def test_repair_drops_stale_rows_and_corrects_currentsize(self, cache, tmp_path):
+        cache.add_file(make_source(tmp_path, 1, 40), name_of(1))
+        cache.add_file(make_source(tmp_path, 2, 60), name_of(2))
+        before = cache.get_properties()["currentSize"]
+        os.remove(cache.full_path(name_of(1)))
+
+        report = cache.check(repair=True)
+        assert report["repaired"]["rowsDropped"] == 1
+        row, _ = cache._table().find_row(1, name_of(1))
+        assert row == 0
+        assert cache.get_properties()["currentSize"] == before - 40
+
+    def test_an_orphan_file_is_reported_but_left_alone_by_default(self, cache):
+        orphan = cache.full_path(name_of(9))
+        with open(orphan, "wb") as handle:
+            handle.write(b"stray bytes")
+
+        report = cache.check()
+        assert report["orphanFiles"] == [name_of(9)]
+        assert os.path.isfile(orphan)
+
+    def test_remove_orphans_deletes_the_files_it_reports(self, cache):
+        orphan = cache.full_path(name_of(9))
+        with open(orphan, "wb") as handle:
+            handle.write(b"stray bytes")
+
+        report = cache.check(remove_orphans=True)
+        assert report["repaired"]["filesDeleted"] == 1
+        assert not os.path.exists(orphan)
+
+
+class TestBinaryTableResetLockState:
+    """reset_lock_state clears the in-memory flag without touching disk."""
+
+    def test_it_forces_has_lock_back_to_false(self, cache, tmp_path):
+        table = cache._table()
+        _fid, key = table.get_lock()
+        try:
+            assert table.has_lock is True
+            table.reset_lock_state()
+            assert table.has_lock is False
+        finally:
+            # Release the on-disk lock even though the in-memory flag is
+            # already reset: this is what a well-behaved caller does.
+            from did.file import release_lock_file
+
+            if key:
+                release_lock_file(table.lock_file_name(), key)
