@@ -12,8 +12,6 @@ having to reach into ``PathConstants._file_cache_path`` or the memoized
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from did.common import PathConstants
@@ -26,33 +24,25 @@ def clear_env(monkeypatch):
 
 def test_default_when_env_var_unset(clear_env, tmp_path, monkeypatch):
     # Use a tmp default so the assertion doesn't touch the developer's home.
-    monkeypatch.setattr(
-        PathConstants, "_file_cache_path", str(tmp_path / "default")
-    )
+    monkeypatch.setattr(PathConstants, "_file_cache_path", str(tmp_path / "default"))
     assert PathConstants().filecachepath == str(tmp_path / "default")
 
 
 def test_env_var_overrides_class_default(tmp_path, monkeypatch):
     override = tmp_path / "override"
-    monkeypatch.setattr(
-        PathConstants, "_file_cache_path", str(tmp_path / "default")
-    )
+    monkeypatch.setattr(PathConstants, "_file_cache_path", str(tmp_path / "default"))
     monkeypatch.setenv(PathConstants.FILE_CACHE_ENV, str(override))
     assert PathConstants().filecachepath == str(override)
 
 
 def test_empty_env_var_falls_back_to_default(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        PathConstants, "_file_cache_path", str(tmp_path / "default")
-    )
+    monkeypatch.setattr(PathConstants, "_file_cache_path", str(tmp_path / "default"))
     monkeypatch.setenv(PathConstants.FILE_CACHE_ENV, "")
     assert PathConstants().filecachepath == str(tmp_path / "default")
 
 
 def test_env_var_is_read_on_every_access(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        PathConstants, "_file_cache_path", str(tmp_path / "default")
-    )
+    monkeypatch.setattr(PathConstants, "_file_cache_path", str(tmp_path / "default"))
     a = tmp_path / "a"
     b = tmp_path / "b"
     monkeypatch.setenv(PathConstants.FILE_CACHE_ENV, str(a))
