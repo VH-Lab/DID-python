@@ -1339,12 +1339,13 @@ class SQLiteDB(Database):
             raise ValueError(f"Document {doc_id} not found.")
 
         is_in, info, _ = doc.is_in_file_list(filename)
-        if not is_in:
+        if info is None:
             # A file series member has no file_info entry of its own --
-            # membership is the manifest's to answer -- so a miss above is
-            # what a member looks like. Return no locations here (an empty
-            # list, not None): the caller (open_doc / exist_doc) uses
-            # the document + manifest path directly for members.
+            # membership is the manifest's to answer -- so is_in_file_list
+            # accepts the name (via its series fallback) but hands us no
+            # info to attach locations to. Return no locations here (an
+            # empty list, not None): the caller (open_doc / exist_doc)
+            # uses the document + manifest path directly for members.
             if doc.is_series_member(filename):
                 # Attach the document so the caller can consult it without a
                 # second fetch. Stashed as a tuple field on the empty list.

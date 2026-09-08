@@ -305,19 +305,16 @@ classes:
     python_path: "did/file.py"
     python_class: "BinaryTable"
     inherits_matlab: "handle"
-    out_of_sync: true
-    out_of_sync_reason: >
-      MATLAB commit 4a0f9a5 ("fileCache: reconcile stale rows and stop
-      leaking the lock on error paths") added a public resetLockState()
-      method that clears the in-memory hasLock flag without touching the
-      on-disk lock file, and hardened several error paths to release the
-      lock on failure. Python's BinaryTable does not expose an equivalent
-      method yet, and its exception paths were not audited in this batch.
-      Deferred: the recovery-only surface has no functional counterpart in
-      Python's existing paths (portalocker releases on process exit and
-      the fileCache stub does not depend on the reset). See DID-python
-      issue TBD for the follow-up port. Sync hash bumped so drift stops
-      flagging it here; the missing method is tracked as an entry below.
+    out_of_sync: false
+    decision_log: >
+      SYNCHRONIZED 2026-09-08 (DID-python#66). resetLockState is now
+      ported (see the method entry below) and the fileCache error paths
+      that MATLAB commit 4a0f9a5 hardened are matched on the Python side:
+      add_file wraps its writes in try/except that rolls the row back
+      and resets the lock, clear force-resets the lock at the end,
+      resize_and_add rewrites the index before deleting evicted files,
+      and check(repair, remove_orphans) is available for the recovery
+      flow. See the fileCache entry below.
 
     properties:
       - name: file
@@ -477,18 +474,16 @@ classes:
           over unchanged.
 
       - name: resetLockState
-        python_name: ~   # not ported
+        python_name: reset_lock_state
         decision_log: >
-          NOT PORTED as of 2026-09-07 (DID-matlab commit 4a0f9a5). MATLAB
-          added this method to clear the in-memory hasLock flag without
-          touching the on-disk lock file, so a caller that has already
-          released the lock through the disk-layer helpers can safely
-          reuse the BinaryTable handle. Python's BinaryTable uses
-          portalocker (see get_lock / release_lock) rather than a separate
-          hasLock state, and the failure paths this recovery method covers
-          are not present in the Python file cache stub. Left unported
-          intentionally; revisit if fileCache.py is promoted from the
-          stub to a full port of the MATLAB recovery flow.
+          PORTED 2026-09-08 (DID-python#66; DID-matlab 4a0f9a5). Both
+          force the in-memory has_lock flag back to False without touching
+          the on-disk lock file. Recovery method: a caller that has
+          released the lock through the disk-layer helpers (or an error
+          path that lost track of the flag) can safely reuse the handle
+          instead of the next get_lock returning empty forever. The next
+          get_lock re-enters checkout_lock_file and resolves real
+          contention normally.
 
       - name: findRow
         python_name: find_row
@@ -518,20 +513,21 @@ classes:
     python_path: "did/file.py"
     python_class: "FileCache"
     inherits_matlab: "handle"
-    out_of_sync: true
-    out_of_sync_reason: >
-      Sync hash bumped to 4a0f9a5 on 2026-09-07 for the drift check, but
-      that MATLAB commit ("fileCache: reconcile stale rows and stop
-      leaking the lock on error paths") adds hardening not yet mirrored
-      on the Python side: addFile now tolerates rows whose file is
-      missing, wraps its writes in try/catch that rolls back and calls
-      resetLockState on failure, resizeAndAdd's eviction rewrites the
-      index before deleting files (crash-safe), clear force-resets the
-      lock, and a public check(obj, 'Repair', tf, 'RemoveOrphans', tf)
-      method audits and repairs the cache. Python's FileCache does not
-      expose an equivalent check() nor the same error-path hardening.
-      Deferred to a follow-up port (see DID-python issue TBD); the
-      missing check() method is tracked below.
+    out_of_sync: false
+    hardening_port_2026_09_08: >
+      PORTED 2026-09-08 (DID-python#66). MATLAB commit 4a0f9a5
+      ("fileCache: reconcile stale rows and stop leaking the lock on
+      error paths") added hardening now matched on the Python side.
+      add_file tolerates a stale index row whose file has vanished, and
+      wraps its (row-insert + copy/move) sequence in try/except that
+      rolls the row back and calls binary_table.reset_lock_state() on
+      any failure. resize_and_add's eviction rewrites the index BEFORE
+      deleting the evicted files, so a crash mid-eviction leaves orphan
+      files (recoverable via check(remove_orphans=True)) rather than a
+      stale row (unrecoverable without a re-read). clear force-resets
+      the lock at the end and on error. A public check(repair,
+      remove_orphans) method audits and repairs the cache; see the
+      method entry below.
 
       Prior notes preserved -- the three RESOLVED items still hold:
 
@@ -711,16 +707,24 @@ classes:
         decision_log: "Exact match."
 
       - name: check
-        python_name: ~   # not ported
+        python_name: check
         decision_log: >
-          NOT PORTED as of 2026-09-07 (DID-matlab commit 4a0f9a5). MATLAB
-          added a public check(obj, 'Repair', tf, 'RemoveOrphans', tf)
-          method that audits the cache and, optionally, repairs stale
-          index rows and removes orphan files. Python's FileCache has no
-          equivalent; the recovery flow this supports (a fileCache whose
-          index and directory drifted apart because of a crash mid-write)
-          is not wired here yet. Deferred; the fileCache class entry
-          above is marked out_of_sync for the same batch.
+          PORTED 2026-09-08 (DID-python#66; DID-matlab 4a0f9a5). Both
+          audit the cache and report two kinds of divergence between the
+          binary-table index and the files on disk: staleRows (index rows
+          whose file is missing) and orphanFiles (files with no matching
+          row). With repair=True stale rows are dropped and currentSize
+          is corrected; with remove_orphans=True the orphan files are
+          also deleted. Both writes happen under the binary table's lock,
+          same as add_file/remove_file, and are rolled back to
+          reset_lock_state on error.
+
+          MATLAB uses camelCase name-value pairs ('Repair', tf,
+          'RemoveOrphans', tf); Python uses snake_case keyword arguments
+          (repair, remove_orphans). The returned dict carries MATLAB's
+          field names (staleRows, orphanFiles, checkedAt, repaired with
+          rowsDropped/filesDeleted) so a mixed-language reader sees the
+          same shape.
 
     decision_log: >
       SYNCHRONIZED 2026-08-29. Was a stub with an incompatible on-disk format

@@ -93,8 +93,11 @@ class TestDocument(unittest.TestCase):
         is_in_after_removal, _, fI_index_after_removal = doc.is_in_file_list(
             "filename1.ext"
         )
-        # After removal, searching for the file info should yield an empty index
-        self.assertFalse(is_in_after_removal)
+        # The name stays in file_list -- that is the class's declaration, not
+        # this document's per-instance record -- so is_in_file_list still
+        # reports it valid (matching MATLAB). The file_info entry is what
+        # remove_file drops, so the index goes back to None.
+        self.assertTrue(is_in_after_removal)
         self.assertIsNone(
             fI_index_after_removal, "File info should be empty after removing the file."
         )

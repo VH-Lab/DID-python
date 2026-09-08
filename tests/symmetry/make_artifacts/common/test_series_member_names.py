@@ -17,13 +17,13 @@ unreachable. Both are quiet.
 The vectors are asserted against the live implementation before being written
 out, so this file cannot claim something DID-python does not do.
 
-WHAT IS DELIBERATELY ABSENT. MATLAB parses the index with str2num, which
-EVALUATES its argument, so 'chunkdata.bin_1+1' would parse as member 2 there
-and a name ending in 'pi' can parse as a number. DID-matlab's own artifact
-calls that an artifact of the implementation rather than a decision and
-leaves those inputs out; so does this. Every vector here is an input where a
-strict integer parse and str2num agree -- with ONE exception, recorded below,
-where they do not.
+THE PARSE. Both languages use a strict all-digits check on the trailing part
+after the last underscore. MATLAB used to parse with str2num, which EVALUATES
+its argument, so 'chunkdata.bin_1+1' would parse as member 2 there and
+'_pi', '_i', '_-1' all came back as numbers. Tightened in
+DID-matlab#199 / DID-python#69 so the two languages agree at the parse rather
+than at a downstream check. Every vector here is an input both languages now
+resolve the same way.
 
 Artifacts are written to:
     <tempdir>/DID/symmetryTest/pythonArtifacts/common/seriesMemberNames/testSeriesMemberNamesArtifacts/
@@ -108,13 +108,10 @@ VECTORS = [
         "",
         None,
         (
-            "DEVIATION FROM MATLAB, recorded rather than hidden. MATLAB's str2num "
-            "parses '-1', so seriesMemberOf returns (chunkdata.bin, -1) there and "
-            "the index is rejected downstream. Python parses with str.isdigit(), "
-            "so a negative index is not a member name at all and the read fails "
-            "as an ordinary missing file. Both languages REFUSE it; they differ "
-            "only in which layer does the refusing. Slots are one-based, so "
-            "nothing can mint this name -- see DID-python#80."
+            "fails the parse itself in both languages: MATLAB's str2num used to "
+            "accept the leading minus, but the strict all-digits check does not "
+            "(DID-matlab#199 / DID-python#69). Slots are one-based, so nothing "
+            "can mint this name -- see DID-python#80."
         ),
     ),
 ]

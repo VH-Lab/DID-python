@@ -945,20 +945,16 @@ classes:
           four identified errors; Python raises ValueError, as the rest of
           did.document does.
 
-          DEVIATION inside that check, on which trailing parts count as a
-          member index. MATLAB resolves the part after the last underscore
-          with str2num, which EVALUATES, so "NAME_pi" and "NAME_i" parse as
-          numbers there and are caught as shadowed; MATLAB pins that
-          behaviour in a test. Python's series_member_of requires
-          str.isdigit(), so such a name is not a member here, nothing
-          shadows the literal entry, and refusing it would enforce a
-          collision that does not exist in this language. The guard has to
-          match the resolution rule of the language it guards. Consequence,
-          in one direction only: a declaration carrying NAME_pi beside a
-          NAME series is valid here and would be refused by MATLAB.
-          Emulating str2num, which evaluates arbitrary expressions, is not a
-          reasonable way to close that. Pinned in
-          tests/test_document_file_series.py.
+          Numbered-index parse (previously a documented DEVIATION): MATLAB
+          resolved the trailing part with str2num, which EVALUATES, so
+          "NAME_pi" and "NAME_i" parsed as numbers and were caught as
+          shadowed there but not here. Closed in DID-matlab#199 (2026-09-08,
+          DID-python#69): MATLAB now uses a strict all-digits check, matching
+          Python's str.isdigit(). Both languages accept NAME_<i> as a
+          numbered entry only when <i> is a non-negative integer, so
+          NAME_pi and NAME_i are literal names in both. See the
+          is_in_file_list entry below for the resolution rule the guard
+          matches.
 
       - name: id
         python_name: id
@@ -1101,20 +1097,35 @@ classes:
             type_python: "str"
         output_arguments:
           - name: result
-            type_python: "tuple(bool, dict, int)"
+            type_python: "tuple(bool, dict|None, int|None)"
         decision_log: >
-          DEVIATION, and NOT the exact match this entry claimed until
-          2026-09-08. MATLAB's is_in_file_list searches files.file_list,
-          maps NAME_12 to a NAME_# entry, falls back to series membership
-          (c80ba33), and returns (b, msg, fI_index). Python's is a
-          file_info-only lookup returning (bool, info_dict, index); its
-          docstring says the narrowing is deliberate and points callers at
-          is_series_member for the membership question, which is the public
-          form of the same rule. The two answer different questions and have
-          since well before the series work; the bridge simply did not say
-          so. Corrected here rather than in the code: no caller in this repo
-          wants MATLAB's shape, and widening it would change what every
-          existing caller gets back. Recorded 2026-09-08 (DID-python#69).
+          PORTED 2026-09-08 (DID-python#69). Both accept a name that is in
+          files.file_list (case-insensitive), that resolves to a NAME_#
+          entry there (foo.ext_12 matches foo.ext_#), or that is a member
+          of a declared file series (c80ba33's fallback). Python returns
+          (is_in, info, index); MATLAB returns (b, msg, fI_index). Python's
+          info/index carry the file_info entry when one exists and None
+          otherwise -- a declared name with no file_info yet, and a series
+          member (whose bytes are answered for by the manifest, not by an
+          inline file_info entry), both return (True, None, None). MATLAB's
+          fI_index is empty for the same cases; msg is populated only when
+          the name misses everywhere.
+
+          Numbered-index parse: Python's trailing-integer check uses
+          str.isdigit(); MATLAB's parses with a strict all-digits check as
+          of DID-matlab#199 (previously str2num, which evaluated
+          expressions). Both languages now accept NAME_<i> as a numbered
+          entry only when <i> is a non-negative integer, so NAME_pi and
+          NAME_i are literal names in both -- the divergence recorded in
+          the constructor's decision_log below is closed.
+
+          Until this entry was written on 2026-09-08 Python's method was a
+          file_info-only lookup and this entry claimed "Exact match"; the
+          series fallback and the file_list search were absent. The change
+          shifts remove_file to gate on index (not is_in), because is_in
+          now stays True for a declared name whose file_info was dropped;
+          same shift in sqlitedb._locations_for_file, which used is_in as
+          a proxy for "there is a file_info entry" and now gates on info.
 
       # `did.document.validate` was removed on the MATLAB side in
       # e7e375f ("Remove did.document.validate: it could never have run").

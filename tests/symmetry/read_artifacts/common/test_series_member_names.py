@@ -31,26 +31,11 @@ from tests.symmetry.conftest import SYMMETRY_BASE, missing_artifact
 
 # name -> (this language's stem, this language's index, why they differ)
 #
-# The one place the two parsers disagree. MATLAB parses the index with
-# str2num, which evaluates, so '-1' is a number there and seriesMemberOf
-# returns (chunkdata.bin, -1); the index is then rejected downstream by
-# seriesMemberPath. Python parses with str.isdigit(), so the name is not a
-# member at all and the read fails as an ordinary missing file.
-#
-# Both languages REFUSE the name. They differ only in which layer refuses,
-# and slots are one-based so nothing can mint it in the first place. Widening
-# Python's parse to admit a negative index would buy nothing; see
-# DID-python#69 and #80.
-DEVIATIONS = {
-    "chunkdata.bin_-1": (
-        "",
-        None,
-        (
-            "MATLAB's str2num parses a leading minus; Python's isdigit() does not. "
-            "Both refuse the name, at different layers."
-        ),
-    ),
-}
+# Empty as of DID-matlab#199 / DID-python#69: MATLAB tightened its parse
+# from str2num (which EVALUATES) to a strict all-digits check, matching
+# Python's isdigit-based parse. The '_-1' vector that used to be a
+# MATLAB-only member is now refused at the parse in both languages.
+DEVIATIONS: dict[str, tuple[str, int | None, str]] = {}
 
 
 def _recorded_index(case):

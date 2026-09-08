@@ -103,21 +103,72 @@ class Document:
         return file_info
 
     def is_in_file_list(self, filename):
-        """Is ``filename`` in this document's file_info list?
+        """Is ``filename`` a valid file name for this document?
 
-        Kept as a file_info-only lookup for backward compatibility with
-        existing callers and tests. Use :meth:`is_series_member` to test
-        whether ``filename`` is a file-series member (which has no
-        ``file_info`` entry by design -- membership is the manifest's to
-        answer).
+        Returns ``(is_in, info, index)``. ``is_in`` mirrors MATLAB's ``b``:
+        True when ``filename`` appears in ``files.file_list`` (matched
+        case-insensitively), when it resolves to a ``NAME_#`` entry there
+        (``foo.ext_12`` matches ``foo.ext_#``), or when it is a member of a
+        declared file series. ``info`` and ``index`` describe the
+        corresponding ``file_info`` record if one exists; both are ``None``
+        for a declared file that has not been added yet and for a series
+        member (whose bytes are answered for by the manifest, not by an
+        inline file_info entry).
+
+        Mirrors MATLAB ``did.document/is_in_file_list``, including the
+        series fallback added in DID-matlab c80ba33. See DID-python#69.
         """
-        file_info = self.document_properties.get("files", {}).get("file_info", [])
-        file_info = self._normalize_file_info(file_info)
+        files = self.document_properties.get("files")
+        if not isinstance(files, dict):
+            return False, None, None
 
-        for i, info in enumerate(file_info):
-            if info.get("name") == filename:
-                return True, info, i
-        return False, None, None
+        file_info = self._normalize_file_info(files.get("file_info", []))
+
+        info = None
+        index = None
+        for i, entry in enumerate(file_info):
+            if str(entry.get("name", "")).lower() == str(filename).lower():
+                info = entry
+                index = i
+                break
+
+        file_list = files.get("file_list") or []
+        if isinstance(file_list, str):
+            file_list = [file_list]
+        lowered_list = [str(n).lower() for n in file_list]
+        lowered_name = str(filename).lower()
+
+        if lowered_name in lowered_list:
+            return True, info, index
+
+        # Resolve NAME_<digits> to a NAME_# entry, matching MATLAB's second
+        # branch of is_in_file_list. Python parses the trailing part strictly
+        # (all-digits), as _validate_file_declarations and series_member_of do;
+        # MATLAB tightened its parse to match in DID-matlab#199. See the
+        # bridge entry and DID-python#69.
+        stem, _, tail = str(filename).rpartition("_")
+        if stem and tail.isdigit():
+            if f"{stem.lower()}_#" in lowered_list:
+                return True, info, index
+
+        # Series fallback (c80ba33): a member NAME_<i> is valid when NAME is
+        # a declared series, even though the member carries no file_info of
+        # its own. info/index stay None in that case, as MATLAB's
+        # fI_index stays empty.
+        member_stem, _member_index = self.series_member_of(filename)
+        if member_stem:
+            return True, info, index
+
+        # A file_info entry accepts the name too. MATLAB never lands here
+        # because its add_file rejects a name not in file_list; Python's
+        # add_file has never enforced that (a separate deviation, unchanged
+        # by this port), so treating an inline entry as valid preserves
+        # every existing caller that relies on add_file+is_in_file_list to
+        # round-trip a name.
+        if info is not None:
+            return True, info, index
+
+        return False, info, index
 
     def add_file(
         self,
@@ -207,8 +258,8 @@ class Document:
             files_prop["file_info"] = self._normalize_file_info(
                 files_prop.get("file_info", [])
             )
-        is_in, _, index = self.is_in_file_list(filename)
-        if is_in:
+        _is_in, _info, index = self.is_in_file_list(filename)
+        if index is not None:
             del self.document_properties["files"]["file_info"][index]
 
     @staticmethod

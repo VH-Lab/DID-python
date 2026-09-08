@@ -558,6 +558,22 @@ class BinaryTable:
             release_lock_file(self.lock_file_name(), key)
             self.has_lock = False
 
+    def reset_lock_state(self):
+        """Force ``has_lock`` back to False without touching the disk lock.
+
+        Recovery method: use when an error path unwound past
+        :meth:`release_lock` and left ``has_lock`` stuck True. In that
+        state every subsequent :meth:`get_lock` returns ``(None, None)``
+        (a no-op release) and the table is effectively unlocked against
+        itself. The on-disk lock file, if some other holder actually has
+        it, is left alone; the next :meth:`get_lock` re-enters
+        :func:`checkout_lock_file` and resolves real contention normally.
+
+        Mirrors MATLAB ``binaryTable/resetLockState`` (DID-matlab 4a0f9a5).
+        See DID-python#66.
+        """
+        self.has_lock = False
+
     def lock_file_name(self):
         # "-lock", not ".lock": this is the name MATLAB's binaryTable checks
         # out, and two languages sharing a cache directory must contend for
@@ -1070,6 +1086,14 @@ class FileCache:
 
         The source file should be outside the cache directory. It is moved
         by default; pass ``copy=True`` to leave the original in place.
+
+        Tolerates a stale index row whose file has vanished, dropping the
+        row instead of refusing the caller who has the bytes. Rolls the
+        row back and resets the binary table's in-memory lock flag on any
+        error path, so a failed copy/move does not leave a permanently
+        poisoned uid or a stuck ``has_lock``. Mirrors MATLAB
+        ``fileCache/addFile`` hardening (DID-matlab 4a0f9a5). See
+        DID-python#66.
         """
         if not os.path.isfile(full_path_file_name):
             raise FileNotFoundError(f'There is no file at "{full_path_file_name}".')
@@ -1086,22 +1110,43 @@ class FileCache:
         table = self._table()
         lock_fid, key = table.get_lock()
         try:
+            destination = self.full_path(file_name_in_cache)
             row, _ = table.find_row(1, file_name_in_cache)
             if row:
-                raise ValueError(
-                    f"There is already a file with name {file_name_in_cache} "
-                    f"in the cache."
-                )
+                if os.path.isfile(destination):
+                    raise ValueError(
+                        f"There is already a file with name "
+                        f"{file_name_in_cache} in the cache."
+                    )
+                # Stale index row: the row promises a file that is no
+                # longer on disk (an interrupted eviction, a failed move,
+                # a lock race). Retract the promise instead of refusing
+                # the caller who has the bytes.
+                self._drop_row_no_lock(row)
 
             size = os.path.getsize(full_path_file_name)
             self.resize_and_add(size, file_name_in_cache)  # now it is in the index
-            destination = self.full_path(file_name_in_cache)
-            if copy:
-                shutil.copyfile(full_path_file_name, destination)
-            else:
-                shutil.move(full_path_file_name, destination)
-        finally:
+            try:
+                if copy:
+                    shutil.copyfile(full_path_file_name, destination)
+                else:
+                    shutil.move(full_path_file_name, destination)
+            except Exception:
+                # Bytes did not land. Roll the row back so the next
+                # add_file of the same name is not refused as an
+                # "already in cache" that never was.
+                rollback_row, _ = table.find_row(1, file_name_in_cache)
+                if rollback_row:
+                    self._drop_row_no_lock(rollback_row)
+                raise
             table.release_lock(lock_fid, key)
+        except Exception:
+            try:
+                table.release_lock(lock_fid, key)
+            except Exception:
+                pass
+            table.reset_lock_state()
+            raise
 
     def remove_file(self, file_name_in_cache):
         """Remove one file from the cache and from the index."""
@@ -1128,7 +1173,15 @@ class FileCache:
             table.release_lock(lock_fid, key)
 
     def clear(self):
-        """Remove every file from the cache. Use with caution."""
+        """Remove every file from the cache. Use with caution.
+
+        Force-resets the in-memory lock at the end (and on any error path),
+        so a caller who runs ``clear()`` to recover from a poisoned cache
+        gets a genuinely clean BinaryTable back -- otherwise a previously
+        stuck ``has_lock`` would survive the on-disk wipe and continue to
+        disable the singleton's concurrency protection. Mirrors MATLAB
+        ``fileCache/clear`` (DID-matlab 4a0f9a5). See DID-python#66.
+        """
         table = self._table()
         lock_fid, key = table.get_lock()
         try:
@@ -1139,8 +1192,15 @@ class FileCache:
                 path = self.full_path(name)
                 if os.path.exists(path):
                     os.remove(path)
-        finally:
             table.release_lock(lock_fid, key)
+        except Exception:
+            try:
+                table.release_lock(lock_fid, key)
+            except Exception:
+                pass
+            table.reset_lock_state()
+            raise
+        table.reset_lock_state()
 
     def touch(self, file_name):
         """Record that a cached file has just been used.
@@ -1206,21 +1266,32 @@ class FileCache:
                         cutoff = position
                         break
 
-                for index in order[cutoff:]:
-                    path = self.full_path(names[index])
-                    if os.path.exists(path):
-                        os.remove(path)
-
                 kept = order[:cutoff]
                 rows = [(names[i], last_access[i], sizes[i]) for i in kept] + [
                     (name, datenum(), size)
                     for name, size in zip(new_file_name, new_file_size)
                 ]
                 rows.sort(key=lambda row: row[0])  # keep the index sorted by name
+
+                # Rewrite the index BEFORE deleting the files. An interrupt
+                # between the two would otherwise leave rows without files
+                # -- a permanently poisoned uid, since add_file would then
+                # refuse as "already in cache" without the bytes ever
+                # existing. Doing the delete second means an interrupt
+                # leaves orphan files with no index row instead, which are
+                # harmless (recoverable via check(remove_orphans=True) or
+                # overwritten by the next add of the same name). Mirrors
+                # MATLAB fileCache/resizeAndAdd (DID-matlab 4a0f9a5).
+                # See DID-python#66.
                 table.write_table([list(row) for row in rows])
                 self.set_properties(
                     self.max_size, self.reduce_size, sum(row[2] for row in rows)
                 )
+
+                for index in order[cutoff:]:
+                    path = self.full_path(names[index])
+                    if os.path.exists(path):
+                        os.remove(path)
             else:
                 for name, size in zip(new_file_name, new_file_size):
                     row, insert_spot = table.find_row(1, name, sorted=True)
@@ -1232,6 +1303,102 @@ class FileCache:
                 self.set_properties(self.max_size, self.reduce_size, new_total_size)
         finally:
             table.release_lock(lock_fid, key)
+
+    def _drop_row_no_lock(self, row):
+        """Remove one index row and decrement ``currentSize``.
+
+        Internal helper used by :meth:`add_file`'s stale-row reconciliation
+        and rollback paths, and by :meth:`check` with ``repair=True``. The
+        caller MUST already hold the binary table's lock. Unlike
+        :meth:`remove_file`, this does not touch any file on disk -- the
+        point is precisely that the file is not there. Mirrors MATLAB
+        ``fileCache/dropRowNoLock`` (DID-matlab 4a0f9a5).
+        """
+        table = self._table()
+        size_here = int(table.read_row(row, 3))
+        properties = self.get_properties()
+        new_size = int(properties["currentSize"])
+        if size_here <= new_size:
+            new_size -= size_here
+        else:
+            new_size = 0
+        self.set_properties(self.max_size, self.reduce_size, new_size)
+        table.delete_row(row)
+
+    def check(self, repair=False, remove_orphans=False):
+        """Report and optionally repair index/disk divergences.
+
+        Scans the cache and reports two kinds of divergence between the
+        binary table index and the files on disk:
+
+        ``stale_rows``
+            Rows the index carries whose file is missing on disk. These
+            are what poison a uid: :meth:`add_file` refuses because the
+            index says "already there", but the bytes are not, and the
+            file is never re-cacheable until the row is dropped.
+
+        ``orphan_files``
+            Files on disk with no matching index row. Harmless (they
+            simply do not count against ``currentSize``), but they occupy
+            space.
+
+        With ``repair=True``, stale rows are dropped and ``currentSize``
+        is corrected. With ``remove_orphans=True``, the orphan files are
+        also deleted. Both writes happen under the binary table's lock,
+        the same way :meth:`add_file` and :meth:`remove_file` do.
+
+        Returns a dict describing what was found and what was repaired.
+        Mirrors MATLAB ``fileCache/check`` (DID-matlab 4a0f9a5). See
+        DID-python#66.
+        """
+        table = self._table()
+        lock_fid, key = table.get_lock()
+        try:
+            index_names, _, _ = self.file_list(True)
+            disk_names, _, _ = self.file_list(False)
+            index_list = [str(n) for n in index_names]
+            disk_list = [str(n) for n in disk_names]
+
+            stale_rows = [
+                name
+                for name in index_list
+                if not os.path.isfile(self.full_path(name))
+            ]
+            index_set = set(index_list)
+            orphan_files = [name for name in disk_list if name not in index_set]
+
+            report = {
+                "directoryName": self.directory_name,
+                "checkedAt": datenum(),
+                "staleRows": list(stale_rows),
+                "orphanFiles": list(orphan_files),
+                "consistent": len(index_list) - len(stale_rows),
+                "repaired": {"rowsDropped": 0, "filesDeleted": 0},
+            }
+
+            if repair and stale_rows:
+                for name in stale_rows:
+                    row, _ = table.find_row(1, name)
+                    if row:
+                        self._drop_row_no_lock(row)
+                        report["repaired"]["rowsDropped"] += 1
+
+            if remove_orphans and orphan_files:
+                for name in orphan_files:
+                    path = self.full_path(name)
+                    if os.path.isfile(path):
+                        os.remove(path)
+                        report["repaired"]["filesDeleted"] += 1
+
+            table.release_lock(lock_fid, key)
+            return report
+        except Exception:
+            try:
+                table.release_lock(lock_fid, key)
+            except Exception:
+                pass
+            table.reset_lock_state()
+            raise
 
 
 def fileid_value(fid_or_fileobj):
