@@ -276,9 +276,7 @@ class TestStaleRowReconciliation:
     (DID-matlab 4a0f9a5). See DID-python#66.
     """
 
-    def test_add_file_replaces_a_stale_row_instead_of_refusing(
-        self, cache, tmp_path
-    ):
+    def test_add_file_replaces_a_stale_row_instead_of_refusing(self, cache, tmp_path):
         first = make_source(tmp_path, 1, 40)
         cache.add_file(first, name_of(1))
         # Simulate an interrupted eviction: index row is still there but
@@ -290,9 +288,7 @@ class TestStaleRowReconciliation:
         assert os.path.isfile(cache.full_path(name_of(1)))
         assert cache.is_file(name_of(1))
 
-    def test_add_file_still_refuses_a_row_whose_file_is_present(
-        self, cache, tmp_path
-    ):
+    def test_add_file_still_refuses_a_row_whose_file_is_present(self, cache, tmp_path):
         cache.add_file(make_source(tmp_path, 1, 40), name_of(1))
         with pytest.raises(ValueError, match="already"):
             cache.add_file(make_source(tmp_path, 2, 60), name_of(1))
@@ -312,9 +308,7 @@ class TestErrorPathReleasesLock:
             cache.add_file(str(tmp_path / "does-not-exist"), name_of(1))
         assert cache.binary_table is None or cache.binary_table.has_lock is False
 
-    def test_a_wrong_length_name_still_leaves_the_lock_reset(
-        self, cache, tmp_path
-    ):
+    def test_a_wrong_length_name_still_leaves_the_lock_reset(self, cache, tmp_path):
         # The length check fires before the lock is taken, so the lock
         # was never held -- but has_lock must be False either way.
         with pytest.raises(ValueError):
@@ -336,9 +330,7 @@ class TestCheck:
         assert report["consistent"] == 1
         assert report["repaired"] == {"rowsDropped": 0, "filesDeleted": 0}
 
-    def test_a_stale_row_is_reported_but_not_repaired_by_default(
-        self, cache, tmp_path
-    ):
+    def test_a_stale_row_is_reported_but_not_repaired_by_default(self, cache, tmp_path):
         cache.add_file(make_source(tmp_path, 1, 40), name_of(1))
         os.remove(cache.full_path(name_of(1)))
         report = cache.check()
@@ -348,9 +340,7 @@ class TestCheck:
         row, _ = cache._table().find_row(1, name_of(1))
         assert row > 0
 
-    def test_repair_drops_stale_rows_and_corrects_currentsize(
-        self, cache, tmp_path
-    ):
+    def test_repair_drops_stale_rows_and_corrects_currentsize(self, cache, tmp_path):
         cache.add_file(make_source(tmp_path, 1, 40), name_of(1))
         cache.add_file(make_source(tmp_path, 2, 60), name_of(2))
         before = cache.get_properties()["currentSize"]
@@ -362,9 +352,7 @@ class TestCheck:
         assert row == 0
         assert cache.get_properties()["currentSize"] == before - 40
 
-    def test_an_orphan_file_is_reported_but_left_alone_by_default(
-        self, cache
-    ):
+    def test_an_orphan_file_is_reported_but_left_alone_by_default(self, cache):
         orphan = cache.full_path(name_of(9))
         with open(orphan, "wb") as handle:
             handle.write(b"stray bytes")

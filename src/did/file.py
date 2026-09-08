@@ -1360,9 +1360,7 @@ class FileCache:
             disk_list = [str(n) for n in disk_names]
 
             stale_rows = [
-                name
-                for name in index_list
-                if not os.path.isfile(self.full_path(name))
+                name for name in index_list if not os.path.isfile(self.full_path(name))
             ]
             index_set = set(index_list)
             orphan_files = [name for name in disk_list if name not in index_set]

@@ -98,9 +98,7 @@ def get_cache(action=None):
     """
     global _cached_cache
     if action not in (None, "reset"):
-        raise ValueError(
-            f'get_cache: action must be None or "reset"; got {action!r}.'
-        )
+        raise ValueError(f'get_cache: action must be None or "reset"; got {action!r}.')
     if action == "reset":
         _cached_cache = None
     if _cached_cache is None:
