@@ -31,23 +31,11 @@ from tests.symmetry.conftest import SYMMETRY_BASE, missing_artifact
 
 # name -> (this language's stem, this language's index, why they differ)
 #
-# TRANSITIONAL, pending VH-Lab/DID-matlab#198. Once that PR merges,
-# MATLAB's seriesMemberOf uses a strict all-digits parse and this table
-# empties out. Until then the DID-matlab main this workflow checks out
-# still records ('chunkdata.bin_-1', 'chunkdata.bin', -1) via str2num,
-# and Python's isdigit-based parse answers ('', None) -- both languages
-# refuse the name, only the layer differs. See DID-python#69.
-DEVIATIONS: dict[str, tuple[str, int | None, str]] = {
-    "chunkdata.bin_-1": (
-        "",
-        None,
-        (
-            "MATLAB's str2num parses a leading minus; Python's isdigit() does not. "
-            "Both refuse the name, at different layers. Removed here once "
-            "VH-Lab/DID-matlab#198 lands and MATLAB's parse becomes strict too."
-        ),
-    ),
-}
+# Empty as of DID-matlab#198 / DID-python#69: MATLAB tightened its parse
+# from str2num (which EVALUATES) to a strict all-digits check, matching
+# Python's isdigit-based parse. The '_-1' vector that used to be a
+# MATLAB-only member is now refused at the parse in both languages.
+DEVIATIONS: dict[str, tuple[str, int | None, str]] = {}
 
 
 def _recorded_index(case):

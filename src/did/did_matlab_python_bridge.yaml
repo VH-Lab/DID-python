@@ -906,7 +906,7 @@ classes:
   - name: document
     type: class
     matlab_path: "+did/document.m"
-    matlab_last_sync_hash: "78583f6"
+    matlab_last_sync_hash: "c95b4f2"
     status: ported
     python_path: "did/document.py"
     python_class: "Document"
@@ -1370,6 +1370,16 @@ classes:
       are not ported. MATLAB's validate method is dead code and is
       deliberately not ported. Synchronized 2026-03-16; construction and
       validation 2026-08-28.
+
+      Sync hash bumped to c95b4f2 on 2026-09-08 (DID-matlab#198 /
+      DID-python#69). That commit tightened the NAME_<i> parse in
+      is_in_file_list, seriesMemberOf and localValidateFileDeclarations
+      from str2num (which EVALUATES) to a strict all-digits check, matching
+      Python's series_member_of. The Python side was already strict, so no
+      code change was needed here -- the entry's method-level decision_logs
+      for is_in_file_list and the constructor already describe the alignment.
+      Both languages now accept NAME_<i> as a numbered entry only when <i>
+      is a non-negative integer.
 
   # -----------------------------------------------------------------------
   # did.query
