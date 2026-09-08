@@ -995,20 +995,23 @@ not_tracked:
   # stub-level) Python counterpart, so it is now tracked as a class entry
   # above and is covered by the drift check.
   - name: did.file.dumbjsondb
-    status: porting_deferred
+    status: matlab_only
     decision_log: >
-      Not ported for now. DID-python's storage backend is SQLiteDB; there is
-      no current plan to carry the JSON-file document store across, but the
-      door is deliberately left open -- see the last sentence below, which is
-      why this is porting_deferred rather than matlab_only.
-      NOTE (2026-08-28): the previous rationale here read "MATLAB
-      dumbjsondb has a Python equivalent (DumbJsonDB in file.py)", which
-      overstated the situation. A DumbJsonDB class does exist in file.py,
-      but it arrived with the initial bulk port commit (97ba45c) and is
-      dead code: nothing in src/ or tests/ imports, instantiates or
-      exercises it, and it implements only the parameter file, versioned
-      read/add and version listing -- no binary files, search, remove,
-      clear, alldocids or document metadata. It is a vestigial stub, not
-      a port. Either delete it or, if a JSON backend is ever wanted,
-      promote this to a tracked class entry and port it properly; until
-      then it stays out of the drift check by design.
+      Will not be ported. Settled 2026-09-08. MATLAB's dumbjsondb is a second
+      storage backend; DID-python has one, SQLiteDB, and backend dispatch that
+      a single backend makes moot is what matlab_only is for. Nobody is
+      waiting for this -- which is why it is not porting_deferred, the status
+      this entry carried until the decision was made.
+
+      History, kept because the record was wrong twice in opposite directions.
+      Before 2026-08-28 this read "MATLAB dumbjsondb has a Python equivalent
+      (DumbJsonDB in file.py)", which overstated matters: a DumbJsonDB class
+      did exist in file.py, but it arrived with the initial bulk port
+      (97ba45c) and was dead code -- nothing in src/ or tests/ imported,
+      instantiated or exercised it, and it implemented only the parameter
+      file, versioned read/add and version listing, with no binary files,
+      search, remove, clear, alldocids or document metadata. That correction
+      left a fork in this log: delete the stub, or promote it to a tracked
+      entry and port it properly. The decision above takes the first branch,
+      and the class was deleted from did/file.py in the same change -- leaving
+      it is how the next reader concludes there is a JSON backend.

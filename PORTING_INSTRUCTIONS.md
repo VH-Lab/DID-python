@@ -160,7 +160,7 @@ when the answer is not a plain yes.
 | *(absent)* | **ported.** A 1:1 Python counterpart under the mirrored name, at `python_path`. This is the default, and it is spelled by leaving `status` out — writing `status: ported` is rejected, because if the value were sometimes explicit then its absence would be ambiguous between "ported" and "nobody filled this in". | no |
 | `ported_differently` | Python has the capability, but not 1:1 — a different name, folded into another class, a dependency doing the job, a different design. `python_path` must still say where it lives. | no |
 | `porting_deferred` | No Python counterpart today. Known, and it may happen later; the `decision_log` says why not now, or what blocks it. Must not carry a `python_path`. | yes |
-| `matlab_only` | Exists because MATLAB works that way, and never gets a counterpart by design (`filesep`, `toolboxdir`, `Contents.m`). Must not carry a `python_path`. | yes |
+| `matlab_only` | Exists because MATLAB works that way, and will never get a counterpart by design. MATLAB-runtime shims, MATLAB packaging artifacts (`Contents.m`), MATLAB-interop helpers (`filesep`, `toolboxdir`), and backend dispatch that Python's single backend makes moot (`dumbjsondb`). Not a deferral: nobody is waiting for it. Must not carry a `python_path`. | yes |
 | `retired` | The MATLAB entity this entry names does not exist in DID-matlab today — removed upstream, or claimed here in error. A tombstone, kept so the decision is not re-litigated. | yes |
 
 Two distinctions worth stating outright, because collapsing them is what makes
