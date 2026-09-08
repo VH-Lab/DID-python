@@ -263,6 +263,19 @@ classes:
           document written with a relative path is not ingested from the
           process's working directory.
 
+          The handler context (DID-matlab#186) carries mode 'add' on this
+          path and 'open' on open_doc's, in both languages. Python's series
+          member loop sent "ingest" from the #173 port until DID-python#71;
+          mode is a string the CALLER's handler switches on, so a value that
+          differed between the languages would silently fall through a case
+          rather than fail. Two further divergences on this path are open in
+          DID-python#71 and NOT yet fixed: _ingest_series_members does not
+          check that the handler produced a file (MATLAB tests
+          isfile(destPath) and warns; Python warns only if the handler
+          raises), and _ingest_location calls the handler with two arguments
+          and no context at all where MATLAB dispatches the full struct with
+          seriesName ''.
+
       - name: do_get_doc
         python_name: _do_get_doc
         input_arguments:
