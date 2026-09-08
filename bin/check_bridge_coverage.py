@@ -105,12 +105,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #
 # Decision 3 of #211 settled on the ratchet, *for the moment*: the list is a
 # staging post toward clearing the debt, not a permanent exemption mechanism.
-# Moot here -- this repo had no backlog to ratchet down, and the list has been
-# empty since the gate went on.
-#
-# DID-python's list is empty and is expected to stay that way: at the time the
-# gate went on, zero entries were drifted, so there was no backlog to ratchet
-# down. It exists so the escape hatch is present when a batch of MATLAB work
+# It is moot here either way -- zero entries were drifted when the gate went on,
+# so there was no backlog to ratchet down, and the list has been empty since.
+# It exists so the escape hatch is present when a batch of MATLAB work
 # lands faster than it can be reviewed -- add the name, port or review it, take
 # the name out again. It is not a place to park an entry indefinitely; an
 # allowlisted entry that has STOPPED drifting is reported, so the list cannot
@@ -572,7 +569,7 @@ def check_status(report, matlab_repo, tracked, not_tracked):
             report.add(
                 "status",
                 f"{where}: unknown status {status!r}; "
-                f"expected one of {list(STATUSES)} (or none, meaning ported). "
+                f"expected one of {list(STATUSES)}. "
                 "See PORTING_INSTRUCTIONS.md, 'Status vocabulary'.",
             )
             continue
