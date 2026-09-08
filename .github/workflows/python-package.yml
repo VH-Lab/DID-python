@@ -40,13 +40,25 @@ jobs:
     steps:
       - name: Check out DID-python
         uses: actions/checkout@v4
+        with:
+          # Needed for TestAHashChangeIsJustified, which diffs this branch
+          # against its merge-base. actions/checkout is shallow by default, and
+          # a shallow clone has no merge-base -- the check would skip, which is
+          # the failure mode the bridge tests exist to prevent.
+          fetch-depth: 0
 
       - name: Check out DID-matlab
         uses: actions/checkout@v4
         with:
           repository: VH-Lab/DID-matlab
           path: DID-matlab
-          fetch-depth: 0   # drift check walks history from each sync hash
+          # Not optional. The hash and drift checks walk MATLAB history
+          # backwards from each entry's sync hash; actions/checkout is shallow
+          # by default and does not have it, so `git cat-file -e <hash>` would
+          # report "missing" for nearly every entry. The script now detects a
+          # shallow checkout and stops with one message instead of sixty, but
+          # stopping is still a failure -- keep this at 0.
+          fetch-depth: 0
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -56,22 +68,29 @@ jobs:
       - name: Install PyYAML
         run: pip install pyyaml
 
-      # These four checks depend only on the current state of the two repos,
-      # so a PR can break them and a PR can fix them. They gate.
+      # All six checks gate, drift included.
+      #
+      # Drift used to run separately with continue-on-error, on the argument
+      # that it turns red when DID-matlab moves -- which no commit here causes
+      # and none can fix until someone does the port. That argument is sound
+      # about the CAUSE and wrong about the CONSEQUENCE: an unreviewed upstream
+      # change is exactly the thing this bridge exists to surface, and a red
+      # main is how a repo of three says so. Settled across DID-python,
+      # NDI-python and NDR-python in NDI-python issue #211.
+      #
+      # When a batch of MATLAB work lands faster than it can be reviewed, the
+      # escape hatch is DRIFT_ALLOWLIST in bin/check_bridge_coverage.py -- a
+      # ratchet that shrinks -- not switching this back off.
+      #
+      # Each check is named explicitly, so adding one to CHECKS in
+      # bin/check_bridge_coverage.py does NOT make it run here: it has to be
+      # listed below too, or it runs nowhere and its silence reads as a pass.
       - name: Check bridge coverage
         run: |
           python bin/check_bridge_coverage.py \
             --matlab-repo DID-matlab \
-            --check file --check hash --check member --check missing
-
-      # Drift is different: it turns red when DID-matlab moves, which no commit
-      # here causes and no commit here can fix until someone does the port. Kept
-      # visible but non-gating, so main does not go red without a commit.
-      - name: Report MATLAB drift (informational)
-        continue-on-error: true
-        run: |
-          python bin/check_bridge_coverage.py \
-            --matlab-repo DID-matlab --check drift
+            --check file --check hash --check status \
+            --check drift --check member --check missing
 
   test:
     runs-on: ubuntu-latest
@@ -82,6 +101,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # merge-base for TestAHashChangeIsJustified
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -94,6 +115,12 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Test with pytest
+        # A bridge check that cannot run must not report as one that passed.
+        # TestAHashChangeIsJustified skips when it finds no merge-base; here the
+        # history is checked out on purpose, so a skip means something broke and
+        # this makes it fail loudly instead.
+        env:
+          DID_BRIDGE_CHECK_STRICT: "1"
         run: pytest
 
   wheel-smoke:

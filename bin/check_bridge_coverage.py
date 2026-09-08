@@ -10,10 +10,14 @@ side.
 This script checks that completeness in both directions:
 
   file      every .m file under DID-matlab/src/did is either tracked by an
-            entry or explicitly listed under ``not_applicable``; every .py
+            entry or explicitly listed under ``not_tracked``; every .py
             module under DID-python/src/did is some entry's ``python_path``.
   hash      every tracked entry carries a ``matlab_last_sync_hash`` (without
             one it can never show drift) and that hash is a real commit.
+  status    every ``status`` is one of the documented values, says why in a
+            ``decision_log``, and agrees with the rest of its entry; every
+            ``not_tracked`` entry actually excuses a MATLAB file, or declares
+            that it does not.
   drift     no MATLAB commits touch a tracked file after its sync hash.
   member    every method/property entry names a symbol that really exists in
             the MATLAB class, and its ``python_name`` really exists in the
@@ -38,9 +42,80 @@ import sys
 
 import yaml
 
-CHECKS = ("file", "hash", "drift", "member", "missing")
+CHECKS = ("file", "hash", "status", "drift", "member", "missing")
+
+# The bridge's status vocabulary. This tuple is the mechanism; the normative
+# definition of each value lives in PORTING_INSTRUCTIONS.md ("Status
+# vocabulary"), and tests/test_bridge_contract.py asserts the two agree, so a
+# value cannot be added here without being documented (or vice versa).
+#
+# `status` is REQUIRED on every tracked entry, and "ported" is one of the
+# values -- it is not spelled by leaving the field out.
+#
+# It was implicit at first, on the argument that an optional-and-sometimes-
+# written value makes a missing status ambiguous between "ported" and "nobody
+# filled this in". Requiring the field removes that ambiguity outright, and
+# does it better: an entry with no status is now simply rejected. What the
+# implicit spelling cost was legibility -- 60 of 62 entries said nothing, so
+# the most common state was the only unlabeled one, and telling a plain port
+# from ported_differently meant noticing an ABSENCE. Both carry a python_path;
+# only one carried a word. Now every entry answers "is this ported?" in its
+# own text.
+STATUSES = (
+    "ported",
+    "ported_differently",
+    "porting_deferred",
+    "matlab_only",
+    "retired",
+)
+
+# Statuses an entry in a `not_tracked` list may carry. `ported` and
+# `ported_differently` are excluded: if Python has the capability, the entry
+# belongs in `classes` or `functions` where the drift check can see it.
+NOT_TRACKED_STATUSES = ("porting_deferred", "matlab_only", "retired")
+
+# Status names that were used and then replaced, mapped to what to write
+# instead. A retired name gets a targeted error saying what it became, rather
+# than a bare "not in the vocabulary" that leaves the reader to guess.
+#
+# This matters more than it looks: the vocabulary is shared by DID-python,
+# NDI-python and NDR-python, and the three drifted apart once already. Someone
+# arriving from a repo (or a doc) that still carries an old name should be told
+# the new one, not just told no. `not_applicable` is here because it was this
+# repo's own key name until 2026-09-07, and it conflated three claims -- so
+# there is no single replacement to name, and the message says so.
+REPLACED_STATUSES = {
+    "ported_elsewhere": "ported_differently (NDR-python issue #21: python_path "
+    "already says WHERE; the manner is the part a reader cannot recover)",
+    "not_yet_ported": "porting_deferred",
+    "not_applicable": "matlab_only, porting_deferred or retired -- pick the one "
+    "you mean; not_applicable conflated all three",
+    "implemented": "no status at all (ported is the default: no status plus a "
+    "python_path)",
+    "does_not_exist": "retired",
+}
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Entries permitted to be drifted right now, by `name`. The drift check gates
+# (NDI-python issue #211, one policy for all three repos), and a repo switching
+# it on with a backlog would go red on work nobody has done yet -- so the
+# rollout is a RATCHET: list what is already drifted, gate everything else, and
+# shrink the list as entries get reviewed.
+#
+# Decision 3 of #211 settled on the ratchet, *for the moment*: the list is a
+# staging post toward clearing the debt, not a permanent exemption mechanism.
+# Moot here -- this repo had no backlog to ratchet down, and the list has been
+# empty since the gate went on.
+#
+# DID-python's list is empty and is expected to stay that way: at the time the
+# gate went on, zero entries were drifted, so there was no backlog to ratchet
+# down. It exists so the escape hatch is present when a batch of MATLAB work
+# lands faster than it can be reviewed -- add the name, port or review it, take
+# the name out again. It is not a place to park an entry indefinitely; an
+# allowlisted entry that has STOPPED drifting is reported, so the list cannot
+# quietly outlive its reason.
+DRIFT_ALLOWLIST: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -323,14 +398,9 @@ def python_attributes(path: str, class_name: str) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
-def is_placeholder(value) -> bool:
-    """True for the `(not applicable)` style placeholders used in the YAML."""
-    return isinstance(value, str) and value.strip().startswith("(")
-
-
 def load_bridge(repo: str):
-    """Load every bridge YAML; return (tracked entries, not_applicable entries)."""
-    tracked, not_applicable = [], []
+    """Load every bridge YAML; return (tracked entries, not_tracked entries)."""
+    tracked, not_tracked = [], []
     for path in sorted(glob.glob(os.path.join(repo, "src/did/*.yaml"))):
         with open(path) as handle:
             data = yaml.safe_load(handle)
@@ -340,10 +410,22 @@ def load_bridge(repo: str):
                 item["_bridge"] = name
                 item["_section"] = section
                 tracked.append(item)
-        for item in data.get("not_applicable") or []:
+        for item in data.get("not_tracked") or []:
             item["_bridge"] = name
-            not_applicable.append(item)
-    return tracked, not_applicable
+            not_tracked.append(item)
+    return tracked, not_tracked
+
+
+def excuses(entry_name: str, matlab_path: str) -> bool:
+    """Does a `not_tracked` entry name this MATLAB file?
+
+    `not_tracked` names appear bare (`Contents.m`), by stem (`filesep`), or
+    dotted (`did.file.dumbjsondb`), so all three spellings resolve here rather
+    than at each call site.
+    """
+    base = os.path.basename(matlab_path)
+    stem = base.removesuffix(".m")
+    return entry_name in (base, stem) or entry_name.endswith("." + stem)
 
 
 class Report:
@@ -377,21 +459,17 @@ def git(matlab_repo: str, *args: str) -> str:
     return result.stdout.strip()
 
 
-def check_file_coverage(report, repo, matlab_repo, tracked, not_applicable):
+def check_file_coverage(report, repo, matlab_repo, tracked, not_tracked):
     matlab_files = [
         p for p in git(matlab_repo, "ls-files", "src/did").split() if p.endswith(".m")
     ]
     covered = {"src/did/" + e["matlab_path"] for e in tracked if e.get("matlab_path")}
-    excused = {e["name"] for e in not_applicable}
+    excused = {e["name"] for e in not_tracked}
 
     for path in sorted(matlab_files):
         if path in covered:
             continue
-        base = os.path.basename(path)
-        stem = base[:-2]
-        # not_applicable entries name a file either bare (`Contents.m`), by
-        # stem, or dotted (`did.file.dumbjsondb`).
-        if any(n in (base, stem) or n.endswith("." + stem) for n in excused):
+        if any(excuses(name, path) for name in excused):
             continue
         report.add("file", f"MATLAB file has no bridge entry: {path}")
 
@@ -413,7 +491,7 @@ def check_file_coverage(report, repo, matlab_repo, tracked, not_applicable):
             for m in (entry.get("methods") or [])
             if isinstance(m, dict)
         ]:
-            if candidate and not is_placeholder(candidate):
+            if candidate:
                 referenced.add("src/" + candidate)
 
     for path in sorted(python_files):
@@ -423,11 +501,7 @@ def check_file_coverage(report, repo, matlab_repo, tracked, not_applicable):
 
     for entry in tracked:
         rel = entry.get("python_path")
-        if (
-            rel
-            and not is_placeholder(rel)
-            and not os.path.exists(os.path.join(repo, "src", rel))
-        ):
+        if rel and not os.path.exists(os.path.join(repo, "src", rel)):
             report.add(
                 "file",
                 f"{entry['name']}: python_path does not exist: src/{rel}",
@@ -459,7 +533,148 @@ def check_hashes(report, matlab_repo, tracked):
             )
 
 
+def _decision_log_words(entry) -> int:
+    return len((entry.get("decision_log") or "").split())
+
+
+def check_status(report, matlab_repo, tracked, not_tracked):
+    """Validate the status vocabulary and the claims each value makes.
+
+    Before this check the bridge had no `status` field at all. What stood in
+    for it was prose in fields the script parses as paths -- `python_path:
+    "(not separately implemented)"` on sqldb, `"(not applicable)"` on
+    matlabdumbjsondb -- which the loader skipped on the leading "(", so the
+    two entries read identically to every check while meaning opposite things
+    (sqldb's capability exists in Python, merged into Database; the other's
+    does not exist at all). A status a checker cannot read is a comment.
+    """
+    for entry in tracked:
+        where = f"{entry['name']} ({entry['_bridge']})"
+        status = entry.get("status")
+        if status is None:
+            report.add(
+                "status",
+                f"{where}: no status. Every tracked entry states whether it is "
+                f"ported, in its own text: one of {list(STATUSES)}. "
+                "See PORTING_INSTRUCTIONS.md, 'Status vocabulary'.",
+            )
+            continue
+
+        if status in REPLACED_STATUSES:
+            report.add(
+                "status",
+                f"{where}: {status!r} is a retired status name; "
+                f"use {REPLACED_STATUSES[status]}. "
+                "See PORTING_INSTRUCTIONS.md, 'Retired status names'.",
+            )
+            continue
+        if status not in STATUSES:
+            report.add(
+                "status",
+                f"{where}: unknown status {status!r}; "
+                f"expected one of {list(STATUSES)} (or none, meaning ported). "
+                "See PORTING_INSTRUCTIONS.md, 'Status vocabulary'.",
+            )
+            continue
+
+        # A plain port has no divergence to explain (NDI-python #211,
+        # decision 4), so only the statuses that record a JUDGEMENT owe a
+        # reason. Requiring the field did not change that.
+        if status != "ported" and _decision_log_words(entry) < 5:
+            report.add(
+                "status",
+                f"{where}: status {status} with no decision_log explaining it. "
+                "A recorded gap with no reason gets re-investigated, which is "
+                "what recording it was supposed to prevent.",
+            )
+
+        if status == "ported" and not entry.get("python_path"):
+            report.add(
+                "status",
+                f"{where}: status ported but no python_path, so the entry names "
+                "no counterpart. If there is none, the status is "
+                "porting_deferred or matlab_only.",
+            )
+        if status == "ported_differently" and not entry.get("python_path"):
+            report.add(
+                "status",
+                f"{where}: ported_differently must give the python_path where "
+                "the capability actually lives, or it is indistinguishable "
+                "from porting_deferred.",
+            )
+        if status in ("porting_deferred", "matlab_only") and entry.get("python_path"):
+            report.add(
+                "status",
+                f"{where}: status {status} says there is no Python counterpart, "
+                f"but python_path names one ({entry['python_path']}). If the "
+                "capability exists in Python, the status is ported_differently.",
+            )
+
+    matlab_files = [
+        p for p in git(matlab_repo, "ls-files", "src/did").split() if p.endswith(".m")
+    ]
+    covered = {"src/did/" + e["matlab_path"] for e in tracked if e.get("matlab_path")}
+    uncovered = [p for p in matlab_files if p not in covered]
+
+    for entry in not_tracked:
+        where = f"{entry.get('name', '<unnamed>')} ({entry['_bridge']})"
+        status = entry.get("status")
+        if status in REPLACED_STATUSES:
+            report.add(
+                "status",
+                f"{where}: {status!r} is a retired status name; "
+                f"use {REPLACED_STATUSES[status]}. "
+                "See PORTING_INSTRUCTIONS.md, 'Retired status names'.",
+            )
+            continue
+        if status not in NOT_TRACKED_STATUSES:
+            report.add(
+                "status",
+                f"{where}: not_tracked entries need a status from "
+                f"{list(NOT_TRACKED_STATUSES)}, got {status!r}. "
+                "See PORTING_INSTRUCTIONS.md, 'Status vocabulary'.",
+            )
+            continue
+        if _decision_log_words(entry) < 5:
+            report.add(
+                "status",
+                f"{where}: status {status} with no decision_log explaining it.",
+            )
+
+        # An entry that excuses no MATLAB file is inert: it reads as a coverage
+        # exemption and covers nothing. Two of the six here were exactly that,
+        # and nothing said so. `retired` and `external: true` are the two ways
+        # to declare it deliberately.
+        hits = [path for path in uncovered if excuses(entry["name"], path)]
+        declared_fileless = status == "retired" or bool(entry.get("external"))
+        if not hits and not declared_fileless:
+            report.add(
+                "status",
+                f"{where}: excuses no MATLAB file under src/did, so it exempts "
+                "nothing while reading as an exemption. Fix the name, or mark "
+                "it `status: retired` (the file is gone / never existed) or "
+                "`external: true` (it names a file outside DID-matlab).",
+            )
+        if hits and entry.get("external"):
+            report.add(
+                "status",
+                f"{where}: marked external: true but names DID-matlab "
+                f"{hits[0]}. Drop the marker.",
+            )
+
+
 def check_drift(report, matlab_repo, tracked):
+    """An entry drifts when DID-matlab has commits touching its matlab_path
+    after the recorded hash.
+
+    Drift is asked by walking history, not by comparing the recorded hash
+    against the file's current last-touching commit. The two differ on a
+    legitimate record: an entry synced in a batch carries a repo-wide commit
+    that never touched its own file, so an equality test calls it stale when
+    nothing about it changed. `git log <hash>..HEAD -- <path>` is empty for
+    that entry, and non-empty exactly when the file really moved.
+    """
+    allowlisted_but_clean = set(DRIFT_ALLOWLIST)
     for entry in tracked:
         sync = entry.get("matlab_last_sync_hash")
         rel = entry.get("matlab_path")
@@ -469,12 +684,39 @@ def check_drift(report, matlab_repo, tracked):
         if not os.path.exists(os.path.join(matlab_repo, path)):
             continue
         log = git(matlab_repo, "log", "--oneline", f"{sync}..HEAD", "--", path)
-        if log:
-            first = log.splitlines()[0]
-            report.add(
-                "drift",
-                f"{entry['name']} ({path}) changed since {sync}: {first}",
-            )
+        if not log:
+            continue
+        if entry["name"] in DRIFT_ALLOWLIST:
+            allowlisted_but_clean.discard(entry["name"])
+            continue
+        commits = log.splitlines()
+        report.add(
+            "drift",
+            f"{entry['name']} ({path})\n"
+            f"      recorded: {sync}   commits touching it since: {len(commits)}\n"
+            + "".join(f"        {c}\n" for c in commits[:5])
+            + f"      read them:  git -C <DID-matlab> diff {sync}..HEAD -- {path}\n"
+            "\n"
+            "      THE REMEDY IS TO READ THE DIFF AND PORT THE CHANGE, then set\n"
+            "      matlab_last_sync_hash to the commit you examined.\n"
+            "\n"
+            "      Bumping the hash on its own is NOT a remedy. It turns a red\n"
+            "      build into a false record: the entry then claims the port was\n"
+            "      reviewed against a change nobody read, and nothing can\n"
+            "      contradict it afterwards. If the MATLAB change really is a\n"
+            "      no-op here, that is a decision -- write it in the entry's\n"
+            "      decision_log, naming the commit. See NDR-python issue #23.",
+        )
+
+    # A ratchet only ratchets if it tightens. An entry that has stopped drifting
+    # -- because someone reviewed it -- must come off the list, or the list
+    # keeps exempting an entry nobody is exempting on purpose any more.
+    for name in sorted(allowlisted_but_clean):
+        report.add(
+            "drift",
+            f"{name}: in DRIFT_ALLOWLIST but is not drifting. Remove it from "
+            "the list in bin/check_bridge_coverage.py.",
+        )
 
 
 def _matlab_surface(entry, matlab_repo, by_name, seen=None):
@@ -515,7 +757,7 @@ def _matlab_surface(entry, matlab_repo, by_name, seen=None):
 def _python_index(repo, entry, member=None):
     """Resolve the Python file a bridge entry (or one of its members) targets."""
     rel = (member or {}).get("python_path") or entry.get("python_path")
-    if not rel or is_placeholder(rel):
+    if not rel:
         return None, None
     path = os.path.join(repo, "src", rel)
     if not os.path.exists(path):
@@ -578,7 +820,7 @@ def check_members(report, repo, matlab_repo, tracked):
                     continue
                 classes, module = parse_python(path)
                 pool = set(module)
-                if python_class and not is_placeholder(python_class):
+                if python_class:
                     if python_class in classes:
                         pool |= python_attributes(path, python_class)
                     elif member.get("python_path") is None:
@@ -653,7 +895,28 @@ def main() -> int:
         return 2
 
     selected = args.check or list(CHECKS)
-    tracked, not_applicable = load_bridge(REPO)
+
+    # A shallow checkout has the recent commits and nothing else, so
+    # `cat-file -e <older sync hash>` reports "missing" for almost every entry
+    # and `log <hash>..HEAD` cannot resolve its left side. The hash and drift
+    # checks would then emit one failure per entry -- sixty-odd lines of noise
+    # for one setup mistake, which reads as "the bridge is broken" rather than
+    # "the clone is shallow". Say it once instead. CI passes fetch-depth: 0;
+    # a local `git clone --depth N` needs `git fetch --unshallow`.
+    if git(matlab_repo, "rev-parse", "--is-shallow-repository") == "true" and (
+        {"hash", "drift"} & set(selected)
+    ):
+        print(
+            f"error: {matlab_repo} is a SHALLOW checkout. The hash and drift "
+            "checks walk MATLAB history from each entry's sync hash, and a "
+            "shallow clone does not have it -- every entry would be reported "
+            "as unresolvable.\n"
+            "Run: git -C "
+            f"{matlab_repo} fetch --unshallow   (CI uses fetch-depth: 0)"
+        )
+        return 2
+
+    tracked, not_tracked = load_bridge(REPO)
     report = Report()
 
     print(f"DID-python : {REPO}")
@@ -662,15 +925,18 @@ def main() -> int:
     )
     print(
         f"bridge     : {len(tracked)} tracked entries, "
-        f"{len(not_applicable)} not_applicable"
+        f"{len(not_tracked)} not_tracked"
     )
 
     if "file" in selected:
-        check_file_coverage(report, REPO, matlab_repo, tracked, not_applicable)
+        check_file_coverage(report, REPO, matlab_repo, tracked, not_tracked)
         report.section("file", "File coverage (both directions)")
     if "hash" in selected:
         check_hashes(report, matlab_repo, tracked)
         report.section("hash", "Sync hashes present and valid")
+    if "status" in selected:
+        check_status(report, matlab_repo, tracked, not_tracked)
+        report.section("status", "Status vocabulary and the claims it makes")
     if "drift" in selected:
         check_drift(report, matlab_repo, tracked)
         report.section("drift", "MATLAB drift since last sync")

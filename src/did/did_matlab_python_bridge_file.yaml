@@ -4,6 +4,13 @@
 # In MATLAB, the file module is split across multiple files in +did/+file/.
 # In Python, these are consolidated into a single did/file.py module.
 #
+# Status convention: every entry carries a `status:`. `ported` is a plain 1:1
+# port; the other four name a deviation. An entry with no status is an error,
+# not a plain port -- the question "is this ported?" is answered in each
+# entry's own text rather than inferred from an absence. The values are
+# defined once, in PORTING_INSTRUCTIONS.md ("Status vocabulary") -- this file
+# points there rather than restating them.
+#
 # To check for drift, run:
 #   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
 
@@ -26,6 +33,7 @@ classes:
     type: class
     matlab_path: "+did/+file/fileobj.m"
     matlab_last_sync_hash: "02c83c5"
+    status: ported
     python_path: "did/file.py"
     python_class: "Fileobj"
     inherits_matlab: "handle"
@@ -235,6 +243,7 @@ classes:
     type: class
     matlab_path: "+did/+file/readonly_fileobj.m"
     matlab_last_sync_hash: "6dd2f23"
+    status: ported
     python_path: "did/file.py"
     python_class: "ReadOnlyFileobj"
     inherits_matlab: "did.file.fileobj"
@@ -292,6 +301,7 @@ classes:
     type: class
     matlab_path: "+did/+file/binaryTable.m"
     matlab_last_sync_hash: "4a0f9a5"
+    status: ported
     python_path: "did/file.py"
     python_class: "BinaryTable"
     inherits_matlab: "handle"
@@ -504,6 +514,7 @@ classes:
     type: class
     matlab_path: "+did/+file/fileCache.m"
     matlab_last_sync_hash: "4a0f9a5"
+    status: ported
     python_path: "did/file.py"
     python_class: "FileCache"
     inherits_matlab: "handle"
@@ -724,6 +735,7 @@ functions:
     type: function
     matlab_path: "+did/+file/mustBeValidPermission.m"
     matlab_last_sync_hash: "2786be2"
+    status: ported
     python_path: "did/file.py"
     python_name: "must_be_valid_permission"
     out_of_sync: false
@@ -736,6 +748,7 @@ functions:
     type: function
     matlab_path: "+did/+file/checkout_lock_file.m"
     matlab_last_sync_hash: "9010a73"
+    status: ported
     python_path: "did/file.py"
     python_name: "checkout_lock_file"
     decision_log: >
@@ -755,6 +768,7 @@ functions:
     type: function
     matlab_path: "+did/+file/lock_file_key.m"
     matlab_last_sync_hash: "d56cc25"
+    status: ported
     python_path: "did/file.py"
     python_name: ~   # not ported
     decision_log: >
@@ -785,6 +799,7 @@ functions:
     type: function
     matlab_path: "+did/+file/lock_expiration_time.m"
     matlab_last_sync_hash: "df15818"
+    status: ported
     python_path: "did/file.py"
     python_name: "parse_lock_expiration"
     decision_log: >
@@ -819,6 +834,7 @@ functions:
     type: function
     matlab_path: "+did/+file/release_lock_file.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/file.py"
     python_name: "release_lock_file"
     decision_log: >
@@ -829,6 +845,7 @@ functions:
     type: function
     matlab_path: "+did/+file/fileid_value.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/file.py"
     python_name: "fileid_value"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -837,6 +854,7 @@ functions:
     type: function
     matlab_path: "+did/+file/filesepconversion.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/file.py"
     python_name: "filesep_conversion"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -845,6 +863,7 @@ functions:
     type: function
     matlab_path: "+did/+file/isfilepathroot.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/file.py"
     python_name: "is_filepath_root"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -853,6 +872,7 @@ functions:
     type: function
     matlab_path: "+did/+file/fullfilename.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/file.py"
     python_name: "full_filename"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -861,6 +881,7 @@ functions:
     type: function
     matlab_path: "+did/+file/isurl.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/file.py"
     python_name: "is_url"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -869,6 +890,7 @@ functions:
     type: function
     matlab_path: "+did/+file/readlines.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/file.py"
     python_name: "read_lines"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -877,6 +899,7 @@ functions:
     type: function
     matlab_path: "+did/+file/str2text.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/file.py"
     python_name: "str_to_text"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -885,6 +908,7 @@ functions:
     type: function
     matlab_path: "+did/+file/text2cellstr.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/file.py"
     python_name: "text_to_cellstr"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -893,6 +917,7 @@ functions:
     type: function
     matlab_path: "+did/+file/string2filestring.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/file.py"
     python_name: "string_to_filestring"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -901,6 +926,7 @@ functions:
     type: function
     matlab_path: "+did/+file/mustBeValidMachineFormat.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/file.py"
     python_name: "must_be_valid_machine_format"
     decision_log: "Exact match. Synchronized 2026-03-15."
@@ -917,6 +943,7 @@ functions:
     type: function
     matlab_path: "+did/+file/readSeriesManifest.m"
     matlab_last_sync_hash: "3a56cd7"
+    status: ported
     python_path: "did/file.py"
     python_name: "read_series_manifest"
     decision_log: >
@@ -931,6 +958,7 @@ functions:
     type: function
     matlab_path: "+did/+file/readSeriesManifestUid.m"
     matlab_last_sync_hash: "9b86b47"
+    status: ported
     python_path: "did/file.py"
     python_name: "read_series_manifest_uid"
     decision_log: >
@@ -944,6 +972,7 @@ functions:
     type: function
     matlab_path: "+did/+file/writeSeriesManifest.m"
     matlab_last_sync_hash: "2014279"
+    status: ported
     python_path: "did/file.py"
     python_name: "write_series_manifest"
     decision_log: >
@@ -956,6 +985,7 @@ functions:
     type: function
     matlab_path: "+did/+file/cachedPathForUid.m"
     matlab_last_sync_hash: "b233226"
+    status: ported
     python_path: "did/file.py"
     python_name: "cached_path_for_uid"
     decision_log: >
@@ -969,6 +999,7 @@ functions:
     type: function
     matlab_path: "+did/+file/isSafeUid.m"
     matlab_last_sync_hash: "b233226"
+    status: ported
     python_path: "did/file.py"
     python_name: "is_safe_uid"
     decision_log: >
@@ -979,24 +1010,33 @@ functions:
       DID-python #58) and both now enforce the same predicate.
 
 # =========================================================================
-# Not applicable in Python
+# Not tracked by a bridge entry
 # =========================================================================
-not_applicable:
+not_tracked:
+  # MATLAB entities deliberately given no tracked bridge entry. `status`
+  # values are defined once, in PORTING_INSTRUCTIONS.md ("Status vocabulary").
+  #
   # did.file.fileCache was listed here until 2026-08-28. It has a real (if
   # stub-level) Python counterpart, so it is now tracked as a class entry
   # above and is covered by the drift check.
   - name: did.file.dumbjsondb
-    rationale: >
-      Deliberately not ported. DID-python's storage backend is SQLiteDB;
-      there is no plan to carry the JSON-file document store across.
-      NOTE (2026-08-28): the previous rationale here read "MATLAB
-      dumbjsondb has a Python equivalent (DumbJsonDB in file.py)", which
-      overstated the situation. A DumbJsonDB class does exist in file.py,
-      but it arrived with the initial bulk port commit (97ba45c) and is
-      dead code: nothing in src/ or tests/ imports, instantiates or
-      exercises it, and it implements only the parameter file, versioned
-      read/add and version listing -- no binary files, search, remove,
-      clear, alldocids or document metadata. It is a vestigial stub, not
-      a port. Either delete it or, if a JSON backend is ever wanted,
-      promote this to a tracked class entry and port it properly; until
-      then it stays out of the drift check by design.
+    status: matlab_only
+    decision_log: >
+      Will not be ported. Settled 2026-09-08. MATLAB's dumbjsondb is a second
+      storage backend; DID-python has one, SQLiteDB, and backend dispatch that
+      a single backend makes moot is what matlab_only is for. Nobody is
+      waiting for this -- which is why it is not porting_deferred, the status
+      this entry carried until the decision was made.
+
+      History, kept because the record was wrong twice in opposite directions.
+      Before 2026-08-28 this read "MATLAB dumbjsondb has a Python equivalent
+      (DumbJsonDB in file.py)", which overstated matters: a DumbJsonDB class
+      did exist in file.py, but it arrived with the initial bulk port
+      (97ba45c) and was dead code -- nothing in src/ or tests/ imported,
+      instantiated or exercised it, and it implemented only the parameter
+      file, versioned read/add and version listing, with no binary files,
+      search, remove, clear, alldocids or document metadata. That correction
+      left a fork in this log: delete the stub, or promote it to a tracked
+      entry and port it properly. The decision above takes the first branch,
+      and the class was deleted from did/file.py in the same change -- leaving
+      it is how the next reader concludes there is a JSON backend.

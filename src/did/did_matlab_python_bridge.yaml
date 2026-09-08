@@ -7,7 +7,16 @@
 #   - matlab_last_sync_hash  : short SHA of the MATLAB commit last ported to Python
 #   - python_path            : location inside the Python repo (relative to src/did/)
 #   - python_class           : Python class name
+#   - status                 : required; `ported` for a plain port, otherwise
+#                              names the deviation (see the convention below)
 #   - decision_log           : notes on deviations, sync dates, and rationale
+#
+# Status convention: every entry carries a `status:`. `ported` is a plain 1:1
+# port; the other four name a deviation. An entry with no status is an error,
+# not a plain port -- the question "is this ported?" is answered in each
+# entry's own text rather than inferred from an absence. The values are
+# defined once, in PORTING_INSTRUCTIONS.md ("Status vocabulary") -- this file
+# points there rather than restating them.
 #
 # To check for drift, run:
 #   git -C <DID-matlab> log <matlab_last_sync_hash>..HEAD -- <matlab_path>
@@ -32,6 +41,7 @@ classes:
     type: class
     matlab_path: "+did/database.m"
     matlab_last_sync_hash: "ec1e733"
+    status: ported
     python_path: "did/database.py"
     python_class: "Database"
     inherits: "abc.ABC"
@@ -897,6 +907,7 @@ classes:
     type: class
     matlab_path: "+did/document.m"
     matlab_last_sync_hash: "78583f6"
+    status: ported
     python_path: "did/document.py"
     python_class: "Document"
 
@@ -1305,6 +1316,7 @@ classes:
     type: class
     matlab_path: "+did/query.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/query.py"
     python_class: "Query"
 
@@ -1405,6 +1417,7 @@ classes:
     type: class
     matlab_path: "+did/ido.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/ido.py"
     python_class: "IDO"
 
@@ -1483,6 +1496,7 @@ classes:
     type: class
     matlab_path: "+did/documentservice.m"
     matlab_last_sync_hash: "3aa892d"
+    status: ported
     python_path: "did/documentservice.py"
     python_class: "DocumentService"
     inherits: "abc.ABC"
@@ -1516,6 +1530,7 @@ classes:
     type: class
     matlab_path: "+did/binarydoc.m"
     matlab_last_sync_hash: "13463d1"
+    status: ported
     python_path: "did/binarydoc.py"
     python_class: "BinaryDoc"
     inherits: "abc.ABC"
@@ -1564,21 +1579,28 @@ classes:
     decision_log: "Exact match. Synchronized 2026-03-15."
 
 # =========================================================================
-# Not applicable in Python
+# Not tracked by a bridge entry
 # =========================================================================
-not_applicable:
+not_tracked:
+  # MATLAB entities deliberately given no tracked bridge entry. Every entry
+  # carries a `status` from the vocabulary in PORTING_INSTRUCTIONS.md
+  # ("Status vocabulary"), which is the single normative definition of these
+  # values -- do not restate it here.
   - name: did.filesep
-    rationale: >
+    status: matlab_only
+    decision_log: >
       MATLAB-only utility. Python uses os.sep / pathlib natively.
 
   - name: Contents.m
-    rationale: >
+    status: matlab_only
+    decision_log: >
       MATLAB toolbox contents/version listing (a comment-only .m file read
       by MATLAB's `ver`/`help`). Not code, and Python carries its version in
       pyproject.toml. Recorded 2026-08-28 so the bridge-coverage audit has
       no unexplained MATLAB files.
 
   - name: did.toolboxdir
-    rationale: >
+    status: matlab_only
+    decision_log: >
       MATLAB-only utility for locating the DID toolbox directory.
       Python uses importlib.resources or __file__.
