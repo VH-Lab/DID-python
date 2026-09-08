@@ -1338,7 +1338,7 @@ class SQLiteDB(Database):
                 return None
             raise ValueError(f"Document {doc_id} not found.")
 
-        is_in, info, _ = doc.is_in_file_list(filename)
+        _is_in, info, _ = doc.is_in_file_list(filename)
         if info is None:
             # A file series member has no file_info entry of its own --
             # membership is the manifest's to answer -- so is_in_file_list

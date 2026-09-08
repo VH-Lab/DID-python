@@ -147,9 +147,8 @@ class Document:
         # MATLAB tightened its parse to match in DID-matlab#199. See the
         # bridge entry and DID-python#69.
         stem, _, tail = str(filename).rpartition("_")
-        if stem and tail.isdigit():
-            if f"{stem.lower()}_#" in lowered_list:
-                return True, info, index
+        if stem and tail.isdigit() and f"{stem.lower()}_#" in lowered_list:
+            return True, info, index
 
         # Series fallback (c80ba33): a member NAME_<i> is valid when NAME is
         # a declared series, even though the member carries no file_info of

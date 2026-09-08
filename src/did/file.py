@@ -1,3 +1,4 @@
+import contextlib
 import math
 import os
 import re
@@ -1141,10 +1142,10 @@ class FileCache:
                 raise
             table.release_lock(lock_fid, key)
         except Exception:
-            try:
+            # Best-effort release: the outer path already failed, so a
+            # release that itself throws must not mask the original error.
+            with contextlib.suppress(Exception):
                 table.release_lock(lock_fid, key)
-            except Exception:
-                pass
             table.reset_lock_state()
             raise
 
@@ -1194,10 +1195,10 @@ class FileCache:
                     os.remove(path)
             table.release_lock(lock_fid, key)
         except Exception:
-            try:
+            # Best-effort release: the outer path already failed, so a
+            # release that itself throws must not mask the original error.
+            with contextlib.suppress(Exception):
                 table.release_lock(lock_fid, key)
-            except Exception:
-                pass
             table.reset_lock_state()
             raise
         table.reset_lock_state()
@@ -1391,10 +1392,10 @@ class FileCache:
             table.release_lock(lock_fid, key)
             return report
         except Exception:
-            try:
+            # Best-effort release: the outer path already failed, so a
+            # release that itself throws must not mask the original error.
+            with contextlib.suppress(Exception):
                 table.release_lock(lock_fid, key)
-            except Exception:
-                pass
             table.reset_lock_state()
             raise
 
