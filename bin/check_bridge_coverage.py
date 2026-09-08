@@ -689,12 +689,23 @@ def check_drift(report, matlab_repo, tracked):
         if entry["name"] in DRIFT_ALLOWLIST:
             allowlisted_but_clean.discard(entry["name"])
             continue
-        first = log.splitlines()[0]
+        commits = log.splitlines()
         report.add(
             "drift",
-            f"{entry['name']} ({path}) changed since {sync}: {first}. "
-            "Review the MATLAB diff and either port the behavioral change or "
-            "record in the decision_log that there is none, then bump the hash.",
+            f"{entry['name']} ({path})\n"
+            f"      recorded: {sync}   commits touching it since: {len(commits)}\n"
+            + "".join(f"        {c}\n" for c in commits[:5])
+            + f"      read them:  git -C <DID-matlab> diff {sync}..HEAD -- {path}\n"
+            "\n"
+            "      THE REMEDY IS TO READ THE DIFF AND PORT THE CHANGE, then set\n"
+            "      matlab_last_sync_hash to the commit you examined.\n"
+            "\n"
+            "      Bumping the hash on its own is NOT a remedy. It turns a red\n"
+            "      build into a false record: the entry then claims the port was\n"
+            "      reviewed against a change nobody read, and nothing can\n"
+            "      contradict it afterwards. If the MATLAB change really is a\n"
+            "      no-op here, that is a decision -- write it in the entry's\n"
+            "      decision_log, naming the commit. See NDR-python issue #23.",
         )
 
     # A ratchet only ratchets if it tightens. An entry that has stopped drifting

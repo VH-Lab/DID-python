@@ -280,6 +280,141 @@ class TestTheDriftAllowlistNamesRealEntries:
         assert len(seen) == len(set(seen)), f"duplicate names: {seen}"
 
 
+def _git(*args: str) -> tuple[int, str]:
+    import subprocess
+
+    r = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True
+    )
+    return r.returncode, r.stdout.strip()
+
+
+def _merge_base() -> str | None:
+    """The commit this branch diverged from, or None if it cannot be found."""
+    # Only the real base branch. `origin/HEAD` is deliberately NOT tried: in a
+    # shallow clone it resolves to the fetched tip, so merge-base returns HEAD
+    # itself, the diff is empty, and the check passes having compared nothing --
+    # a skip wearing a green tick, which is the failure mode this file exists to
+    # avoid. Better to find no base and say so.
+    for ref in ("origin/main", "main"):
+        code, out = _git("merge-base", ref, "HEAD")
+        if code == 0 and out:
+            return out
+    return None
+
+
+def _entries_at(rev: str | None, source: Path) -> dict[str, dict[str, Any]]:
+    """Entries keyed by name, read at `rev` (or from the working tree)."""
+    rel = source.relative_to(REPO_ROOT)
+    if rev is None:
+        text = source.read_text(encoding="utf-8")
+    else:
+        code, text = _git("show", f"{rev}:{rel}")
+        if code != 0:
+            return {}
+    data = yaml.safe_load(text) or {}
+    return {e["name"]: e for e in _tracked(data) if isinstance(e.get("name"), str)}
+
+
+def _python_paths(entry: dict[str, Any]) -> set[str]:
+    paths = {entry.get("python_path")}
+    for member in (entry.get("methods") or []) + (entry.get("properties") or []):
+        if isinstance(member, dict):
+            paths.add(member.get("python_path"))
+    return {"src/" + p for p in paths if isinstance(p, str)}
+
+
+class TestAHashChangeIsJustified:
+    """Moving a `matlab_last_sync_hash` with no port needs a written reason.
+
+    `matlab_last_sync_hash` means "I examined this version of this file".
+    Nothing can verify that anyone did. Three ways it goes wrong -- missing,
+    stale, and *written without reading the diff* -- and only the third is
+    silent AND green. The other two turn a build red, so they get fixed; this
+    one asserts "reviewed and current" and nothing contradicts it.
+
+    NDR-python lost a whole MATLAB feature to it (their issue #23): a commit
+    backfilled hashes onto 20 bridge files, touching zero Python, recording
+    what MATLAB's HEAD looked like rather than the commit whose content had
+    been ported. Intan multi-file recording support was in that HEAD, was
+    never ported, and CI stayed green for four months.
+
+    So: **if an entry's hash changed and none of that entry's python_path
+    files changed with it, its decision_log must also have changed and must
+    name the new hash.** Porting the change needs nothing extra -- this bites
+    only the "nothing to do here" case, which is a decision and belongs in
+    writing.
+
+    WHAT IT CANNOT DO. It cannot verify anybody read anything. It makes the
+    claim explicit, specific and attributable -- a sentence in the entry,
+    naming a commit, visible in review. That is the honest ceiling, and the
+    reason the drift message carries the same warning in prose: a check that
+    can be satisfied by writing one sentence is worth having precisely because
+    writing that sentence is the moment somebody has to think.
+
+    Compared against the MERGE-BASE and the WORKING TREE, not base..HEAD --
+    the two disagree on uncommitted edits, and reading new state from one and
+    the file list from the other makes the check inert against exactly the
+    edits somebody is about to commit.
+    """
+
+    def test_a_moved_hash_without_a_port_is_explained(self):
+        import os
+
+        base = _merge_base()
+        if base is None:
+            if os.environ.get("DID_BRIDGE_CHECK_STRICT"):
+                pytest.fail(
+                    "no merge-base against origin/main -- cannot tell which "
+                    "entries this change touches. A shallow clone causes this; "
+                    "CI checks this repo out with fetch-depth: 0. "
+                    "(DID_BRIDGE_CHECK_STRICT is set, so the history was "
+                    "supposed to be there -- skipping would report a check that "
+                    "could not run as one that passed.)"
+                )
+            pytest.skip("no merge-base (shallow clone); cannot diff this branch")
+
+        code, out = _git("diff", "--name-only", base)
+        assert code == 0, "git diff failed"
+        changed = set(out.split())
+
+        offenders = []
+        for source in BRIDGE_FILES:
+            if str(source.relative_to(REPO_ROOT)) not in changed:
+                continue
+            before = _entries_at(base, source)
+            after = _entries_at(None, source)
+            for name, entry in after.items():
+                new_hash = entry.get("matlab_last_sync_hash")
+                old_entry = before.get(name)
+                if old_entry is None:  # a brand-new entry is a port, not a bump
+                    continue
+                if new_hash == old_entry.get("matlab_last_sync_hash"):
+                    continue
+                if _python_paths(entry) & changed:
+                    continue  # the port came with it
+                log = entry.get("decision_log") or ""
+                if log == (old_entry.get("decision_log") or ""):
+                    offenders.append(
+                        f"{name} ({source.name}): hash -> {new_hash} with no "
+                        "Python change and no decision_log change"
+                    )
+                elif str(new_hash) not in log:
+                    offenders.append(
+                        f"{name} ({source.name}): decision_log changed but does "
+                        f"not name the new hash {new_hash}"
+                    )
+
+        assert not offenders, (
+            "these entries moved their sync hash with no port and no written "
+            "reason:\n  " + "\n  ".join(offenders) + "\n\n"
+            "A hash records an examination. If the MATLAB change is genuinely a "
+            "no-op on the Python side, that is a decision -- say so in the "
+            "entry's decision_log and name the commit. If it is not a no-op, "
+            "port it. Bumping alone converts a red build into a false record."
+        )
+
+
 class TestEveryTrackedEntryStatesItsStatus:
     """`status` is required, so "is this ported?" is answered in each entry's
     own text rather than inferred from an absence.
