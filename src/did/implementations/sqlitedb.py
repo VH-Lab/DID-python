@@ -1778,27 +1778,33 @@ class SQLiteDB(Database):
                 failures.append(f"{src_location}: {error}")
                 continue
 
-            if manifest_size is not None:
+            try:
+                fetched_size = os.path.getsize(fetched_path)
+            except OSError as error:
+                # A file that was just fetched and cannot be measured is not
+                # a file we can hand back. Treating this as "comparison
+                # unavailable, accept it" is what turned a stale cache entry
+                # into a silent empty read. See DID-python#73.
+                self._discard_fetched(fetched_path, member_uid)
+                failures.append(f"{src_location}: fetched file is unreadable: {error}")
+                continue
+
+            if manifest_size is not None and fetched_size == manifest_size:
                 try:
-                    fetched_size = os.path.getsize(fetched_path)
+                    with (
+                        open(fetched_path, "rb") as f_fetched,
+                        open(manifest_path, "rb") as f_manifest,
+                    ):
+                        same_bytes = f_fetched.read() == f_manifest.read()
                 except OSError:
-                    fetched_size = None
-                if fetched_size == manifest_size:
-                    try:
-                        with (
-                            open(fetched_path, "rb") as f_fetched,
-                            open(manifest_path, "rb") as f_manifest,
-                        ):
-                            if f_fetched.read() == f_manifest.read():
-                                with contextlib.suppress(OSError):
-                                    os.remove(fetched_path)
-                                failures.append(
-                                    f"{src_location}: handler returned the "
-                                    f"manifest's own bytes (see DID-matlab #191)"
-                                )
-                                continue
-                    except OSError:
-                        pass  # comparison unavailable; accept the fetch
+                    same_bytes = False  # cannot compare; the size alone is not proof
+                if same_bytes:
+                    self._discard_fetched(fetched_path, member_uid)
+                    failures.append(
+                        f"{src_location}: handler returned the "
+                        f"manifest's own bytes (see DID-matlab #191)"
+                    )
+                    continue
 
             return ReadOnlyFileobj(fetched_path)
 
@@ -1811,6 +1817,36 @@ class SQLiteDB(Database):
             f'Cannot fetch series member "{filename}" of "{stem}" in document '
             f'"{doc.id()}": ' + "; ".join(failures),
         )
+
+    def _discard_fetched(self, fetched_path, uid):
+        """Throw away a fetch that turned out not to be the file we wanted.
+
+        ``_fetch_remote_to_cache`` does not hand back the scratch download:
+        on success it MOVES the file into the file cache under ``uid`` and
+        returns the path inside the cache. So removing that path with a bare
+        ``os.remove`` takes the file and leaves the cache's index entry
+        behind, and ``cache.is_file(uid)`` then answers True forever for a
+        file that is not there -- every later fetch of that uid short
+        circuits on the index and returns the missing path, which
+        ``Fileobj.fopen()`` opens as b"" without raising.
+
+        That is the corruption the DID-matlab#191 guard exists to prevent,
+        reached by the guard itself. So the removal goes THROUGH the cache
+        when the path is the cache's copy, and around it otherwise (no
+        cache, or a uid the cache would not index). See DID-python#73.
+        """
+        cache = self._file_cache()
+        if cache is not None and uid:
+            try:
+                if cache.is_file(uid) and os.path.abspath(
+                    cache.full_path(uid)
+                ) == os.path.abspath(fetched_path):
+                    cache.remove_file(uid)
+                    return
+            except (OSError, ValueError, struct.error):
+                pass  # cache unusable; fall through to the plain remove
+        with contextlib.suppress(OSError):
+            os.remove(fetched_path)
 
     def _manifest_locations_for_handler(self, document_obj, stem):
         """Locations the handler should be offered to fetch a series member.
@@ -1894,7 +1930,19 @@ class SQLiteDB(Database):
             if cache is not None and uid:
                 try:
                     if cache.is_file(uid):
-                        return cache.full_path(uid), None
+                        cached_path = cache.full_path(uid)
+                        # The index says the cache holds it; the filesystem
+                        # is what decides. An entry whose file has gone --
+                        # evicted behind our back, cleared by hand, or
+                        # removed by a caller that went around the cache --
+                        # would otherwise be handed back as a completed
+                        # fetch, and a Fileobj over a path that does not
+                        # exist reads b"" without raising. Refetch instead.
+                        # See DID-python#73.
+                        if os.path.isfile(cached_path):
+                            return cached_path, None
+                        with contextlib.suppress(OSError, ValueError, struct.error):
+                            cache.remove_file(uid)
                 except (OSError, ValueError, struct.error):
                     pass  # cache unusable; carry on and refetch
 

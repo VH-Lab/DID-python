@@ -35,11 +35,12 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
-from did.common import PathConstants
+from did.common import PathConstants, get_cache
 from did.database import FileAccessError, _series_manifest_path
 from did.document import Document
-from did.file import ReadOnlyFileobj
+from did.file import ReadOnlyFileobj, cached_path_for_uid
 from did.implementations.sqlitedb import SQLiteDB
 
 SERIES = "chunkdata.bin"
@@ -458,14 +459,138 @@ class TestHandlerReturnedManifestGuard(SeriesReadTestCase):
         )
         self.assertIn("DID-matlab #191", str(caught.exception))
 
-    # A third property belongs here and is NOT asserted: that a later,
-    # correct fetch of the same member still works. It does not. The guard
-    # deletes the rejected bytes with a raw os.remove from inside the file
-    # cache, leaving the cache's index entry behind, so every later open of
-    # that member returns b"" with no error -- the lasting silent corruption
-    # #191 exists to prevent, reached by another route. See DID-python#73.
-    # The test belongs here as the regression test once that is fixed;
-    # asserting the broken behaviour instead would cement it.
+    def test_a_correct_fetch_still_works_after_the_guard_has_fired(self):
+        """The regression test for DID-python#73, and the property that
+        matters most: refusing must cost nothing beyond this one attempt.
+
+        `_fetch_remote_to_cache` MOVES its download into the file cache and
+        returns the path inside it, so the guard's removal has to go through
+        the cache. A bare os.remove took the file and left the index entry,
+        and `cache.is_file(uid)` then answered True forever for a file that
+        was not there: every later fetch short circuited on the index and
+        handed back the missing path, which Fileobj.fopen() reads as b""
+        without raising. The guard against silent corruption was itself
+        silently corrupting the member, permanently.
+        """
+        doc = self.stored_series(count=2, remote_manifest=True)
+        self.evict_members()
+        manifest_path = self.manifest_path(doc)
+
+        def returns_manifest(dest_path, source_path, context):
+            shutil.copyfile(manifest_path, dest_path)
+
+        with self.assertRaises(FileAccessError):
+            self.db.open_doc(
+                doc.id(), "chunkdata.bin_1", custom_file_handler=returns_manifest
+            )
+
+        calls = []
+
+        def returns_member(dest_path, source_path, context):
+            calls.append(source_path)
+            with open(dest_path, "wb") as handle:
+                handle.write(b"the real member")
+
+        file_obj = self.db.open_doc(
+            doc.id(), "chunkdata.bin_1", custom_file_handler=returns_member
+        )
+
+        self.assertEqual(
+            len(calls), 1, "the retry must reach the handler, not a stale index entry"
+        )
+        self.assertEqual(self.read(file_obj), b"the real member")
+
+    def test_the_refused_bytes_are_not_left_in_the_cache(self):
+        """Stated directly, since it is the mechanism rather than the
+        symptom: after the refusal the cache must not claim to hold the
+        member at all."""
+        doc = self.stored_series(count=2, remote_manifest=True)
+        self.evict_members()
+        manifest_path = self.manifest_path(doc)
+        member_uid = self.member_uids[0]
+
+        def returns_manifest(dest_path, source_path, context):
+            shutil.copyfile(manifest_path, dest_path)
+
+        with self.assertRaises(FileAccessError):
+            self.db.open_doc(
+                doc.id(), "chunkdata.bin_1", custom_file_handler=returns_manifest
+            )
+
+        cache = get_cache()
+        self.assertFalse(
+            cache.is_file(member_uid),
+            "the index must go with the file, not outlive it",
+        )
+        self.assertIsNone(
+            cached_path_for_uid(
+                member_uid, additional_roots=self.db._do_cached_path_roots()
+            )
+        )
+
+    def test_a_fetch_that_cannot_be_measured_is_a_failure_not_a_pass(self):
+        """The third arm of DID-python#73, and the one that turned the stale
+        cache entry into an empty read rather than an error.
+
+        The guard used to read a getsize failure as "comparison unavailable;
+        accept the fetch". But a file that was just fetched and cannot even
+        be measured is not a file to hand back -- and Fileobj.fopen()
+        swallows the OSError, so the caller reads b"" and sees nothing wrong.
+        Forced here by handing back a path that does not exist, which is
+        exactly what the stale index entry used to produce.
+        """
+        doc = self.stored_series(count=2, remote_manifest=True)
+        self.evict_members()
+        missing = os.path.join(self._dir, "never-written")
+        self.assertFalse(os.path.exists(missing))
+
+        with (
+            mock.patch.object(
+                SQLiteDB, "_fetch_remote_to_cache", return_value=(missing, None)
+            ),
+            self.assertRaises(FileAccessError) as caught,
+        ):
+            self.db.open_doc(
+                doc.id(),
+                "chunkdata.bin_1",
+                custom_file_handler=self.recording_handler()[0],
+            )
+
+        self.assertEqual(
+            caught.exception.identifier, "DID:SQLITEDB:FileSeries:MemberFetchFailed"
+        )
+        self.assertIn("unreadable", str(caught.exception))
+
+    def test_a_cache_entry_whose_file_has_gone_is_refetched(self):
+        """The same defect from the other side, and the reason the fix is in
+        two places. A cache index entry can go stale without the guard --
+        someone clears the cache directory by hand, an eviction races a
+        read -- and the fetch path's post-lock re-check trusted the index
+        alone. It now checks the filesystem, so a stale entry costs one
+        refetch rather than an empty read forever."""
+        doc = self.stored_series(count=2, remote_manifest=True)
+        self.evict_members()
+        handler, calls = self.recording_handler(content=b"first fetch")
+
+        first = self.db.open_doc(
+            doc.id(), "chunkdata.bin_1", custom_file_handler=handler
+        )
+        self.assertEqual(self.read(first), b"first fetch")
+        self.assertEqual(len(calls), 1)
+
+        # Go behind the cache's back, as a hand-cleared cache directory does.
+        cache = get_cache()
+        member_uid = self.member_uids[0]
+        self.assertTrue(cache.is_file(member_uid))
+        os.remove(cache.full_path(member_uid))
+
+        second_handler, second_calls = self.recording_handler(content=b"second fetch")
+        second = self.db.open_doc(
+            doc.id(), "chunkdata.bin_1", custom_file_handler=second_handler
+        )
+
+        self.assertEqual(len(second_calls), 1, "the stale entry must not be trusted")
+        self.assertEqual(self.read(second), b"second fetch")
 
     def test_the_manifest_itself_is_still_readable_as_an_ordinary_file(self):
         """The guard must not make the manifest unopenable: it is a file of
