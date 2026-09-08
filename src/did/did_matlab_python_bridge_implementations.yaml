@@ -264,17 +264,30 @@ classes:
           process's working directory.
 
           The handler context (DID-matlab#186) carries mode 'add' on this
-          path and 'open' on open_doc's, in both languages. Python's series
-          member loop sent "ingest" from the #173 port until DID-python#71;
-          mode is a string the CALLER's handler switches on, so a value that
-          differed between the languages would silently fall through a case
-          rather than fail. Two further divergences on this path are open in
-          DID-python#71 and NOT yet fixed: _ingest_series_members does not
-          check that the handler produced a file (MATLAB tests
-          isfile(destPath) and warns; Python warns only if the handler
-          raises), and _ingest_location calls the handler with two arguments
-          and no context at all where MATLAB dispatches the full struct with
-          seriesName ''.
+          path and 'open' on open_doc's, in both languages, and is dispatched
+          from BOTH loops as MATLAB does: _ingest_location sends it with
+          seriesName '' (sqlitedb.m:567) and _ingest_series_members with the
+          series' name (:664). A two-argument handler is still called with
+          two; _dispatch_custom_file_handler decides from its signature, as
+          MATLAB's dispatchCustomFileHandler does.
+
+          Three divergences here were closed by DID-python#71, all of them
+          Python moving to MATLAB:
+          - The series member loop sent mode "ingest" rather than 'add'. mode
+            is a string the CALLER's handler switches on, so a value that
+            differed between the languages fell through a case rather than
+            failing. "ingest" is arguably the better name; that was put
+            upstream as DID-matlab#195 rather than kept as a one-sided
+            deviation.
+          - _ingest_location called the handler with two arguments and no
+            context at all, so a three-argument handler silently got none.
+          - The series member loop did not test isfile(destPath) after the
+            handler returned, where MATLAB does and warns (:669), so a
+            handler that returned cleanly having written nothing left the
+            member absent with nobody told. It now warns, and a failed fetch
+            also clears its own partial: the loop skips a member already at
+            FileDir/<uid>, which is right for a re-add but would otherwise
+            take a crashed handler's leavings for the member's bytes.
 
       - name: do_get_doc
         python_name: _do_get_doc
