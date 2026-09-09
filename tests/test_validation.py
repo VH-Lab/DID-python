@@ -404,3 +404,140 @@ class TestRemoteFileLocations(_DatabaseTestCase):
             entries = entries if isinstance(entries, list) else [entries]
             locations.extend(item.get("location") for item in entries)
         self.assertIn(self.URL, locations)
+
+
+class TestFileValidationDiagnosis(_DatabaseTestCase):
+    """WHICH FIELD a file-validation failure blames.
+
+    check_files' step 3 used to loop over the actual file_info entries: a
+    required name declared in the file_list with nothing bound to it in
+    file_info matched nothing and fell through to is_valid = True. That is
+    the same fail-open MATLAB PR #182 closed for step 1, one step further
+    down; DID-matlab#199 closed it for step 3. Python's _validate_files
+    already read file_info and file_list independently -- MATLAB's own bug
+    from that PR was a try/catch shape Python does not share -- but the
+    fail-open in check_files itself was shared, so the port is that fix.
+    """
+
+    def _doc_with_file_info(self, file_info, file_list=None):
+        """A demoFile document whose files section is set by the caller.
+
+        demoFile declares filename1.ext and filename2.ext, both
+        mustbenotempty.
+        """
+        doc = Document("demoFile", **{"demoFile.value": 1})
+        doc.document_properties["files"]["file_info"] = file_info
+        if file_list is not None:
+            doc.document_properties["files"]["file_list"] = file_list
+        return doc
+
+    def _assert_refused(self, doc):
+        with self.assertRaises(ValidationError) as caught:
+            self.db.add_docs([doc])
+        self.assertEqual(
+            caught.exception.identifier,
+            "DID:Database:ValidationFiles",
+            f"refused for the wrong reason: {caught.exception}",
+        )
+        return str(caught.exception)
+
+    def test_empty_file_info_blames_the_unbound_file_not_the_file_list(self):
+        # The reported case. file_list declares both names and is correct;
+        # nothing is bound to them. file_info = [] used to fall out of the
+        # empty match loop and be accepted (Python) or throw and get the
+        # file_list blamed (MATLAB).
+        doc = self._doc_with_file_info([])
+
+        msg = self._assert_refused(doc)
+
+        self.assertIn(
+            "filename1.ext",
+            msg,
+            "the message must name the file that is not bound",
+        )
+        self.assertIn(
+            "file_info",
+            msg,
+            "the message must name the field that is actually empty",
+        )
+        self.assertNotIn(
+            "from the file_list",
+            msg,
+            (
+                "the file_list declares the file and is correct, so the "
+                f"message must not send the reader there: {msg}"
+            ),
+        )
+
+    def test_name_missing_from_file_list_names_the_absent_name(self):
+        # A document whose file_list is genuinely incomplete: it holds
+        # filename1.ext and not filename2.ext. The absent name is
+        # filename2.ext, and that is what the message must say.
+        doc = self._doc_with_file_info([], file_list=["filename1.ext"])
+
+        msg = self._assert_refused(doc)
+
+        self.assertIn(
+            "file_list",
+            msg,
+            "a name absent from the file_list IS a file_list problem",
+        )
+        self.assertIn(
+            "filename2.ext",
+            msg,
+            "the message must name the file that is absent from the list",
+        )
+        self.assertNotIn(
+            "filename1.ext",
+            msg,
+            (
+                "filename1.ext is in the file_list; only filename2.ext is "
+                f"absent from it: {msg}"
+            ),
+        )
+
+    def test_document_with_no_files_field_still_validates(self):
+        # Most classes declare no files at all, and their documents have no
+        # files section. That must keep working.
+        doc = Document("demoA", **{"demoA.value": 1})
+        self.assertNotIn(
+            "files",
+            doc.document_properties,
+            "precondition: a demoA document has no files section",
+        )
+        self.db.add_docs([doc])
+        self.assertIsNotNone(self.db.get_docs(doc.id()))
+
+    def test_declared_optional_files_need_not_be_bound(self):
+        # demoSeries declares both of its files mustbenotempty = 0, so a
+        # document that binds neither is valid: the file_list is correct
+        # and nothing it declares is required.
+        doc = Document("demoSeries", **{"demoSeries.value": 1})
+        doc.document_properties["files"]["file_info"] = []
+        self.db.add_docs([doc])
+        self.assertIsNotNone(self.db.get_docs(doc.id()))
+
+    def test_bound_required_files_validate(self):
+        # The other side of the tightening: a document that binds what its
+        # schema requires still validates. Validation does no file I/O, so
+        # the locations need not exist yet.
+        doc = Document("demoFile", **{"demoFile.value": 1})
+        doc.add_file("filename1.ext", "placeholder", ingest=0, delete_original=0)
+        doc.add_file("filename2.ext", "placeholder", ingest=0, delete_original=0)
+        self.db.add_docs([doc])
+        self.assertIsNotNone(self.db.get_docs(doc.id()))
+
+    def test_check_files_directly_reports_unbound_required_file(self):
+        # The unit-level counterpart, calling check_files without a database.
+        is_valid, message = check_files(
+            expected_names=["filename1.ext", "filename2.ext"],
+            must_have_value=[1, 1],
+            actual_file_names=[],
+            doc_name="demoFile doc X",
+            files=[],
+            actual_file_list=["filename1.ext", "filename2.ext"],
+        )
+        self.assertFalse(is_valid)
+        self.assertIn("filename1.ext", message)
+        self.assertIn("file_info", message)
+        self.assertNotIn("from the file_list", message)
