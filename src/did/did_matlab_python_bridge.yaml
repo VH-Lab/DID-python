@@ -40,7 +40,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "ec1e733"
+    matlab_last_sync_hash: "9b36124"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
@@ -58,6 +58,14 @@ classes:
       missing optional dependency raises the opt-in
       MissingOptionalDependencyWarning gated on the
       DID_FORCE_VALIDATION_WARNINGS environment variable.
+
+      2026-09-09: bumped through DID-matlab 9b36124 (PR #200). Only
+      check_files needed a change -- the fail-open on a required file
+      declared in file_list with nothing bound to it in file_info, same
+      shape as PR #182's step-1 fail-open, one step down. See the checkfiles
+      method entry for the port. The rest of PR #200 was MATLAB-only: a
+      try/catch that read file_info before file_list under one arm, which
+      Python does not share.
 
       Reviewed 2026-08-29 through MATLAB c0a9507, nothing to port. Two
       MATLAB fixes landed in this window and Python has neither defect:
@@ -767,6 +775,20 @@ classes:
           single "checkfiles / isfilenamematch / canfindonefile" entry, which
           meant a coverage check could not tell that isfilenamematch and
           canfindonefile were bridged at all. Split 2026-08-28.
+
+          2026-09-09 (DID-matlab#200 / #199): step 3 used to loop over the
+          actual file_info entries and fall through to is_valid = True when a
+          required name had none -- the same fail-open PR #182 closed for
+          step 1, one step further down. Ported here: check_files now
+          separates the two absences, keeping the file_list message for a
+          name missing from the list and adding a new one for a name that IS
+          in the file_list with nothing bound for it (naming the file and
+          file_info). The other half of DID-matlab#200, an independent read
+          of file_list before file_info, is not a bug on the Python side --
+          _validate_files already reads the two fields independently and did
+          not share MATLAB's try/catch shape -- so no code change beyond
+          check_files was needed. Coverage:
+          tests/test_validation.py:TestFileValidationDiagnosis.
 
       - name: isfilenamematch
         kind: static

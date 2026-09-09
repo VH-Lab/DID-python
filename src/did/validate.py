@@ -640,6 +640,15 @@ def check_files(
 
     Returns ``(is_valid, error_message)``. Mirrors MATLAB
     ``database.checkfiles``.
+
+    Steps 1 and 3 report DIFFERENT ABSENCES. A schema-required name can be
+    missing from the document's file_list (step 1), or it can be there in the
+    file_list -- declared, correctly -- with nothing bound to it in file_info
+    (step 3). The second is the common one, and step 3 used to fall out of its
+    empty match loop without raising: a required file was absent and the
+    document was accepted anyway. That is the same fail-open MATLAB PR #182
+    closed for step 1, one step further down, and DID-matlab#199 / #200 closed
+    for step 3.
     """
     expected_unique = sorted(set(expected_names))
     actual_unique = sorted(set(actual_file_names))
@@ -665,9 +674,23 @@ def check_files(
         if not _is_truthy(expected_value):
             continue
         item_name = expected_names[index]
-        for file_index, actual in enumerate(actual_file_names):
-            if not is_filename_match(item_name, actual):
-                continue
+        matches = [
+            file_index
+            for file_index, actual in enumerate(actual_file_names)
+            if is_filename_match(item_name, actual)
+        ]
+        if not matches:
+            # The name IS in the document's file_list -- step 1 above
+            # established that -- but nothing is bound to it in file_info, so
+            # there is no file to look for. Say that, and say it about
+            # file_info: the file_list is correct here, and blaming it is what
+            # cost the debugging time in DID-matlab#199.
+            return False, (
+                f'Required file "{item_name}" is declared in the file_list of '
+                f"{doc_name} but no file is bound to that name "
+                f"(files.file_info has no entry for it)"
+            )
+        for file_index in matches:
             entry = files[file_index] if file_index < len(files) else {}
             locations = entry.get("locations") if isinstance(entry, dict) else None
             if not can_find_one_file(locations):
