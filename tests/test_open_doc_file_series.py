@@ -717,5 +717,174 @@ class TestManifestLocationsForHandler(SeriesReadTestCase):
         self.assertEqual(self.db._manifest_locations_for_handler(doc, "nosuch.bin"), [])
 
 
+class TestFetchingAnAbsentManifest(SeriesReadTestCase):
+    """VH-Lab/DID-matlab#201 / VH-Lab/DID-python#87. A series document
+    that arrived from a store keeping bytes remote (SyncFiles=false through
+    NDI Cloud, say) lands with its manifest's ``file_info`` naming an
+    ``ndic://`` address and no manifest bytes on this machine. Opening a
+    member offers the manifest's location to the ``custom_file_handler``
+    with the manifest's own uid in the context, caches the result at
+    ``filecachepath/<manifestUid>``, and proceeds as normal -- so a second
+    member open pays no network for the manifest again.
+    """
+
+    CLOUD_MANIFEST_URI = "ndic://demo-dataset/manifest-uid"
+
+    def stored_series_cloud_only(self, count=2):
+        """SyncFiles=false shape: the manifest's only recorded location is
+        ``ndic://`` with ``ingest=0``, so add_docs never installs the
+        manifest bytes locally. Members are ingested normally, so the
+        interesting miss is the manifest itself.
+
+        Records ``self.uid_bytes``: a uid-keyed map the handler serves
+        from, so a single fixture-provided handler answers for the
+        manifest (by its uid) without ever needing to know the scheme.
+        """
+        locations = self._write_members(count)
+        doc = Document("demoSeries", **{"demoSeries.value": 1})
+        doc.add_file_series(SERIES, locations, delete_original=0)
+
+        _is_in, info, _ = doc.is_in_file_list(SERIES)
+        with open(info["locations"][0]["location"], "rb") as handle:
+            manifest_bytes = handle.read()
+        manifest_uid = info["locations"][0]["uid"]
+
+        info["locations"] = [
+            {
+                "location": self.CLOUD_MANIFEST_URI,
+                "location_type": "ndicloud",
+                "uid": manifest_uid,
+                "ingest": 0,
+                "delete_original": 0,
+                "parameters": "",
+            }
+        ]
+
+        self.member_uids = [e["uid"] for e in doc.series_ingest_locations(SERIES)]
+        self.manifest_uid = manifest_uid
+        self.manifest_bytes = manifest_bytes
+
+        self.uid_bytes = {manifest_uid: manifest_bytes}
+        for path, uid in zip(locations, self.member_uids):
+            with open(path, "rb") as handle:
+                self.uid_bytes[uid] = handle.read()
+
+        # No handler is needed at add-docs time because ingest=0 on the
+        # only location: add_docs writes the files-table row and installs
+        # no bytes.
+        self.db.add_docs([doc], validate=False)
+        return self.db.get_docs(doc.id())
+
+    def _uid_keyed_handler(self):
+        """A handler that serves whatever bytes ``self.uid_bytes`` records
+        for the uid in the context, and records each call for assertion.
+        """
+        calls = []
+
+        def handler(dest_path, source_path, context):
+            calls.append((dest_path, source_path, dict(context)))
+            uid = context.get("uid")
+            if uid in self.uid_bytes:
+                with open(dest_path, "wb") as handle:
+                    handle.write(self.uid_bytes[uid])
+
+        return handler, calls
+
+    def test_a_cloud_only_manifest_is_retrieved_through_the_handler(self):
+        """The acceptance case for #201: opening a member calls the handler
+        for the manifest first (uid = manifest's own, seriesName = ''),
+        then reads the member. The member bytes come back byte-for-byte."""
+        doc = self.stored_series_cloud_only(count=3)
+        handler, calls = self._uid_keyed_handler()
+
+        file_obj = self.db.open_doc(
+            doc.id(), f"{SERIES}_2", custom_file_handler=handler
+        )
+        self.assertEqual(self.read(file_obj), b"member-1-bytes")
+
+        self.assertGreaterEqual(len(calls), 1, "the handler was never asked")
+        _dest, source_path, context = calls[0]
+        self.assertEqual(
+            context["uid"], self.manifest_uid, "ctx.uid names the manifest"
+        )
+        self.assertEqual(
+            context["seriesName"], "", "the manifest is a file, not a member"
+        )
+        self.assertEqual(context["mode"], "open")
+        self.assertEqual(
+            source_path,
+            self.CLOUD_MANIFEST_URI,
+            "sourcePath is the manifest's ndic:// location, verbatim",
+        )
+
+    def test_the_manifest_lands_at_filecachepath_after_the_fetch(self):
+        """The next cached_path_for_uid must be a hit: that is what keeps a
+        second series read from re-fetching the manifest."""
+        doc = self.stored_series_cloud_only(count=2)
+        handler, _calls = self._uid_keyed_handler()
+
+        self.db.open_doc(doc.id(), f"{SERIES}_1", custom_file_handler=handler)
+
+        cached = cached_path_for_uid(self.manifest_uid)
+        self.assertIsNotNone(
+            cached, "the manifest was not cached at filecachepath/<manifestUid>"
+        )
+        self.assertTrue(os.path.isfile(cached))
+
+    def test_different_members_share_one_manifest_fetch(self):
+        """The rule that keeps a 28,000-member level from turning into
+        28,000 manifest downloads: the manifest is fetched once per
+        session, not once per member open."""
+        doc = self.stored_series_cloud_only(count=3)
+        handler, calls = self._uid_keyed_handler()
+
+        for index in (1, 2, 3):
+            self.db.open_doc(
+                doc.id(), f"{SERIES}_{index}", custom_file_handler=handler
+            )
+
+        manifest_calls = [
+            c for c in calls if c[2].get("uid") == self.manifest_uid
+        ]
+        self.assertEqual(
+            len(manifest_calls),
+            1,
+            "the manifest must be fetched exactly once across three member opens",
+        )
+
+    def test_a_handler_that_serves_nothing_raises_manifest_not_local(self):
+        """Handler-refused case for the manifest. Without an installed
+        manifest and with a handler that produces nothing, the error is
+        the same DID:SQLITEDB:FileSeries:ManifestNotLocal callers already
+        match on -- so an out-of-band failure stays visible."""
+        doc = self.stored_series_cloud_only(count=2)
+
+        def handler(dest_path, source_path, context):
+            return None
+
+        with self.assertRaises(FileAccessError) as caught:
+            self.db.open_doc(
+                doc.id(), f"{SERIES}_1", custom_file_handler=handler
+            )
+        self.assertEqual(
+            caught.exception.identifier,
+            "DID:SQLITEDB:FileSeries:ManifestNotLocal",
+        )
+        self.assertIn(SERIES, str(caught.exception))
+
+    def test_no_handler_still_raises_manifest_not_local(self):
+        """The no-handler case is unchanged: DID retrieves nothing itself,
+        so a manifest that is not on this machine cannot be resolved and
+        the caller is told which series is missing."""
+        doc = self.stored_series_cloud_only(count=2)
+
+        with self.assertRaises(FileAccessError) as caught:
+            self.db.open_doc(doc.id(), f"{SERIES}_1")
+        self.assertEqual(
+            caught.exception.identifier,
+            "DID:SQLITEDB:FileSeries:ManifestNotLocal",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1695,6 +1695,20 @@ class SQLiteDB(Database):
         additional_roots = self._do_cached_path_roots()
 
         manifest_path = _series_manifest_path(doc, stem, additional_roots)
+        if manifest_path is None and custom_file_handler is not None:
+            # The manifest bytes are not on this machine, but a handler was
+            # supplied. Offer the manifest's own file_info location(s) to
+            # it (mode='open', ctx.uid=<manifestUid>, ctx.seriesName='') --
+            # the same call shape do_open_doc uses for a non-'file' file
+            # -- so a document that arrived from a store which keeps bytes
+            # remote (SyncFiles=false through NDI Cloud, say) can still be
+            # resolved. Success caches at filecachepath/<manifestUid>, so
+            # the next cached_path_for_uid is a hit and a second member
+            # open on the same series pays no network for the manifest
+            # again. See VH-Lab/DID-matlab#201 and VH-Lab/DID-python#87.
+            manifest_path = self._fetch_series_manifest_bytes(
+                doc, stem, custom_file_handler
+            )
         if manifest_path is None:
             # We cannot open the manifest, so we cannot know what member the
             # series records. This is the same "not here" cached_path_for_file
@@ -1862,6 +1876,79 @@ class SQLiteDB(Database):
                 pass  # cache unusable; fall through to the plain remove
         with contextlib.suppress(OSError):
             os.remove(fetched_path)
+
+    def _fetch_series_manifest_bytes(self, document_obj, series_name, custom_file_handler):
+        """Fetch a series' manifest via ``custom_file_handler``.
+
+        ONE LEVEL UP from :meth:`_fetch_remote_to_cache` for a member: the
+        manifest is an ordinary file of the document, so its ``file_info``
+        entry names its location(s) directly -- no SQL, no recursion into
+        ``open_doc``. Every non-``'file'`` location is offered to the
+        handler with the manifest's own uid in the context and
+        ``mode='open'``, in the same call shape ``open_doc`` uses for a
+        non-``'file'`` file_info location on the read path. Success puts
+        the bytes at ``filecachepath/<manifestUid>`` so the next
+        :func:`cached_path_for_uid` is a hit, whether the next call is
+        this member, another member, or a later session.
+
+        The no-network primitive :func:`did.database._series_manifest_path`
+        must stay callable from any thread and any process, so teaching it
+        to fetch would break that. The lazy-fetch path lives here on the
+        sqlite implementation, where the handler already lives, and the
+        local-first fast path in :meth:`_open_series_member` keeps the
+        second open of a series one :func:`cached_path_for_uid` hit.
+
+        Returns the local path on success, or ``None`` on any failure --
+        the caller reports the miss in its own words. See
+        VH-Lab/DID-matlab#201 and VH-Lab/DID-python#87.
+        """
+        from ..common import PathConstants
+
+        if custom_file_handler is None or document_obj is None:
+            return None
+
+        is_in, info, _ = document_obj.is_in_file_list(series_name)
+        if not is_in or not isinstance(info, dict):
+            return None
+        locations = info.get("locations")
+        if isinstance(locations, dict):
+            locations = [locations]
+        if not isinstance(locations, list):
+            return None
+
+        temp_dir = PathConstants().temppath
+        for entry in locations:
+            if not isinstance(entry, dict):
+                continue
+            location = entry.get("location")
+            uid = entry.get("uid")
+            location_type = entry.get("location_type")
+            if not location or not uid:
+                continue
+            # Only non-'file' locations are offered. cached_path_for_uid has
+            # already checked filecachepath/<uid> and FileDir/<uid>, and a
+            # manifest orig_location that points elsewhere is not a resolution
+            # rule DID promises.
+            if not self._is_remote_location(location, location_type):
+                continue
+
+            fetched_path, _error = self._fetch_remote_to_cache(
+                uid,
+                location,
+                temp_dir,
+                custom_file_handler,
+                context={
+                    "documentId": document_obj.id(),
+                    "filename": str(series_name),
+                    "seriesName": "",
+                    "uid": uid,
+                    "mode": "open",
+                },
+            )
+            if fetched_path is not None and os.path.isfile(fetched_path):
+                return fetched_path
+
+        return None
 
     def _manifest_locations_for_handler(self, document_obj, stem):
         """Locations the handler should be offered to fetch a series member.
