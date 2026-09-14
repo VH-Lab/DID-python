@@ -1,0 +1,616 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>DID-python Audit Remediation — Results (2026-06-12) - DID-Python</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#did-python-audit-remediation-results-2026-06-12" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="DID-Python" class="md-header__button md-logo" aria-label="DID-Python" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            DID-Python
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              DID-python Audit Remediation — Results (2026-06-12)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="DID-Python" class="md-nav__button md-logo" aria-label="DID-Python" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    DID-Python
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../document/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Document
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sqlitedb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SQLiteDB
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../query/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Query
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fun/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Functions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#findings-addressed-audit-61" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Findings addressed (audit §6.1)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Findings addressed (audit §6.1)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#correction-to-the-audits-61-1-wording" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Correction to the audit's 6.1-1 wording
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision-required-do-not-merge-a-serialization-change-without-sign-off" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DECISION required — do not merge a serialization change without sign-off
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lockstep-merge" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lockstep / merge
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="did-python-audit-remediation-results-2026-06-12">DID-python Audit Remediation — Results (2026-06-12)</h1>
+<blockquote>
+<p><strong>Context for a reviewer / next agent.</strong> One of <strong>9 coordinated PRs</strong> in the 2026-06 NDI
+ecosystem audit; <strong>none are merged.</strong> This repo's PR: <strong>VH-Lab/DID-python#23</strong> — <strong>merge
+together with the DID-matlab PR VH-Lab/DID-matlab#146</strong> (same audit item §6.1; isa +
+SQL hardening land in lockstep). The one deferral is the <strong><code>timestamp</code> format DECISION</strong>
+(see "DECISION required" below).</p>
+</blockquote>
+<p>Branch <code>audit/did-python-2026-06</code>, off <code>origin/main</code> (<code>1b1491f</code>). This is the
+Python half of the <strong>DID lockstep</strong> (DID-python + DID-matlab change together so a
+cross-language symmetry run stays consistent); the MATLAB half is
+<code>audit/did-matlab-2026-06</code>.</p>
+<h2 id="findings-addressed-audit-61">Findings addressed (audit §6.1)</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Severity</th>
+<th>Commit</th>
+<th>Summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>6.1-1</td>
+<td>Critical</td>
+<td><code>76ae1bb</code></td>
+<td><strong>isa operator parity.</strong> The brute-force <code>field_search</code> isa used a <code>param1 in a</code> heuristic plus an exact <code>class_name</code> check, so it (a) missed superclass membership — a probe document did not match <code>isa('element')</code> — and (b) spuriously matched a class name that was merely an incidental top-level field of an unrelated document. Same query, different result set per language. The brute-force isa now derives the class and superclass names from the <strong>same</strong> <code>did.implementations.doc2sql</code> helpers the SQL path uses, so both paths agree and both follow MATLAB's <code>isa(X)</code> = (X is the class) OR (X is a superclass) semantics.</td>
+</tr>
+<tr>
+<td>6.1-3</td>
+<td>Medium</td>
+<td><code>76ae1bb</code></td>
+<td><strong>SQL field-name hardening.</strong> The query field name was interpolated into the SQL text (<code>fields.field_name = '&lt;field&gt;'</code>, and into <code>LIKE</code> patterns, so it cannot be a bound parameter). It is now restricted to <code>^[A-Za-z0-9_.]+$</code>; an out-of-charset field name returns <code>None</code> and the caller falls back to the injection-free brute-force search.</td>
+</tr>
+<tr>
+<td>6.1-4</td>
+<td>Low</td>
+<td><code>4ae15de</code></td>
+<td><strong>Missing sqlite indexes.</strong> <code>doc_data</code> (one row per field per document, the largest table) had no index, so every search did a full-scan nested-loop join. Adds <code>doc_data(value)</code> (the index the DID-MATLAB reference already has), plus the more targeted <code>doc_data(field_idx, value)</code> and <code>doc_data(doc_idx)</code>. Created <code>IF NOT EXISTS</code> on every open, so databases downloaded before this fix benefit on next use.</td>
+</tr>
+<tr>
+<td>6.1-8</td>
+<td>Medium</td>
+<td>(this commit)</td>
+<td><strong>No LICENSE.</strong> Added <code>LICENSE</code> (CC BY-NC-SA 4.0) matching the DID-matlab counterpart.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="correction-to-the-audits-61-1-wording">Correction to the audit's 6.1-1 wording</h3>
+<p>The audit said the SQL isa path matched <code>meta.class</code>/<code>meta.superclass</code> — "fields that
+never exist in stored docs." In fact <code>doc2sql.py</code> <strong>does</strong> produce <code>meta.class</code> and
+<code>meta.superclass</code> (mirroring MATLAB <code>doc2sql.m</code>), so the SQL isa path was already
+correct; the real divergence was the brute-force path, fixed above. The "never exist"
+observation applies only to a <strong>MATLAB-written <code>ndi.db</code></strong> where the <code>doc_data</code> search
+cache is left unpopulated (0 rows) — a separate issue (the search cache is a derived
+index; authoritative content is <code>docs.json_code</code>), not an isa field-name bug.</p>
+<h2 id="decision-required-do-not-merge-a-serialization-change-without-sign-off">DECISION required — do not merge a serialization change without sign-off</h2>
+<p><strong>§6.1-2 / §7.3-13: the <code>timestamp</code> column meaning diverges across languages and is
+NOT changed here.</strong> DID-matlab writes MATLAB <code>now</code> (datenum — days since year 0) into
+the <code>docs</code>/<code>branches</code>/<code>branch_docs</code> <code>timestamp REAL</code> column; DID-python writes
+<code>time.time()</code> (Unix epoch seconds) into the same column. A document written by one
+client and compared with <code>lessthan</code>/<code>greaterthan</code> on <code>timestamp</code> by the other silently
+gives wrong results, and the cloud backend stores the value verbatim (it has no opinion).</p>
+<p>This is a <strong>cross-client format decision</strong>, not a bug to patch on one side — changing
+the serialization on either side alone would break the other and any already-stored
+data. It needs an explicit decision (proposed: <strong>ISO-8601 TEXT</strong>, or Unix epoch seconds,
+with a documented one-time conversion/migration for existing rows) made jointly for
+DID-python, DID-matlab, and the cloud backend. Left untouched pending that decision.</p>
+<h2 id="validation">Validation</h2>
+<p><code>PYTHONPATH=src python -m pytest tests/ --ignore=tests/symmetry</code> = <strong>62 passed</strong> (was
+55; +7 from the new <code>tests/test_isa_parity.py</code>), black + ruff clean. The new tests cover
+isa across own-class / superclass-descendant / root-superclass / unrelated, an
+incidental-field trap, SQL-vs-brute-force agreement, and a field-name injection attempt
+that does not inject.</p>
+<h2 id="lockstep-merge">Lockstep / merge</h2>
+<p>Merge with <code>audit/did-matlab-2026-06</code> (the MATLAB SQL-injection escaping is the same
+audit item 6.1-3). The isa change brings Python to parity with MATLAB (MATLAB's isa was
+already the correct reference; no MATLAB isa change was needed).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
