@@ -40,7 +40,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "9b36124"
+    matlab_last_sync_hash: "8bea92c"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
@@ -94,6 +94,17 @@ classes:
       matching DID-matlab's UTCLeapSeconds output and base.schema.json's own
       declared default; the old space-separated, timezone-less form was read
       as LOCAL time by a JS consumer's new Date().
+
+      2026-09-14: bumped through DID-matlab 8bea92c (PR #202 / DID-matlab#201).
+      localSeriesManifestPath is the no-SQL/no-network primitive
+      cached_path_for_file rests on, which is why it stays local-only on
+      both sides: the lazy-fetch path for a remote manifest lives on the
+      sqlite implementation. MATLAB's docstring gained a paragraph naming
+      that path (fetchSeriesManifestBytes) and the identifier callers
+      match on (DID:SQLITEDB:FileSeries:ManifestNotLocal); the Python
+      analogue _series_manifest_path was updated in the same shape. No
+      behavior change here -- see the sqlitedb entry in
+      did_matlab_python_bridge_implementations.yaml for the fetch itself.
 
     properties:
       - name: connection

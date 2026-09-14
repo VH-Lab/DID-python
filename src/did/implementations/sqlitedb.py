@@ -1877,7 +1877,9 @@ class SQLiteDB(Database):
         with contextlib.suppress(OSError):
             os.remove(fetched_path)
 
-    def _fetch_series_manifest_bytes(self, document_obj, series_name, custom_file_handler):
+    def _fetch_series_manifest_bytes(
+        self, document_obj, series_name, custom_file_handler
+    ):
         """Fetch a series' manifest via ``custom_file_handler``.
 
         ONE LEVEL UP from :meth:`_fetch_remote_to_cache` for a member: the

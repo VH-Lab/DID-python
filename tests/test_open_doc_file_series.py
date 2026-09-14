@@ -839,13 +839,9 @@ class TestFetchingAnAbsentManifest(SeriesReadTestCase):
         handler, calls = self._uid_keyed_handler()
 
         for index in (1, 2, 3):
-            self.db.open_doc(
-                doc.id(), f"{SERIES}_{index}", custom_file_handler=handler
-            )
+            self.db.open_doc(doc.id(), f"{SERIES}_{index}", custom_file_handler=handler)
 
-        manifest_calls = [
-            c for c in calls if c[2].get("uid") == self.manifest_uid
-        ]
+        manifest_calls = [c for c in calls if c[2].get("uid") == self.manifest_uid]
         self.assertEqual(
             len(manifest_calls),
             1,
@@ -863,9 +859,7 @@ class TestFetchingAnAbsentManifest(SeriesReadTestCase):
             return None
 
         with self.assertRaises(FileAccessError) as caught:
-            self.db.open_doc(
-                doc.id(), f"{SERIES}_1", custom_file_handler=handler
-            )
+            self.db.open_doc(doc.id(), f"{SERIES}_1", custom_file_handler=handler)
         self.assertEqual(
             caught.exception.identifier,
             "DID:SQLITEDB:FileSeries:ManifestNotLocal",
