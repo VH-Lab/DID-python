@@ -29,7 +29,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "717fbad"
+    matlab_last_sync_hash: "8bea92c"
     status: ported
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
@@ -107,6 +107,31 @@ classes:
       branch. Reviewed 2026-08-30; Python's _do_delete_branch does not
       reclaim, so this is a third divergence, recorded on a new
       do_delete_branch entry below.
+
+      2026-09-14: bumped through DID-matlab 8bea92c (PR #202 / DID-matlab#201).
+      seriesMemberPath used to fall through to do_open_doc(document_id, stem)
+      when the manifest was not on disk, which cost an SQL round trip and
+      recursed the whole read path just to invoke the same handler. MATLAB
+      replaced that with a dedicated fetchSeriesManifestBytes helper: it
+      reads the manifest's file_info straight from the document (no SQL),
+      offers every non-'file' location to the customFileHandler with the
+      manifest's uid in the context (seriesName='', mode='open'), and lands
+      the bytes at filecachepath/<manifestUid>. The Python side ports the
+      same shape: SQLiteDB._fetch_series_manifest_bytes reuses the existing
+      _fetch_remote_to_cache primitive (same lock, same cache path), and
+      _open_series_member calls it only on a miss and only when a handler
+      was supplied -- so the fast local path and exist_doc's no-network
+      answer are unchanged, and the DID:SQLITEDB:FileSeries:ManifestNotLocal
+      identifier callers pattern-match on is still what gets raised when
+      the handler cannot service the location. MATLAB's second commit
+      (b4491ba) additionally set memberOf=stem when the manifest could not
+      be resolved, so do_open_doc raises "member of file series ... not on
+      this machine" rather than "does not include a file named"; Python's
+      _open_series_member already raises ManifestNotLocal by identifier,
+      so there is no message change to port. Coverage:
+      tests/test_open_doc_file_series.py:TestFetchingAnAbsentManifest (5
+      new tests, including the acceptance case, the "one fetch shared
+      across members" cache guarantee, and the handler-refused failure).
 
     properties:
       - name: FileDir

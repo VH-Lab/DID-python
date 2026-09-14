@@ -612,6 +612,17 @@ def _series_manifest_path(document_obj, name, additional_roots):
     file_info and finding it needs nothing but the document and the
     filesystem. Shared by the member lookup and the series accessors so
     they all agree on which copy is authoritative.
+
+    REMOTE-ONLY MANIFESTS. This helper is deliberately no-network: a
+    manifest whose bytes live only in the cloud resolves to ``None``
+    here, and it is up to the retrieval-authorized caller to fetch. That
+    path is
+    :meth:`did.implementations.sqlitedb.SQLiteDB._fetch_series_manifest_bytes`,
+    which offers the manifest's ``file_info`` location to the
+    ``custom_file_handler`` and lands the bytes at
+    ``filecachepath/<manifestUid>`` -- so the next call to this function
+    is a :func:`did.file.cached_path_for_uid` hit, with no network again.
+    See VH-Lab/DID-matlab#201 and VH-Lab/DID-python#87.
     """
     from .file import cached_path_for_uid
 
