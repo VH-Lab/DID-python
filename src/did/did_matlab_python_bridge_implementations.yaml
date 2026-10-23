@@ -658,21 +658,28 @@ classes:
           TypeError (MATLAB's fallback is the two-argument contract).
 
       - name: handlerTakesContext
-        python_name: ~
+        python_name: _handler_takes_context
         kind: static
         decision_log: >
-          Not separated out. Its rule lives inline in
-          _dispatch_custom_file_handler. DIVERGENCE, recorded 2026-10-23:
-          MATLAB's fetchSeriesMemberBytes calls handlerTakesContext and
-          refuses to ask a two-argument handler for a series member at all,
-          since it would only see the manifest's location. Python's
-          _open_series_member has no such gate: it offers the member to
-          any handler, and a two-argument handler that fetches the manifest
-          again is caught afterwards by the same-bytes check (see
-          filesAreIdentical). The outcome is a refusal either way, but
-          Python spends one fetch to reach it, and a two-argument handler
-          that returns something else is accepted where MATLAB never asks.
-          Not changed here; that is a behaviour port, not a bridge fix.
+          Same rule as dispatch: three or more positional parameters, or
+          *args. A callable whose signature cannot be inspected answers False,
+          MATLAB's safe default when nargin fails. Factored out of
+          _dispatch_custom_file_handler 2026-10-23, as MATLAB names it once,
+          and used for the gate it exists for: _open_series_member, like
+          MATLAB's fetchSeriesMemberBytes (3299ab8, #188), does not ask a
+          two-argument handler for a series member at all, because such a
+          handler sees only the manifest's location and cannot know which
+          member is wanted. The open raises
+          DID:SQLITEDB:FileSeries:MemberNotHere, as with no handler.
+          This closes the divergence recorded here earlier the same day:
+          Python offered the member to any handler and caught a re-fetched
+          manifest only afterwards, and a two-argument handler that returned
+          other bytes had them cached under the member's uid. The behaviour
+          change is visible to callers: a two-argument handler that used to
+          serve members now gets MemberNotHere and must take a context.
+          One difference remains in dispatch, not in the gate: there an
+          uninspectable callable is tried with three arguments, then two on
+          TypeError, rather than given the two-argument contract outright.
 
       - name: filesAreIdentical
         python_name: ~

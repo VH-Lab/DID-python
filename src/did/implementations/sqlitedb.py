@@ -1992,6 +1992,21 @@ class SQLiteDB(Database):
                 f"custom_file_handler was supplied.",
             )
 
+        # A two-argument handler is told nothing but the manifest's location,
+        # so it has no way to learn which member it is being asked for:
+        # anything it produced would be the wrong bytes under this uid. It is
+        # not asked at all -- the member is simply not here, as when no
+        # handler was supplied. Mirrors MATLAB's fetchSeriesMemberBytes gate.
+        if not self._handler_takes_context(custom_file_handler):
+            raise FileAccessError(
+                "DID:SQLITEDB:FileSeries:MemberNotHere",
+                f'Series member "{filename}" of series "{stem}" (uid '
+                f'"{member_uid}") is not on this machine, and the '
+                f"custom_file_handler takes only (dest_path, source_path), so "
+                f"it cannot be told which member to fetch. A handler that "
+                f"accepts a third, context argument is given the member's uid.",
+            )
+
         # Offer every location of the manifest to the handler, remote first
         # so a handler that can answer from the manifest's store is not
         # given a local copy it can only re-download from itself.
@@ -2344,6 +2359,42 @@ class SQLiteDB(Database):
         return dict(context)
 
     @staticmethod
+    def _handler_takes_context(handler):
+        """Will ``handler`` be given the context?
+
+        True when it declares three or more positional parameters, or takes
+        ``*args``. A handler declared with two gets the two-argument call and
+        never sees a context. Mirrors MATLAB's
+        ``did.implementations.sqlitedb.handlerTakesContext``: the rule
+        _dispatch_custom_file_handler dispatches by, named once so a caller
+        with nothing useful to say to a two-argument handler -- the series
+        member fetch in _open_series_member, whose whole message is in the
+        context -- can ask rather than re-derive it.
+
+        A callable whose signature cannot be inspected answers False, as
+        MATLAB's does when ``nargin`` fails: the safe default is the old
+        contract.
+        """
+        import inspect
+
+        try:
+            signature = inspect.signature(handler)
+        except (TypeError, ValueError):
+            return False
+        # Count positional-capable parameters (POSITIONAL_ONLY /
+        # POSITIONAL_OR_KEYWORD / VAR_POSITIONAL).
+        positional = 0
+        for p in signature.parameters.values():
+            if p.kind == inspect.Parameter.VAR_POSITIONAL:
+                return True
+            if p.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            ):
+                positional += 1
+        return positional >= 3
+
+    @staticmethod
     def _dispatch_custom_file_handler(handler, dest_path, source_path, context):
         """Call ``handler`` with two or three arguments per its signature.
 
@@ -2351,7 +2402,8 @@ class SQLiteDB(Database):
         ``*args``) is called with ``(dest_path, source_path, context)``. A
         handler declared with two inputs is called without context, so the
         older two-argument signature still works. Mirrors MATLAB's
-        ``did.implementations.sqlitedb.dispatchCustomFileHandler``.
+        ``did.implementations.sqlitedb.dispatchCustomFileHandler``; the rule
+        itself is :meth:`_handler_takes_context`.
         """
         import inspect
 
@@ -2359,7 +2411,7 @@ class SQLiteDB(Database):
             handler(dest_path, source_path)
             return
         try:
-            signature = inspect.signature(handler)
+            inspect.signature(handler)
         except (TypeError, ValueError):
             # Builtin or C-implemented callable: fall back to positional try.
             try:
@@ -2369,21 +2421,7 @@ class SQLiteDB(Database):
                 handler(dest_path, source_path)
                 return
 
-        params = list(signature.parameters.values())
-        # Count positional-capable parameters (POSITIONAL_ONLY /
-        # POSITIONAL_OR_KEYWORD / VAR_POSITIONAL).
-        positional = 0
-        has_var_positional = False
-        for p in params:
-            if p.kind in (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            ):
-                positional += 1
-            elif p.kind == inspect.Parameter.VAR_POSITIONAL:
-                has_var_positional = True
-
-        if has_var_positional or positional >= 3:
+        if SQLiteDB._handler_takes_context(handler):
             handler(dest_path, source_path, context)
         else:
             handler(dest_path, source_path)
