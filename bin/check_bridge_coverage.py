@@ -156,6 +156,20 @@ _ABSTRACT_SIG = re.compile(
 _PROPERTY = re.compile(r"^\s*([A-Za-z_]\w*)\s*(?:\(|\{|=|[A-Za-z_]|;|$)")
 
 
+def _opens_string(line: str, i: int) -> bool:
+    """Is the (unquoted) `'` at line[i] a string opener, not a transpose?
+
+    MATLAB's `'` is the transpose operator when it directly follows an
+    identifier, a closing bracket, a `.` or another transpose -- `x'`,
+    `reshape(v,[],n)'`. Reading that as a string opener swallows the rest of
+    the line, so a trailing `catch, end` goes uncounted and every method
+    after it in the block drops out of the member check (sqlitedb.m's
+    run_sql_noOpen did exactly this). Judged on the source line, not on
+    anything already blanked out.
+    """
+    return i == 0 or not (line[i - 1].isalnum() or line[i - 1] in "_)]}.'")
+
+
 def _strip_comment(line: str) -> str:
     """Drop a trailing MATLAB comment, respecting single-quoted strings."""
     out = []
@@ -169,7 +183,8 @@ def _strip_comment(line: str) -> str:
                 out.append("''")
                 i += 2
                 continue
-            in_str = not in_str
+            if in_str or _opens_string(line, i):
+                in_str = not in_str
         elif ch == "%" and not in_str:
             break
         out.append(ch)
@@ -190,7 +205,7 @@ def _outside_brackets(line: str) -> str:
     i = 0
     while i < len(line):
         ch = line[i]
-        if ch == "'" and not in_str and (not out or out[-1] in " ,(=[{"):
+        if ch == "'" and not in_str and _opens_string(line, i):
             in_str = True
         elif ch == "'" and in_str:
             if i + 1 < len(line) and line[i + 1] == "'":

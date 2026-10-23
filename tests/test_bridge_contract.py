@@ -693,3 +693,53 @@ class TestStatusValuesInUse:
             + "\n\nUse `status:` -- see PORTING_INSTRUCTIONS.md, "
             "'Statuses are never prose in a path field'."
         )
+
+
+class TestTheMatlabParserReadsATransposeAsATranspose:
+    """MATLAB's ``'`` is a transpose after an identifier or closing bracket.
+
+    The parser used to read ``reshape(v,[],n)'; catch, end`` as opening a
+    string, so the ``end`` went uncounted and every method after that line
+    in the block -- sqlitedb.m's whole public static block, eight methods --
+    was attributed to nothing and escaped the member checks.
+    """
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "try v = reshape(v,[],n)'; catch, end",
+            "if any(x'), y = 1; end",
+            "if any([a' b']), y = 1; end",
+            "if s.f', y = 1; end",
+            "if x'', y = 1; end",
+        ],
+    )
+    def test_a_one_line_block_after_a_transpose_nets_to_zero(self, line):
+        assert checker._depth_delta(checker._strip_comment(line)) == 0
+
+    def test_a_quote_after_a_space_or_bracket_still_opens_a_string(self):
+        assert checker._depth_delta("disp('if'); x = 1;") == 0
+        assert checker._depth_delta("y = [1 'end'];") == 0
+
+    def test_a_comment_after_a_transpose_is_stripped(self):
+        assert checker._strip_comment("y = x'; % it's") == "y = x';"
+
+    def test_methods_after_a_transposed_line_are_found(self, tmp_path):
+        path = tmp_path / "k.m"
+        path.write_text(
+            "classdef k\n"
+            "    methods\n"
+            "        function a(~)\n"
+            "            try v = reshape(1:4,[],2)'; catch, end %#ok<NASGU>\n"
+            "        end\n"
+            "        function b(~)\n"
+            "        end\n"
+            "    end\n"
+            "    methods (Static, Access=public)\n"
+            "        function c()\n"
+            "        end\n"
+            "    end\n"
+            "end\n"
+        )
+        methods, _ = checker.parse_matlab_class(str(path))
+        assert methods == {"a": "public", "b": "public", "c": "public,static"}
