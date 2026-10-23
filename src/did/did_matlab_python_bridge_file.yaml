@@ -300,7 +300,7 @@ classes:
   - name: binaryTable
     type: class
     matlab_path: "+did/+file/binaryTable.m"
-    matlab_last_sync_hash: "4a0f9a5"
+    matlab_last_sync_hash: "bd369da"
     status: ported
     python_path: "did/file.py"
     python_class: "BinaryTable"
@@ -516,8 +516,7 @@ classes:
           it is present.
 
           2026-10-23: the unsorted path reads the column once instead of
-          reopening the file per row. Same result; matched by DID-matlab#221
-          (pending).
+          reopening the file per row. Same result; the same change as DID-matlab#221.
 
     decision_log: >
       SYNCHRONIZED 2026-08-29. Previously a partial port: read_row returned
@@ -531,7 +530,7 @@ classes:
   - name: fileCache
     type: class
     matlab_path: "+did/+file/fileCache.m"
-    matlab_last_sync_hash: "4a0f9a5"
+    matlab_last_sync_hash: "3041f77"
     status: ported
     python_path: "did/file.py"
     python_class: "FileCache"
@@ -678,7 +677,7 @@ classes:
           request (MATLAB 'copy',true; Python copy=True), both refuse a name
           whose length is not fileNameCharacters, and both refuse a name
           already in the cache. 2026-10-23: its lookup is a binary search,
-          as isFile; DID-matlab#221 pending.
+          as isFile; DID-matlab#221.
 
       - name: removeFile
         python_name: remove_file
@@ -697,8 +696,7 @@ classes:
         decision_log: >
           Ported 2026-08-29. Both search the index by name. 2026-10-23: a
           binary search (sorted=True), since the index is kept sorted and a
-          scan grew with the cache; ahead of MATLAB until DID-matlab#221
-          (the same change) merges.
+          scan grew with the cache; the same change as DID-matlab#221.
 
       - name: fileList
         python_name: file_list
@@ -729,7 +727,7 @@ classes:
         decision_log: >
           Ported 2026-08-29. Both update the last-access time and report
           whether the name was in the index. 2026-10-23: binary search, as
-          isFile; DID-matlab#221 pending.
+          isFile; DID-matlab#221.
 
       - name: infoFileName
         python_name: _info_file_name
@@ -780,7 +778,7 @@ functions:
   - name: checkout_lock_file
     type: function
     matlab_path: "+did/+file/checkout_lock_file.m"
-    matlab_last_sync_hash: "9010a73"
+    matlab_last_sync_hash: "bd369da"
     status: ported
     python_path: "did/file.py"
     python_name: "checkout_lock_file"
@@ -797,7 +795,7 @@ functions:
       see the parse_lock_expiration entry below. Both write the expiry as ISO
       8601 and both read either format.
 
-      2026-10-23, ahead of MATLAB until DID-matlab#221 merges: an optional
+      2026-10-23, with DID-matlab#221: an optional
       max_poll_interval (MATLAB: a fifth argument, maxPollInterval). Given,
       a waiter looks again after 5 ms and backs off to at most that
       interval, within check_loops seconds in all; omitted, it looks once a
