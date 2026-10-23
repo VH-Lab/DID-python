@@ -639,6 +639,105 @@ classes:
           See open_db. Synchronized 2026-03-15. Split out of a combined
           entry 2026-08-28.
 
+      # The eight public static helpers below were invisible to the member
+      # checks until 2026-10-23: the checker read the transpose in
+      # run_sql_noOpen's `reshape(varargin,[],numRows)'; catch, end` as the
+      # start of a string, lost the `end`, and attributed everything after it
+      # -- this whole methods (Static, Access=public) block -- to nothing.
+      # Python keeps each one private (or inlines it); none is public API here.
+      - name: dispatchCustomFileHandler
+        python_name: _dispatch_custom_file_handler
+        kind: static
+        decision_log: >
+          Same arity rule: three or more positional parameters, or *args,
+          get (dest_path, source_path, context); exactly two get the
+          two-argument call. Python counts parameters with inspect.signature
+          where MATLAB uses nargin. Two differences: a context of None is
+          always dispatched with two arguments, and a callable whose
+          signature cannot be inspected is tried with three, then two, on
+          TypeError (MATLAB's fallback is the two-argument contract).
+
+      - name: handlerTakesContext
+        python_name: ~
+        kind: static
+        decision_log: >
+          Not separated out. Its rule lives inline in
+          _dispatch_custom_file_handler. DIVERGENCE, recorded 2026-10-23:
+          MATLAB's fetchSeriesMemberBytes calls handlerTakesContext and
+          refuses to ask a two-argument handler for a series member at all,
+          since it would only see the manifest's location. Python's
+          _open_series_member has no such gate: it offers the member to
+          any handler, and a two-argument handler that fetches the manifest
+          again is caught afterwards by the same-bytes check (see
+          filesAreIdentical). The outcome is a refusal either way, but
+          Python spends one fetch to reach it, and a two-argument handler
+          that returns something else is accepted where MATLAB never asks.
+          Not changed here; that is a behaviour port, not a bridge fix.
+
+      - name: filesAreIdentical
+        python_name: ~
+        kind: static
+        decision_log: >
+          Inlined in _open_series_member, its only use (the DID-matlab#191
+          guard against a handler returning the manifest's bytes for a
+          member). Same order -- sizes first, bytes only when the sizes
+          match -- and an unreadable file counts as "not identical". Python
+          compares the two files with one read each rather than 1 MiB
+          chunks.
+
+      - name: isSafeUid
+        python_name: _is_safe_uid
+        kind: static
+        decision_log: >
+          A module-level function in did/implementations/sqlitedb.py. MATLAB
+          delegates to did.file.isSafeUid; Python's _is_safe_uid is a
+          separate copy of the same predicate as did.file.is_safe_uid (see
+          the isSafeUid entry in did_matlab_python_bridge_file.yaml). The
+          is_safe_uid docstring says the sqlitedb one delegates to it; it
+          does not, though the two bodies agree today.
+
+      - name: containsTraversal
+        python_name: ~
+        kind: static
+        decision_log: >
+          No textual '..' check in Python. MATLAB's isSafeLocalLocation
+          refuses a '..' segment, then requires an absolute path to be
+          isWithin the database directory. Python's _validated_local_path
+          resolves the location (relative ones against the database
+          directory) and requires the result to be _is_within it, which
+          refuses every escaping '..' the textual check catches. It also
+          accepts a '..' that resolves back inside the directory
+          ('sub/../x'), which MATLAB refuses. Conversely, MATLAB accepts any
+          relative path without '..' unchecked, so a relative path through a
+          symlink that points outside passes there; Python's realpath
+          comparison refuses it.
+
+      - name: isAbsolutePath
+        python_name: ~
+        kind: static
+        decision_log: >
+          os.path.isabs, called inline in _resolve_local. MATLAB treats a
+          leading '\' as absolute on every platform, and 'C:' only on
+          Windows; os.path.isabs follows the running OS's own rules.
+
+      - name: isRemoteLocation
+        python_name: _is_remote_location
+        kind: static
+        decision_log: >
+          Same rule: a file type of 'url' or 'ndicloud', or a location
+          containing '://'. Python lower-cases the type but does not strip
+          surrounding whitespace, as MATLAB's strtrim does.
+
+      - name: isWithin
+        python_name: _is_within
+        kind: static
+        decision_log: >
+          A module-level function. Both resolve symlinks before comparing
+          (os.path.realpath; java.io.File.getCanonicalPath). Python compares
+          with os.path.commonpath and returns False when the paths are on
+          different drives; MATLAB uses a prefix match with a trailing
+          separator.
+
     decision_log: >
       Core database operations are synchronized. MATLAB recently changed
       URL download mechanism (websave -> ndi.cloud.api.files.getFile) which
