@@ -399,7 +399,14 @@ class TestFetchingAnAbsentMember(SeriesReadTestCase):
         fetched = [context["uid"] for _dest, _src, context in calls]
         self.assertEqual(fetched, self.member_uids)
 
-    def test_a_two_argument_handler_is_still_called(self):
+    def test_a_two_argument_handler_is_not_asked_for_a_member(self):
+        """A two-argument handler is given only the manifest's location, so
+        it cannot know which member is wanted; whatever it wrote would be
+        cached under the member's uid as the wrong bytes. MATLAB's
+        fetchSeriesMemberBytes does not call it (handlerTakesContext), and
+        neither does Python: the member is not here, as with no handler.
+        This test used to assert the opposite -- that the handler was called
+        and its bytes returned -- which was the divergence."""
         doc = self.stored_series(count=2, remote_manifest=True)
         self.evict_members()
         calls = []
@@ -409,12 +416,33 @@ class TestFetchingAnAbsentMember(SeriesReadTestCase):
             with open(dest_path, "wb") as handle:
                 handle.write(b"two-arg")
 
+        with self.assertRaises(FileAccessError) as caught:
+            self.db.open_doc(doc.id(), "chunkdata.bin_1", custom_file_handler=handler)
+
+        self.assertEqual(
+            caught.exception.identifier, "DID:SQLITEDB:FileSeries:MemberNotHere"
+        )
+        self.assertIn("cannot be told which member", str(caught.exception))
+        self.assertEqual(calls, [], "a two-argument handler is never called")
+
+    def test_a_varargs_handler_is_asked_with_the_context(self):
+        doc = self.stored_series(count=2, remote_manifest=True)
+        self.evict_members()
+        calls = []
+
+        def handler(*args):
+            calls.append(args)
+            with open(args[0], "wb") as handle:
+                handle.write(b"varargs")
+
         file_obj = self.db.open_doc(
             doc.id(), "chunkdata.bin_1", custom_file_handler=handler
         )
 
-        self.assertEqual(self.read(file_obj), b"two-arg")
-        self.assertEqual(calls, [REMOTE_MANIFEST])
+        self.assertEqual(self.read(file_obj), b"varargs")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls[0]), 3)
+        self.assertEqual(calls[0][2]["uid"], self.member_uids[0])
 
     def test_a_fetched_member_is_kept_and_not_fetched_again(self):
         doc = self.stored_series(count=2, remote_manifest=True)
@@ -882,3 +910,42 @@ class TestFetchingAnAbsentManifest(SeriesReadTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHandlerTakesContext(unittest.TestCase):
+    """The one rule both the dispatch and the series-member gate use."""
+
+    def test_two_positional_parameters_do_not_take_context(self):
+        self.assertFalse(SQLiteDB._handler_takes_context(lambda dest, src: None))
+
+    def test_three_positional_parameters_take_context(self):
+        self.assertTrue(
+            SQLiteDB._handler_takes_context(lambda dest, src, context: None)
+        )
+
+    def test_varargs_takes_context(self):
+        self.assertTrue(SQLiteDB._handler_takes_context(lambda *args: None))
+        self.assertTrue(SQLiteDB._handler_takes_context(lambda dest, *rest: None))
+
+    def test_keyword_only_parameters_do_not_count(self):
+        self.assertFalse(
+            SQLiteDB._handler_takes_context(lambda dest, src, *, context=None: None)
+        )
+
+    def test_a_bound_method_counts_without_self(self):
+        class Handler:
+            def two(self, dest, src):
+                pass
+
+            def three(self, dest, src, context):
+                pass
+
+        self.assertFalse(SQLiteDB._handler_takes_context(Handler().two))
+        self.assertTrue(SQLiteDB._handler_takes_context(Handler().three))
+
+    def test_an_uninspectable_callable_gets_the_old_contract(self):
+        # MATLAB: when nargin(handler) fails, the safe default is n = 2.
+        with mock.patch("inspect.signature", side_effect=ValueError("no sig")):
+            self.assertFalse(
+                SQLiteDB._handler_takes_context(lambda dest, src, context: None)
+            )
