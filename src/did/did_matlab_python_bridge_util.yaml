@@ -178,6 +178,41 @@ functions:
       Both provide interactive document graph visualization.
       Synchronized 2026-03-15.
 
+  # -----------------------------------------------------------------------
+  # did.fun.timestamp
+  # -----------------------------------------------------------------------
+  - name: timestamp
+    type: function
+    matlab_path: "+did/+fun/timestamp.m"
+    matlab_last_sync_hash: "bb29861"
+    status: ported
+    python_path: "did/fun.py"
+    python_name: "timestamp"
+
+    input_arguments:
+      - name: raw
+        type_matlab: "(1,:) char, default char(datetime('now','TimeZone','UTCLeapSeconds'))"
+        type_python: "str | None, default None (the current UTC time)"
+    output_arguments:
+      - name: ts
+        type_matlab: "char"
+        type_python: "str"
+
+    decision_log: >
+      Ported 2026-10-23 from DID-matlab bb29861 (issue #53). Same regex,
+      (T\d{2}:\d{2}:)60(\.\d+)? -> \g<1>59.999, so a leap second with or
+      without a fraction and with or without a trailing 'Z' clamps exactly as
+      in MATLAB, and nothing outside the seconds field is touched. The
+      default value is the current UTC time as 'yyyy-mm-ddTHH:MM:SS.fffZ',
+      the shape MATLAB's UTCLeapSeconds char renders. One difference, of
+      fact rather than of design: Python's datetime cannot represent a leap
+      second, so the default path never produces ':60' and the clamp only
+      ever acts on a supplied raw string (e.g. one written by MATLAB).
+      Python's validator (validate._parses_as_timestamp, via
+      datetime.fromisoformat) rejects ':60' as java.time.LocalDateTime.parse
+      does, so the clamp is needed on that path for the same reason.
+      Coverage: tests/test_timestamp.py, mirroring MATLAB's TestTimestamp.
+
 # =========================================================================
 # did.datastructures — Data structure utilities
 # =========================================================================

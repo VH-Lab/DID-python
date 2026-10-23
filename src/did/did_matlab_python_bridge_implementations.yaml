@@ -29,7 +29,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "8bea92c"
+    matlab_last_sync_hash: "da83fa3"
     status: ported
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
@@ -133,6 +133,60 @@ classes:
       new tests, including the acceptance case, the "one fetch shared
       across members" cache guarantee, and the handler-refused failure).
 
+      2026-10-23: synced through DID-matlab decd155 and da83fa3 (PRs #206,
+      #207), the slow-drive SQLITE_READONLY work. MATLAB (1) sets
+      busy_timeout=30000 in open_db, (2) retries a BUSY / READONLY failure in
+      run_sql_noOpen with backoffs 0.1, 0.2, 0.5, 1, 2, 4 s, (3) closes and
+      reopens the connection before each READONLY retry (a poisoned handle,
+      SQLITE_READONLY_DBMOVED, which waiting never clears), and (4) prints
+      filesystem diagnostics to stderr when the retries are exhausted.
+      Ported: _open_db passes timeout=30.0 to sqlite3.connect (the same
+      busy_timeout); do_run_sql_query retries on the same schedule, reopening
+      first for READONLY; _is_retryable_sql_error, _is_readonly_error and
+      _collect_readonly_diagnostics mirror the three new MATLAB helpers; the
+      debug-gated progress messages are printed when self.debug is set.
+      The three helpers are protected in MATLAB and so carry no member
+      entries here. _is_retryable_sql_error and _is_readonly_error are
+      staticmethods (MATLAB's take ~ for the object). The diagnostics run the
+      same four probes -- db file and time, -journal/-wal/-shm siblings with
+      sizes, the file's write permission (os.access for fileattrib's
+      UserWrite), and a temp-file write probe of the directory -- but print
+      the time as ISO-8601 UTC rather than MATLAB's local datestr.
+
+      DEVIATION -- where the retry may run. mksqlite autocommits every
+      statement, so in MATLAB a failed statement is the whole unit of work
+      and re-running it (even after a reopen) is safe. SQLiteDB groups each
+      add/remove/branch operation into one sqlite3 transaction. Rolling back
+      or reopening mid-transaction would silently discard the statements
+      already pending, and a retried tail would then commit a partial
+      operation. So do_run_sql_query retries only when the connection had no
+      uncommitted work before the statement; inside a transaction the error
+      is reported (with diagnostics) and raised at once, and the caller's
+      existing rollback runs.
+
+      DEVIATION -- the commit is retried too. Because Python's writes reach
+      the disk at COMMIT rather than at each statement, that is where a
+      slow-drive failure lands here. Every commit now goes through
+      _commit(), which retries a BUSY / READONLY COMMIT on the same schedule
+      while the transaction is still open. It never reopens -- that would
+      lose the transaction -- so a genuinely poisoned handle (DBMOVED) is not
+      recovered at COMMIT: the error is raised and the operation rolled back.
+      Replaying a whole operation after a reopen would cover that case, but
+      _do_add_doc also copies ingested files, so it is not obviously
+      idempotent; not attempted.
+
+      DEVIATION -- classification. Like MATLAB, BUSY vs READONLY is judged
+      from the error message (sqlite3.Error.sqlite_errorcode would be exact
+      but is 3.11+ only, and this package supports 3.10). Unlike MATLAB, only
+      sqlite3.Error instances qualify, so an unrelated Python exception whose
+      text says "read only" is never retried.
+
+      Not ported: MATLAB's run_sql_noOpen also prints every failing query
+      and its bound values to stderr. That predates these commits, and
+      Python never did it; only the new diagnostics block is printed here.
+      Coverage: tests/test_sqlitedb_transient_errors.py (real lock and
+      read-only-handle failures, with time.sleep replaced).
+
     properties:
       - name: FileDir
         python_name: ~   # not ported
@@ -173,6 +227,10 @@ classes:
           MATLAB: do_run_sql_query(query_str, varargin).
           Python: do_run_sql_query(query_str, params=()).
           Python uses parameterized queries. Synchronized 2026-03-15.
+
+          Carries MATLAB run_sql_noOpen's BUSY / READONLY retry (decd155,
+          da83fa3), restricted to statements run with no transaction open;
+          see the entry-level sync_notes, 2026-10-23.
 
       - name: do_add_doc
         python_name: _do_add_doc
@@ -570,6 +628,10 @@ classes:
           difference by design. Synchronized 2026-03-15. Split out of a
           combined "open_db / close_db" entry 2026-08-28 so each method
           resolves on its own.
+
+          Both set a 30 s busy timeout (decd155): MATLAB with pragma
+          busy_timeout=30000, Python with sqlite3.connect(timeout=30.0),
+          which is the same setting. Python's previous default was 5 s.
 
       - name: close_db
         python_name: _close_db

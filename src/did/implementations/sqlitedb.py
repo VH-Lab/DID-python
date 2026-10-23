@@ -4,7 +4,11 @@ import re as _re
 import shutil
 import sqlite3
 import struct
+import sys
+import tempfile
+import time
 import warnings
+from datetime import datetime, timezone
 
 from ..database import Database
 
@@ -24,6 +28,17 @@ def _sql_escape(value):
     if value is None:
         return ""
     return str(value).replace("'", "''")
+
+
+# How long a statement waits for another connection's lock before SQLite gives
+# up with SQLITE_BUSY ("database is locked"). DID-matlab's open_db sets
+# ``pragma busy_timeout=30000``; sqlite3.connect's ``timeout`` is the same
+# setting, in seconds.
+_BUSY_TIMEOUT = 30.0
+
+# Seconds to wait between attempts at a transient BUSY / READONLY failure --
+# the schedule DID-matlab's run_sql_noOpen uses.
+_RETRY_BACKOFFS = (0.1, 0.2, 0.5, 1, 2, 4)
 
 
 # Escape character used in LIKE patterns (see _sql_like_escape / ESCAPE clauses).
@@ -134,7 +149,10 @@ class SQLiteDB(Database):
             return
 
         is_new = not os.path.exists(self.connection)
-        self.dbid = sqlite3.connect(self.connection)
+        # Wait (rather than fail at once) while another connection holds a
+        # lock: on a slow, networked or removable drive a lock can take a
+        # noticeable time to release. Mirrors DID-matlab's busy_timeout=30000.
+        self.dbid = sqlite3.connect(self.connection, timeout=_BUSY_TIMEOUT)
         self.dbid.execute("PRAGMA foreign_keys = ON")
         self.dbid.row_factory = sqlite3.Row
 
@@ -171,7 +189,7 @@ class SQLiteDB(Database):
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS "doc_data_doc_idx" ON doc_data(doc_idx)'
         )
-        self.dbid.commit()
+        self._commit()
 
     def _close_db(self):
         if self.dbid:
@@ -257,12 +275,221 @@ class SQLiteDB(Database):
         # never re-used -- see _do_add_doc (DID-matlab issue #55).
         self._create_deleted_docs_table(cursor)
 
-        self.dbid.commit()
+        self._commit()
 
     def do_run_sql_query(self, query_str, params=()):
+        """Run one SQL statement and return its rows.
+
+        A transient BUSY / READONLY failure is retried with backoff, as
+        DID-matlab's run_sql_noOpen does -- but only when the connection had
+        no uncommitted work before the statement ran. A retry rolls back, and
+        a READONLY retry reopens the connection; either would silently discard
+        statements earlier in an open transaction, so in that case the error
+        is reported and raised at once for the caller to roll back.
+        """
+        was_idle = not self.dbid.in_transaction
+        try:
+            return self._fetchall(query_str, params)
+        except sqlite3.Error as err:
+            if not (was_idle and self._is_retryable_sql_error(err)):
+                self._report_sql_error(err)
+                raise
+            last_err = err
+
+        # Nothing was pending, and SQLite statements are atomic, so the failed
+        # statement applied nothing: re-running it is safe even for an INSERT.
+        for attempt, backoff in enumerate(_RETRY_BACKOFFS, start=1):
+            reopen_first = self._is_readonly_error(last_err)
+            if self.debug:
+                print(
+                    f"DID:SQLITEDB retryable SQL error (attempt {attempt}/"
+                    f"{len(_RETRY_BACKOFFS)}, {backoff:g} s backoff): "
+                    f"{str(last_err).strip()}\n"
+                    f"{self._collect_readonly_diagnostics()}",
+                    file=sys.stderr,
+                )
+            time.sleep(backoff)
+
+            # A persistent READONLY on a writable file and directory is a
+            # poisoned connection (SQLITE_READONLY_DBMOVED: SQLite believes
+            # the file moved out from under the handle). Waiting never clears
+            # it; reopening does. A plain BUSY needs only the wait, plus a
+            # rollback of the implicit BEGIN so the retry starts afresh.
+            if reopen_first or self.dbid is None:
+                self._reopen_db()
+            elif self.dbid.in_transaction:
+                self.dbid.rollback()
+            if self.dbid is None:
+                continue  # reopen failed; wait and try again
+
+            try:
+                rows = self._fetchall(query_str, params)
+            except sqlite3.Error as err:
+                last_err = err
+            else:
+                if self.debug:
+                    print(
+                        f"DID:SQLITEDB query succeeded on retry attempt "
+                        f"{attempt}/{len(_RETRY_BACKOFFS)}"
+                        + (" (after reopen)" if reopen_first else ""),
+                        file=sys.stderr,
+                    )
+                return rows
+            if not self._is_retryable_sql_error(last_err):
+                break  # a different, non-transient error - stop retrying
+
+        if self.dbid is None:
+            # Leave the object usable for the next call if the path recovers.
+            with contextlib.suppress(Exception):
+                self._open_db()
+        self._report_sql_error(last_err)
+        raise last_err
+
+    def _fetchall(self, query_str, params=()):
         cursor = self.dbid.cursor()
         cursor.execute(query_str, params)
         return cursor.fetchall()
+
+    def _commit(self):
+        """Commit, retrying a transient BUSY / READONLY failure with backoff.
+
+        In DID-matlab every statement autocommits, so the statement retry in
+        run_sql_noOpen covers the write that reaches the disk. Here writes
+        are grouped into a transaction and reach the disk at COMMIT, so the
+        commit is retried too. It is never reopened: that would discard the
+        transaction. If SQLite has already rolled the transaction back there
+        is nothing left to commit, and the error is raised for the caller.
+        """
+        try:
+            self.dbid.commit()
+            return
+        except sqlite3.Error as err:
+            last_err = err
+        if self._is_retryable_sql_error(last_err):
+            for attempt, backoff in enumerate(_RETRY_BACKOFFS, start=1):
+                if not self.dbid.in_transaction:
+                    break
+                if self.debug:
+                    print(
+                        f"DID:SQLITEDB retryable COMMIT error (attempt "
+                        f"{attempt}/{len(_RETRY_BACKOFFS)}, {backoff:g} s "
+                        f"backoff): {str(last_err).strip()}",
+                        file=sys.stderr,
+                    )
+                time.sleep(backoff)
+                try:
+                    self.dbid.commit()
+                    return
+                except sqlite3.Error as err:
+                    last_err = err
+                if not self._is_retryable_sql_error(last_err):
+                    break
+        self._report_sql_error(last_err)
+        raise last_err
+
+    def _reopen_db(self):
+        """Close and reopen the connection, leaving dbid None if that fails."""
+        with contextlib.suppress(Exception):
+            self._close_db()
+        self.dbid = None  # force a real reopen even if close failed
+        try:
+            if self.debug:
+                print(
+                    "DID:SQLITEDB reopening connection before retry "
+                    "(readonly - likely DBMOVED)",
+                    file=sys.stderr,
+                )
+            self._open_db()
+        except (sqlite3.Error, OSError):
+            # Fall through and let the retry (and the final report) run.
+            self.dbid = None
+
+    @staticmethod
+    def _is_retryable_sql_error(err):
+        """Is this a transient SQLite error worth retrying?
+
+        True for SQLITE_BUSY / SQLITE_LOCKED ("database is locked",
+        "database table is locked") and the SQLITE_READONLY family ("attempt
+        to write a readonly database"). On a slow drive READONLY's usual
+        cause is a hot journal awaiting rollback or a transient lock, both of
+        which clear on their own; a permanently read-only file or mount
+        simply exhausts the retries and is raised. Only sqlite3 errors count:
+        a Python exception whose text mentions "read only" is not one.
+        """
+        if not isinstance(err, sqlite3.Error):
+            return False
+        msg = str(err).strip().lower()
+        return SQLiteDB._is_readonly_error(err) or any(
+            phrase in msg
+            for phrase in (
+                "database is locked",
+                "database is busy",
+                "database table is locked",
+            )
+        )
+
+    @staticmethod
+    def _is_readonly_error(err):
+        """Is this the SQLITE_READONLY family specifically?
+
+        Distinguished from BUSY / locked because READONLY on a writable file
+        means the connection is poisoned (typically SQLITE_READONLY_DBMOVED)
+        and must be reopened, not merely waited out.
+        """
+        if not isinstance(err, sqlite3.Error):
+            return False
+        msg = str(err).strip().lower()
+        return any(p in msg for p in ("readonly", "read-only", "read only"))
+
+    def _collect_readonly_diagnostics(self):
+        """Filesystem state behind an "attempt to write a readonly database".
+
+        SQLITE_READONLY has extended causes that need opposite fixes. This
+        tells them apart without relying on the extended result code:
+        a hot rollback journal / WAL beside the database (an interrupted
+        write), a database directory that is no longer writable (a drive
+        remounted read-only), or a read-only database file. Runs only on the
+        error path.
+        """
+        filename = self.connection or ""
+        lines = [
+            f"  db file: {filename}",
+            f"  time   : {datetime.now(timezone.utc).isoformat(timespec='milliseconds')}",
+        ]
+
+        # Hot journal / WAL siblings left next to the database
+        for suffix in ("-journal", "-wal", "-shm"):
+            with contextlib.suppress(OSError):
+                if os.path.isfile(filename + suffix):
+                    size = os.path.getsize(filename + suffix)
+                    lines.append(f"  sibling {suffix} present ({size} bytes)")
+
+        # Is the DB file itself writable?
+        if os.path.exists(filename):
+            lines.append(f"  db file UserWrite={int(os.access(filename, os.W_OK))}")
+
+        # Is the DB directory still writable? Probe by creating a temp file.
+        # This is the key discriminator for a drive that remounted read-only.
+        db_dir = os.path.dirname(filename) or os.getcwd()
+        try:
+            with tempfile.NamedTemporaryFile(dir=db_dir, prefix=".did_write_probe_"):
+                pass
+            lines.append("  db dir writable: yes")
+        except OSError as probe_err:
+            lines.append(f"  db dir writable: NO ({probe_err})")
+
+        return "\n".join(lines)
+
+    def _report_sql_error(self, err):
+        """For a BUSY / READONLY failure that survived the retries, print
+        filesystem state so the cause can be identified (DID-matlab does the
+        same, to stderr)."""
+        if self._is_retryable_sql_error(err):
+            print(
+                "SQLite readonly/busy diagnostics:\n"
+                + self._collect_readonly_diagnostics(),
+                file=sys.stderr,
+            )
 
     # The abstract methods from the Database class will be implemented here.
     # For brevity, I will start with a few key methods.
@@ -299,7 +526,7 @@ class SQLiteDB(Database):
                     (branch_id, doc_idx, time.time()),
                 )
 
-        self.dbid.commit()
+        self._commit()
 
     def _do_get_doc_ids(self, branch_id=None):
         """Document ids on a branch, or -- with no branch -- in the database.
@@ -539,7 +766,7 @@ class SQLiteDB(Database):
                 # 'ignore'/'warn': no-op (do not rewrite content). Commit so any
                 # docs/doc_data rows inserted above for a brand-new doc_id are
                 # persisted, then return.
-                self.dbid.commit()
+                self._commit()
                 return
 
             # Record the document's file locations. MATLAB's do_open_doc
@@ -557,7 +784,7 @@ class SQLiteDB(Database):
                 "INSERT INTO branch_docs (branch_id, doc_idx, timestamp) VALUES (?, ?, ?)",
                 (branch_id, doc_idx, time.time()),
             )
-            self.dbid.commit()
+            self._commit()
         except Exception:
             # Every failure path rolls back so no partial rows survive into the
             # next transaction, and the fields cache is restored to match.
@@ -2320,7 +2547,7 @@ class SQLiteDB(Database):
                         cursor, doc_idx, document_id
                     )
 
-                self.dbid.commit()
+                self._commit()
             except Exception:
                 # As in _do_add_doc: a failure part-way through must not leave
                 # the branch_docs delete sitting in an open transaction for the
@@ -2374,7 +2601,7 @@ class SQLiteDB(Database):
                         self._reclaim_unreferenced_doc(cursor, doc_idx, doc_id)
                     )
 
-            self.dbid.commit()
+            self._commit()
         except Exception:
             self.dbid.rollback()
             raise
