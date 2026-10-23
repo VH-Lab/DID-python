@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import struct
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -247,8 +248,17 @@ def parse_lock_expiration(text):
     )
 
 
-def checkout_lock_file(filename, check_loops=30, throw_error=True, expiration=3600):
+def checkout_lock_file(
+    filename, check_loops=30, throw_error=True, expiration=3600, max_poll_interval=None
+):
     """Try to establish control of the lock file named ``filename``.
+
+    While another holder has it, wait up to ``check_loops`` seconds,
+    looking again once a second. A caller whose lock is only ever held
+    briefly can pass ``max_poll_interval`` (seconds): the first look again
+    is then after 5 ms, backing off to at most that interval, so a lock
+    held for milliseconds is handed on almost at once. The file cache's
+    index lock passes 0.1; other callers keep the one-second checks.
 
     ``filename`` is the lock file itself, not the file being protected --
     the same contract as MATLAB's did.file.checkout_lock_file, whose own
@@ -260,7 +270,15 @@ def checkout_lock_file(filename, check_loops=30, throw_error=True, expiration=36
     key = f"{_utcnow().isoformat()}_{uuid.uuid4()}"
     lock_filename = filename
 
-    for _ in range(check_loops):
+    deadline = time.monotonic() + check_loops
+    if max_poll_interval is None:
+        delay = max_delay = 1.0
+    else:
+        max_delay = max(float(max_poll_interval), 0.001)
+        delay = min(0.005, max_delay)
+    first = True
+    while first or time.monotonic() < deadline:
+        first = False
         try:
             # Not a context manager: the handle is returned to the caller,
             # which holds the lock until release_lock_file().
@@ -288,7 +306,8 @@ def checkout_lock_file(filename, check_loops=30, throw_error=True, expiration=36
             except (OSError, ValueError):
                 # Could not read lock file or parse time, wait and retry
                 pass
-            time.sleep(1)
+            time.sleep(delay)
+            delay = min(delay * 2, max_delay)
 
     if throw_error:
         raise OSError(f"Unable to obtain lock with file {filename}.")
@@ -370,6 +389,13 @@ class BinaryTable:
         self.elements_per_column = [int(n) for n in elements_per_column]
         self.header_size = int(header_size)
         self.has_lock = False
+        # The lock file serialises processes; this serialises the threads of
+        # one process. has_lock alone cannot: it is one flag on a shared
+        # object (FileCache is a process-wide singleton), so while one
+        # thread held the lock every other thread saw has_lock True, took
+        # the "already held" path, and changed the table unlocked.
+        self._thread_lock = threading.Lock()
+        self._lock_owner = None
         self.file.set_properties(machineformat="l")  # always little-endian
 
         if not self.file.fullpathfilename:
@@ -548,16 +574,44 @@ class BinaryTable:
         held, which is what makes ``release_lock`` a no-op for the nested
         call and leaves the outermost caller owning the lock.
         """
-        if not self.has_lock:
-            lock_fid, key = checkout_lock_file(self.lock_file_name())
-            self.has_lock = True
-            return lock_fid, key
-        return None, None
+        me = threading.get_ident()
+        if self.has_lock and self._lock_owner == me:
+            return None, None
+        self._thread_lock.acquire()
+        try:
+            # Expire after 20 s, as MATLAB's binaryTable/getLock does. A
+            # table operation takes milliseconds; the expiry only matters
+            # when a holder dies with the lock (a viewer quit while a
+            # daemon thread was adding to the cache), and the default hour
+            # locked every other process out of the cache for that long.
+            # For the same reason a waiter looks again often (at most every
+            # 0.1 s), not once a second.
+            lock_fid, key = checkout_lock_file(
+                self.lock_file_name(),
+                check_loops=30,
+                expiration=20,
+                max_poll_interval=0.1,
+            )
+        except BaseException:
+            self._thread_lock.release()
+            raise
+        self.has_lock = True
+        self._lock_owner = me
+        return lock_fid, key
 
     def release_lock(self, lock_fid, key):
         if key:
-            release_lock_file(self.lock_file_name(), key)
+            try:
+                release_lock_file(self.lock_file_name(), key)
+            finally:
+                self._release_thread_lock()
+
+    def _release_thread_lock(self):
+        """Drop this thread's hold on the table, if it has one."""
+        if self.has_lock and self._lock_owner == threading.get_ident():
             self.has_lock = False
+            self._lock_owner = None
+            self._thread_lock.release()
 
     def reset_lock_state(self):
         """Force ``has_lock`` back to False without touching the disk lock.
@@ -570,10 +624,16 @@ class BinaryTable:
         it, is left alone; the next :meth:`get_lock` re-enters
         :func:`checkout_lock_file` and resolves real contention normally.
 
+        Only the thread that holds the table can reset it: a hold another
+        thread has is a real one, not a stuck flag, and is left alone.
+
         Mirrors MATLAB ``binaryTable/resetLockState`` (DID-matlab 4a0f9a5).
         See DID-python#66.
         """
-        self.has_lock = False
+        if self._lock_owner is None:
+            self.has_lock = False
+        else:
+            self._release_thread_lock()
 
     def lock_file_name(self):
         # "-lock", not ".lock": this is the name MATLAB's binaryTable checks
@@ -780,11 +840,16 @@ class BinaryTable:
         lock_fid, key = (None, None) if is_recurrent else self.get_lock()
         try:
             if not sorted:
+                # One read of the whole column, not one open per row: the
+                # file cache's index holds a row per cached file, and a
+                # lookup that reopened it per row took seconds at tens of
+                # thousands of files.
                 r, _, _ = self.get_size()
-                for i in range(1, r + 1):
-                    if self.read_row(i, col) == value:
-                        row = i
-                        break
+                if r:
+                    for i, here in enumerate(self.read_row(None, col), start=1):
+                        if here == value:
+                            row = i
+                            break
                 return row, would_be
 
             r_total, _, _ = self.get_size()
@@ -1044,8 +1109,14 @@ class FileCache:
     # -- contents ---------------------------------------------------------
 
     def is_file(self, file_name_in_cache):
-        """Is a file with this name in the cache?"""
-        row, _ = self._table().find_row(1, file_name_in_cache)
+        """Is a file with this name in the cache?
+
+        A binary search: the index is kept sorted by name (resize_and_add
+        inserts in order and rewrites it in order), and a linear scan here,
+        once per file fetched, grew with the size of the cache. MATLAB's
+        isFile still scans.
+        """
+        row, _ = self._table().find_row(1, file_name_in_cache, sorted=True)
         return row > 0
 
     def file_list(self, use_catalog=True):
@@ -1112,7 +1183,7 @@ class FileCache:
         lock_fid, key = table.get_lock()
         try:
             destination = self.full_path(file_name_in_cache)
-            row, _ = table.find_row(1, file_name_in_cache)
+            row, _ = table.find_row(1, file_name_in_cache, sorted=True)
             if row:
                 if os.path.isfile(destination):
                     raise ValueError(
@@ -1213,7 +1284,7 @@ class FileCache:
         table = self._table()
         lock_fid, key = table.get_lock()
         try:
-            row, _ = table.find_row(1, file_name)
+            row, _ = table.find_row(1, file_name, sorted=True)
             if not row:
                 return False
             table.write_entry(row, 2, datenum())
