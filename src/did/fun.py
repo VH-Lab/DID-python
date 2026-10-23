@@ -1,4 +1,35 @@
+import re
+from datetime import datetime, timezone
+
 import networkx as nx
+
+# A leap-second seconds field (':60' with an optional fraction), kept with its
+# 'T HH:MM:' prefix so the date portion is never touched.
+_LEAP_SECOND = re.compile(r"(T\d{2}:\d{2}:)60(\.\d+)?")
+
+
+def timestamp(raw=None):
+    """
+    A current UTC timestamp string that is safe for DID schema validation.
+
+    Returns the current time in the ISO-8601 form used throughout DID,
+    ``'2026-09-18T21:37:45.123Z'``. ``timestamp(raw)`` sanitizes the given
+    string instead of the current time, which is mainly useful for testing.
+
+    A leap second (``':60'``, with or without a fraction) is clamped back to
+    ``':59.999'``: the schema validator parses timestamps the way MATLAB's
+    ``java.time.LocalDateTime.parse`` does, which rejects any seconds value
+    above 59. Python's ``datetime`` never renders a leap second itself, so on
+    the default path the clamp is a guard rather than a fix; it matters for
+    strings that came from MATLAB's ``UTCLeapSeconds`` clock.
+
+    This function mimics the behavior of the Matlab `did.fun.timestamp`
+    function (DID-matlab issue #53).
+    """
+    if raw is None:
+        now = datetime.now(timezone.utc)
+        raw = now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    return _LEAP_SECOND.sub(r"\g<1>59.999", raw)
 
 
 def docs_to_graph(document_objs):

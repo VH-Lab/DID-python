@@ -939,7 +939,7 @@ classes:
   - name: document
     type: class
     matlab_path: "+did/document.m"
-    matlab_last_sync_hash: "c95b4f2"
+    matlab_last_sync_hash: "bb29861"
     status: ported
     python_path: "did/document.py"
     python_class: "Document"
@@ -1413,6 +1413,17 @@ classes:
       for is_in_file_list and the constructor already describe the alignment.
       Both languages now accept NAME_<i> as a numbered entry only when <i>
       is a non-negative integer.
+
+      Sync hash bumped to bb29861 on 2026-10-23. That commit replaced the
+      constructor's inline char(datetime('now','TimeZone','UTCLeapSeconds'))
+      with did.fun.timestamp(), which clamps a ':60' leap second to
+      ':59.999' (DID-matlab issue #53). Ported the same way: Document.__init__
+      now stamps base.datestamp with did.fun.timestamp() (see the timestamp
+      entry in did_matlab_python_bridge_util.yaml). The module-private
+      document._utc_timestamp it replaces had its own clamp, a plain
+      ':60.' -> ':59.999' substitution that would have turned ':60.123' into
+      ':59.999123'; it is removed rather than kept beside the port.
+      Coverage: tests/test_timestamp.py.
 
   # -----------------------------------------------------------------------
   # did.query
