@@ -248,8 +248,17 @@ def parse_lock_expiration(text):
     )
 
 
-def checkout_lock_file(filename, check_loops=30, throw_error=True, expiration=3600):
+def checkout_lock_file(
+    filename, check_loops=30, throw_error=True, expiration=3600, max_poll_interval=None
+):
     """Try to establish control of the lock file named ``filename``.
+
+    While another holder has it, wait up to ``check_loops`` seconds,
+    looking again once a second. A caller whose lock is only ever held
+    briefly can pass ``max_poll_interval`` (seconds): the first look again
+    is then after 5 ms, backing off to at most that interval, so a lock
+    held for milliseconds is handed on almost at once. The file cache's
+    index lock passes 0.1; other callers keep the one-second checks.
 
     ``filename`` is the lock file itself, not the file being protected --
     the same contract as MATLAB's did.file.checkout_lock_file, whose own
@@ -261,13 +270,12 @@ def checkout_lock_file(filename, check_loops=30, throw_error=True, expiration=36
     key = f"{_utcnow().isoformat()}_{uuid.uuid4()}"
     lock_filename = filename
 
-    # Wait up to ``check_loops`` seconds in all, as before, but look again
-    # much sooner than once a second. A lock is usually held for a few
-    # milliseconds (one index update), so a one-second nap made every
-    # waiter lose a second per collision, and many waiters lose many.
-    # MATLAB still polls once a second (pause(1)); the bound is the same.
     deadline = time.monotonic() + check_loops
-    delay = 0.005
+    if max_poll_interval is None:
+        delay = max_delay = 1.0
+    else:
+        max_delay = max(float(max_poll_interval), 0.001)
+        delay = min(0.005, max_delay)
     first = True
     while first or time.monotonic() < deadline:
         first = False
@@ -299,7 +307,7 @@ def checkout_lock_file(filename, check_loops=30, throw_error=True, expiration=36
                 # Could not read lock file or parse time, wait and retry
                 pass
             time.sleep(delay)
-            delay = min(delay * 2, 0.25)
+            delay = min(delay * 2, max_delay)
 
     if throw_error:
         raise OSError(f"Unable to obtain lock with file {filename}.")
@@ -576,8 +584,13 @@ class BinaryTable:
             # when a holder dies with the lock (a viewer quit while a
             # daemon thread was adding to the cache), and the default hour
             # locked every other process out of the cache for that long.
+            # For the same reason a waiter looks again often (at most every
+            # 0.1 s), not once a second.
             lock_fid, key = checkout_lock_file(
-                self.lock_file_name(), check_loops=30, expiration=20
+                self.lock_file_name(),
+                check_loops=30,
+                expiration=20,
+                max_poll_interval=0.1,
             )
         except BaseException:
             self._thread_lock.release()

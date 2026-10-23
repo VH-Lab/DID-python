@@ -516,3 +516,43 @@ class TestALockLeftByADeadHolderExpires:
         finally:
             table.release_lock(fid, key)
         assert not os.path.exists(table.lock_file_name())
+
+
+class TestHowOftenAWaiterLooksAgain:
+    """Fast polling is opt-in: the cache asks for it, other callers do not."""
+
+    def _hold_then_release(self, lock_file, after):
+        import threading
+
+        from did.file import checkout_lock_file, release_lock_file
+
+        _fid, key = checkout_lock_file(lock_file)
+        threading.Timer(after, release_lock_file, (lock_file, key)).start()
+
+    def test_a_caller_that_asks_is_handed_a_brief_lock_quickly(self, tmp_path):
+        import time
+
+        from did.file import checkout_lock_file, release_lock_file
+
+        lock_file = str(tmp_path / "thing-lock")
+        self._hold_then_release(lock_file, 0.05)
+        t0 = time.monotonic()
+        _fid, key = checkout_lock_file(lock_file, check_loops=5, max_poll_interval=0.1)
+        waited = time.monotonic() - t0
+        release_lock_file(lock_file, key)
+        assert waited < 0.5
+
+    def test_by_default_a_waiter_still_looks_once_a_second(self, tmp_path):
+        # Locks held for a long time (a database adding thousands of
+        # documents) keep the old cadence unless their caller says otherwise.
+        import time
+
+        from did.file import checkout_lock_file, release_lock_file
+
+        lock_file = str(tmp_path / "thing-lock")
+        self._hold_then_release(lock_file, 0.05)
+        t0 = time.monotonic()
+        _fid, key = checkout_lock_file(lock_file, check_loops=5)
+        waited = time.monotonic() - t0
+        release_lock_file(lock_file, key)
+        assert 0.9 <= waited < 2.0

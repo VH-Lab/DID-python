@@ -797,11 +797,14 @@ functions:
       see the parse_lock_expiration entry below. Both write the expiry as ISO
       8601 and both read either format.
 
-      2026-10-23, ahead of MATLAB until DID-matlab#221 merges: a waiter
-      checks again after 5 ms and backs off to 0.25 s, within check_loops
-      seconds in all, instead of sleeping a whole second per check. A
-      cache-index update holds the lock for milliseconds, so each collision
-      cost each waiter a second.
+      2026-10-23, ahead of MATLAB until DID-matlab#221 merges: an optional
+      max_poll_interval (MATLAB: a fifth argument, maxPollInterval). Given,
+      a waiter looks again after 5 ms and backs off to at most that
+      interval, within check_loops seconds in all; omitted, it looks once a
+      second as before. BinaryTable.get_lock passes 0.1: a cache-index
+      update holds the lock for milliseconds, so a one-second check cost
+      each waiter a second per collision. Callers holding locks for long
+      operations keep the old cadence.
 
   - name: lock_file_key
     type: function
