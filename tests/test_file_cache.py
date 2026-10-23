@@ -388,3 +388,108 @@ class TestBinaryTableResetLockState:
 
             if key:
                 release_lock_file(table.lock_file_name(), key)
+
+
+class TestManyThreadsOneCache:
+    """get_cache() is one object per process, so threads share its table.
+
+    A worker pool fetching files into the cache adds from many threads at
+    once. The in-memory has_lock flag was one per object, so while one
+    thread held the lock every other thread took the "already held" path
+    and rewrote the index unlocked: rows went missing.
+    """
+
+    def test_concurrent_adds_all_land_in_the_index(self, cache, tmp_path):
+        import threading
+
+        n = 24
+        sources = [make_source(tmp_path, i, 10) for i in range(n)]
+        start = threading.Barrier(n)
+        errors = []
+
+        def add(i):
+            try:
+                start.wait()
+                cache.add_file(sources[i], name_of(i))
+            except Exception as exc:  # noqa: BLE001 - reported below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=add, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == []
+        names, _sizes, _ = cache.file_list()
+        assert sorted(names) == [name_of(i) for i in range(n)]
+        assert names == sorted(names)  # the index stays sorted
+        assert cache.get_properties()["currentSize"] == 10 * n
+        assert all(cache.is_file(name_of(i)) for i in range(n))
+        assert cache._table().has_lock is False
+
+    def test_a_held_lock_is_handed_on_quickly(self, cache):
+        # A waiter used to sleep a whole second between tries; a lock held
+        # for a few milliseconds cost every waiter a second.
+        import threading
+        import time
+
+        table = cache._table()
+        held = threading.Event()
+
+        def hold_briefly():
+            fid, key = table.get_lock()
+            held.set()
+            time.sleep(0.05)
+            table.release_lock(fid, key)
+
+        t = threading.Thread(target=hold_briefly)
+        t.start()
+        held.wait()
+        t0 = time.monotonic()
+        fid, key = table.get_lock()
+        waited = time.monotonic() - t0
+        table.release_lock(fid, key)
+        t.join()
+        assert waited < 0.5
+
+    def test_another_processes_lock_is_waited_for_not_slept_on(self, cache):
+        # Contention between processes goes through the lock file alone.
+        import threading
+        import time
+
+        from did.file import checkout_lock_file, release_lock_file
+
+        table = cache._table()
+        _fid, key = checkout_lock_file(table.lock_file_name())
+        threading.Timer(0.05, release_lock_file, (table.lock_file_name(), key)).start()
+        t0 = time.monotonic()
+        fid, key2 = table.get_lock()
+        waited = time.monotonic() - t0
+        table.release_lock(fid, key2)
+        assert waited < 0.5
+
+
+class TestLookupsAreSearches:
+    def test_is_file_finds_every_member_and_nothing_else(self, cache, tmp_path):
+        for i in (5, 1, 9, 3, 7):
+            cache.add_file(make_source(tmp_path, i, 10), name_of(i))
+        for i in range(11):
+            assert cache.is_file(name_of(i)) is (i in (1, 3, 5, 7, 9))
+
+    def test_an_unsorted_find_reads_the_index_once(self, cache, tmp_path, monkeypatch):
+        for i in (2, 4, 6):
+            cache.add_file(make_source(tmp_path, i, 10), name_of(i))
+        table = cache._table()
+        opens = []
+        real_open = open
+
+        def counting_open(path, *a, **k):
+            if str(path) == table.file.fullpathfilename:
+                opens.append(path)
+            return real_open(path, *a, **k)
+
+        monkeypatch.setattr("builtins.open", counting_open)
+        row, _ = table.find_row(1, name_of(6))
+        assert row == 3
+        assert len(opens) == 1

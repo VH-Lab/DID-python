@@ -399,9 +399,21 @@ classes:
           key and the matching release is a no-op, so the outermost caller
           owns the lock.
 
+          PYTHON-ONLY ADDITION (2026-10-23): a per-table threading.Lock, held
+          from get_lock to the outermost release_lock, and has_lock counts as
+          held only for the thread that took it. The cache from get_cache()
+          is one object per process, and has_lock was one flag on it: while
+          one thread held the lock, every other thread took the "already
+          held" path and rewrote the index unlocked (an NDI viewer adding
+          from a pool of download threads lost index rows). MATLAB runs one
+          thread and has nothing to follow; reset_lock_state likewise only
+          clears a hold of the calling thread's.
+
       - name: releaseLock
         python_name: release_lock
-        decision_log: "Exact match."
+        decision_log: >
+          Exact match, plus releasing the per-thread hold get_lock takes
+          (Python only; see getLock).
 
       - name: lockFileName
         python_name: lock_file_name
@@ -495,6 +507,10 @@ classes:
           bounds arithmetic and the lastmove condition follow MATLAB's, so the
           two agree on where a missing value belongs and not merely on whether
           it is present.
+
+          2026-10-23: the unsorted path reads the column once instead of
+          reopening the file per row. Same result; matched by DID-matlab#221
+          (pending).
 
     decision_log: >
       SYNCHRONIZED 2026-08-29. Previously a partial port: read_row returned
@@ -654,7 +670,8 @@ classes:
           Ported 2026-08-29. Both move the file in by default and copy on
           request (MATLAB 'copy',true; Python copy=True), both refuse a name
           whose length is not fileNameCharacters, and both refuse a name
-          already in the cache.
+          already in the cache. 2026-10-23: its lookup is a binary search,
+          as isFile; DID-matlab#221 pending.
 
       - name: removeFile
         python_name: remove_file
@@ -670,7 +687,11 @@ classes:
 
       - name: isFile
         python_name: is_file
-        decision_log: "Ported 2026-08-29. Both search the index by name."
+        decision_log: >
+          Ported 2026-08-29. Both search the index by name. 2026-10-23: a
+          binary search (sorted=True), since the index is kept sorted and a
+          scan grew with the cache; ahead of MATLAB until DID-matlab#221
+          (the same change) merges.
 
       - name: fileList
         python_name: file_list
@@ -700,7 +721,8 @@ classes:
         python_name: touch
         decision_log: >
           Ported 2026-08-29. Both update the last-access time and report
-          whether the name was in the index.
+          whether the name was in the index. 2026-10-23: binary search, as
+          isFile; DID-matlab#221 pending.
 
       - name: infoFileName
         python_name: _info_file_name
@@ -767,6 +789,12 @@ functions:
       The contents had to be aligned too, and that is tracked separately --
       see the parse_lock_expiration entry below. Both write the expiry as ISO
       8601 and both read either format.
+
+      2026-10-23, ahead of MATLAB until DID-matlab#221 merges: a waiter
+      checks again after 5 ms and backs off to 0.25 s, within check_loops
+      seconds in all, instead of sleeping a whole second per check. A
+      cache-index update holds the lock for milliseconds, so each collision
+      cost each waiter a second.
 
   - name: lock_file_key
     type: function
