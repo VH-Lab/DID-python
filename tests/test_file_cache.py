@@ -493,3 +493,26 @@ class TestLookupsAreSearches:
         row, _ = table.find_row(1, name_of(6))
         assert row == 3
         assert len(opens) == 1
+
+
+class TestALockLeftByADeadHolderExpires:
+    def test_the_table_lock_expires_in_seconds_like_matlabs(self, cache):
+        # MATLAB's binaryTable/getLock asks for a 20 s expiry. A holder
+        # killed mid-update (a daemon thread at interpreter exit) must not
+        # lock every other process out of the cache for an hour.
+        import datetime as _dt
+
+        from did.file import parse_lock_expiration
+
+        table = cache._table()
+        fid, key = table.get_lock()
+        try:
+            with open(table.lock_file_name()) as f:
+                expires = parse_lock_expiration(f.readline())
+            now = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
+            if expires.tzinfo is not None:
+                expires = expires.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+            assert 0 < (expires - now).total_seconds() <= 21
+        finally:
+            table.release_lock(fid, key)
+        assert not os.path.exists(table.lock_file_name())

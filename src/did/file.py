@@ -571,7 +571,14 @@ class BinaryTable:
             return None, None
         self._thread_lock.acquire()
         try:
-            lock_fid, key = checkout_lock_file(self.lock_file_name())
+            # Expire after 20 s, as MATLAB's binaryTable/getLock does. A
+            # table operation takes milliseconds; the expiry only matters
+            # when a holder dies with the lock (a viewer quit while a
+            # daemon thread was adding to the cache), and the default hour
+            # locked every other process out of the cache for that long.
+            lock_fid, key = checkout_lock_file(
+                self.lock_file_name(), check_loops=30, expiration=20
+            )
         except BaseException:
             self._thread_lock.release()
             raise
