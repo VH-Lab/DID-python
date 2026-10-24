@@ -151,6 +151,15 @@ class TestHasMemberQuoting(unittest.TestCase):
         self.verify_search(_has_member("demoA.value", "3"), [], "'3' in 3")
         self.verify_search(_has_member("demoA.value", 3), [self.ids[2]], "3 in 3")
 
+    def test_numbers_no_value_holds(self):
+        # DID-matlab writes Inf as 9e999 and makes NaN a member of nothing
+        for member in (float("inf"), float("-inf"), float("nan")):
+            with self.subTest(member=member):
+                q = _has_member("demoA.value", member)
+                self.verify_search(q, [], f"hasmember {member}")
+                q = _has_member("demoA.value", member, True)
+                self.verify_search(q, self.ids, f"~hasmember {member}")
+
     def test_struct_field(self):
         # A struct (base) has no members: its fields are not searched
         self.verify_search(_has_member("base", "value"), [], "'value' in base")
