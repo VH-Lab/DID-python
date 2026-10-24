@@ -37,6 +37,14 @@ classes:
     inherits_python: "Database"
     out_of_sync: false
     decision_log: >
+      Core database operations are synchronized. MATLAB recently changed
+      URL download mechanism (websave -> ndi.cloud.api.files.getFile) which
+      is MATLAB-ecosystem-specific; Python has no URL download path to
+      mirror. The 2026-06-12 SQL-injection hardening (14439fb) was authored
+      in lockstep with the Python parameterization/_sql_escape work already
+      present here. Last full sync: 2026-03-15; drift re-checked 2026-08-28
+      against MATLAB 14439fb.
+
       DID-matlab#229 (dae960b..83a2bda, 2026-10-24): fast id and isa searches,
       ported to SQLiteDB (_search_doc_ids, _search_query_head,
       _search_base_ids, _query_struct_to_sql_str, _ensure_indexes). MATLAB
@@ -825,15 +833,6 @@ classes:
           with os.path.commonpath and returns False when the paths are on
           different drives; MATLAB uses a prefix match with a trailing
           separator.
-
-    decision_log: >
-      Core database operations are synchronized. MATLAB recently changed
-      URL download mechanism (websave -> ndi.cloud.api.files.getFile) which
-      is MATLAB-ecosystem-specific; Python has no URL download path to
-      mirror. The 2026-06-12 SQL-injection hardening (14439fb) was authored
-      in lockstep with the Python parameterization/_sql_escape work already
-      present here. Last full sync: 2026-03-15; drift re-checked 2026-08-28
-      against MATLAB 14439fb.
 
   # -----------------------------------------------------------------------
   # did.implementations.doc2sql  (function module)

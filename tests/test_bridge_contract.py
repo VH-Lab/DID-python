@@ -209,6 +209,68 @@ class TestTheDuplicateGuardWouldActuallyCatchOne:
         )
 
 
+def duplicated_keys(text: str) -> list[str]:
+    """Mapping keys written twice in one mapping of a YAML document.
+
+    Returns a description per offending mapping (line and keys); empty when
+    clean.
+    """
+    found: list[str] = []
+
+    class _Loader(yaml.SafeLoader):
+        pass
+
+    def construct_mapping(loader, node, deep=False):
+        keys = [loader.construct_object(k, deep=deep) for k, _ in node.value]
+        twice = sorted({str(k) for k in keys if keys.count(k) > 1})
+        if twice:
+            found.append(f"line {node.start_mark.line + 1}: {', '.join(twice)}")
+        return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+    _Loader.add_constructor(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_mapping
+    )
+    yaml.load(text, Loader=_Loader)  # a SafeLoader subclass
+    return found
+
+
+class TestNoEntryWritesAKeyTwice:
+    """A bridge entry gets ONE of each key.
+
+    YAML keeps the last of two equal keys and drops the first without a word,
+    so a second `decision_log:` added to an entry hid every note in the first.
+    The database, sqlitedb and binaryTable entries each had one, and the notes
+    they hid were the record of DID-matlab#229, #233 and #235 being ported --
+    present in the file, in review, and in no parsed entry. Nothing else
+    notices: every check reads the parsed YAML, which has no trace of the lost
+    block.
+    """
+
+    def test_no_bridge_file_repeats_a_key(self):
+        offenders = [
+            f"{source.name} {where}"
+            for source in BRIDGE_FILES
+            for where in duplicated_keys(source.read_text(encoding="utf-8"))
+        ]
+        assert not offenders, (
+            "these mappings write a key twice, so the first is silently "
+            "dropped:\n  " + "\n  ".join(offenders) + "\n\nMerge the two "
+            "values into one key."
+        )
+
+    def test_the_guard_would_catch_one(self):
+        text = (
+            "classes:\n"
+            "  - name: alpha\n"
+            "    decision_log: first\n"
+            "    status: ported\n"
+            "    decision_log: second\n"
+        )
+        offenders = duplicated_keys(text)
+        assert len(offenders) == 1 and "decision_log" in offenders[0]
+        assert duplicated_keys("classes:\n  - name: a\n  - name: b\n") == []
+
+
 # ---------------------------------------------------------------------------
 # The status vocabulary, and the documentation of it
 # ---------------------------------------------------------------------------
