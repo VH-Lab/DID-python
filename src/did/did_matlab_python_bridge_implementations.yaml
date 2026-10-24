@@ -59,6 +59,17 @@ classes:
       index before building it (with the approximate doc_data row count),
       reports the time it took, and reports a build that failed; ported to
       _ensure_indexes, which prints the same lines to stderr.
+      Two Python-only differences, 2026-10-24 (issue #101): (1) a resolved
+      depends_on (hasanysubfield_exact_string on depends_on) is matched in SQL
+      against meta.depends_on with an anchored, case-sensitive instr()
+      (';name,value;', or ',value;' for '*'), where it used to brute-force
+      every document of the branch. MATLAB's own depends_on SQL is LIKE
+      '%name,value;%', which is case-insensitive and unanchored ('id,X;' also
+      matches 'subject_id,X;'); Python follows brute force's exact semantics
+      instead, and keeps brute force for an empty name/value or one containing
+      ',' or ';'. (2) _ensure_indexes builds the indexes without announcing
+      them when doc_data is empty -- every new Python database, since
+      _create_db_tables does not create them; MATLAB's create_db_tables does.
     sync_notes: >
       MATLAB 14439fb (2026-06-12, audit 6.1-3) added a private
       escapeSqlLiteral() helper and applied it at the 14 sites where

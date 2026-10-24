@@ -239,6 +239,68 @@ def _base_id_lookup_values(search_struct):
     return True, found
 
 
+def _depends_on_sql_clause(name, value):
+    """The SQL for "a depends_on entry has this name (or any, '*') and value".
+
+    doc2sql stores a document's dependencies in ``meta.depends_on`` as
+    ``name1,value1;name2,value2;`` -- one ``name,value;`` per entry whose name
+    and value are both non-empty. So "an entry has name N and value V" is "the
+    string, with a ';' put in front, contains ';N,V;'", and "an entry has
+    value V" is "it contains ',V;'". ``instr`` is a plain, case-sensitive
+    substring test, as brute force's ``==`` is; MATLAB's ``LIKE
+    '%name,value;%'`` is neither anchored (``id,X;`` would also match
+    ``subject_id,X;``) nor case-sensitive.
+
+    That reading is exact only when the query's name and value are non-empty
+    and contain no ',' or ';' -- the separators. Anything else returns None,
+    and the caller brute-forces it. (It also assumes the stored names and
+    values are strings without separators, which document ids and schema
+    field names are.)
+    """
+    if not isinstance(value, str) or not value or any(c in value for c in ",;"):
+        return None
+    if name == "*":
+        pattern = f",{value};"
+        haystack = "doc_data.value"
+    else:
+        if not isinstance(name, str) or not name or any(c in name for c in ",;"):
+            return None
+        pattern = f";{name},{value};"
+        haystack = "';' || doc_data.value"
+    return (
+        "fields.field_name = 'meta.depends_on' AND "
+        f"instr({haystack}, '{_sql_escape(pattern)}') > 0"
+    )
+
+
+def _depends_on_lookup(search_struct):
+    """(name, value) if a search structure is a resolved depends_on, else None.
+
+    Query resolves ``depends_on(name, value)`` into ``hasanysubfield_exact_string``
+    on the ``depends_on`` field with param1 ``["name", "value"]`` and param2
+    ``[name, value]`` -- or param1 ``["value"]`` for the ``'*'`` name.
+    """
+    if not isinstance(search_struct, dict):
+        return None
+    op = str(search_struct.get("operation") or "").lstrip("~").strip().lower()
+    if (
+        op != "hasanysubfield_exact_string"
+        or search_struct.get("field") != "depends_on"
+    ):
+        return None
+    keys, values = search_struct.get("param1"), search_struct.get("param2")
+    if not isinstance(keys, list) or not isinstance(values, list):
+        return None
+    if len(keys) != len(values) or len(set(keys)) != len(keys):
+        return None
+    wanted = dict(zip(keys, values))
+    if set(wanted) == {"name", "value"}:
+        return wanted["name"], wanted["value"]
+    if set(wanted) == {"value"}:
+        return "*", wanted["value"]
+    return None
+
+
 def _search_rank(item):
     """Where a term of an AND is searched -- see SQLiteDB._search_doc_ids."""
     if _base_id_lookup_values(item)[0]:
@@ -246,6 +308,10 @@ def _search_rank(item):
     if not isinstance(item, dict):
         return 2
     op = str(item.get("operation") or "").lstrip("~").strip().lower()
+    lookup = _depends_on_lookup(item)
+    if lookup is not None and _depends_on_sql_clause(*lookup) is not None:
+        # One row per document, tested in SQL: cheap, and usually selective
+        return 2
     if op in _SCAN_OPERATIONS:
         return 4
     if item.get("field") == "base.session_id":
@@ -420,12 +486,18 @@ class SQLiteDB(Database):
                 ).fetchone()[0]
             except sqlite3.Error:
                 num_rows = None
-            print(
-                f"DID: adding search index {name} to {self.connection} "
-                f"(about {num_rows or 0:,} rows). This happens once per database "
-                "and can take several minutes for a large one...",
-                file=sys.stderr,
-            )
+            # An empty table builds instantly and is not worth a word. That is
+            # every new database: _create_db_tables makes the tables and this
+            # then adds the indexes -- where DID-matlab's create_db_tables
+            # makes both, so it never gets here.
+            announce = bool(num_rows)
+            if announce:
+                print(
+                    f"DID: adding search index {name} to {self.connection} "
+                    f"(about {num_rows:,} rows). This happens once per database "
+                    "and can take several minutes for a large one...",
+                    file=sys.stderr,
+                )
             started = time.perf_counter()
             try:
                 self.dbid.execute(
@@ -441,11 +513,12 @@ class SQLiteDB(Database):
                     file=sys.stderr,
                 )
                 return
-            print(
-                f"DID: added search index {name} in "
-                f"{time.perf_counter() - started:.1f} s.",
-                file=sys.stderr,
-            )
+            if announce:
+                print(
+                    f"DID: added search index {name} in "
+                    f"{time.perf_counter() - started:.1f} s.",
+                    file=sys.stderr,
+                )
         self._search_indexes_ready = True
 
     def _close_db(self):
@@ -1862,31 +1935,19 @@ class SQLiteDB(Database):
             )
 
         elif op_lower == "depends_on":
-            # depends_on: search meta.depends_on using LIKE '%name,value;%'.
-            # NOTE: this branch is currently unreachable — Query._resolve_single
-            # rewrites every 'depends_on' into 'hasanysubfield_exact_string'
-            # before it reaches here, so depends_on always brute-forces. The
-            # LIKE-wildcard escaping below is applied defensively so that if the
-            # resolution is ever changed to let this branch run, '_'/'%' in the
-            # dependency name/value can't silently act as wildcards. The ','/';'
-            # delimiters and the bracketing '%' are the real pattern structure
-            # and stay unescaped.
-            name = _sql_escape(_sql_like_escape(param1))
-            value = _sql_escape(_sql_like_escape(param2))
-            if param1 == "*":
-                return (
-                    "fields.field_name = 'meta.depends_on' AND doc_data.value "
-                    f"LIKE '%,{value};%' ESCAPE '{_LIKE_ESCAPE_CHAR}'"
-                )
-            return (
-                "fields.field_name = 'meta.depends_on' AND doc_data.value "
-                f"LIKE '%{name},{value};%' ESCAPE '{_LIKE_ESCAPE_CHAR}'"
-            )
+            # Unreachable in practice: Query._resolve_single rewrites every
+            # 'depends_on' into 'hasanysubfield_exact_string' (below) before it
+            # gets here. Kept on the same exact matcher so the two cannot
+            # disagree if that ever changes.
+            return _depends_on_sql_clause(param1, param2)
 
         elif op_lower == "hasanysubfield_exact_string":
-            # unreachable — see Query._resolve_single (resolved depends_on);
-            # falls back to brute force
-            return None
+            # A resolved depends_on is matched in SQL against meta.depends_on;
+            # any other use brute-forces
+            lookup = _depends_on_lookup(search_struct)
+            if lookup is None:
+                return None
+            return _depends_on_sql_clause(*lookup)
 
         elif op_lower == "hasanysubfield_contains_string":
             # Used by resolved isa - fall back to brute force

@@ -152,6 +152,19 @@ class TestSearchIndexes(unittest.TestCase):
             self.assertIn(name, names)
         self.assertTrue(self.db._search_indexes_ready)
 
+    def test_new_database_is_created_quietly(self):
+        # A new database's tables are empty, so its indexes build instantly;
+        # announcing them would print three lines for every database created.
+        with tempfile.TemporaryDirectory() as tmp:
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                db = SQLiteDB(os.path.join(tmp, "new.sqlite"))
+            try:
+                self.assertTrue(db._search_indexes_ready)
+                self.assertNotIn("search index", stderr.getvalue())
+            finally:
+                db._close_db()
+
     def test_indexes_added_when_older_database_opened(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "older.sqlite")

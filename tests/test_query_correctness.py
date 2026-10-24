@@ -136,9 +136,10 @@ class TestQueryCorrectness(unittest.TestCase):
 
         self.assertEqual(ids, [match_id])
 
-    def test_depends_on_like_pattern_escapes_wildcards(self):
-        # The (currently unreachable) SQL depends_on branch must LIKE-escape the
-        # dependency name so a '_' in it cannot act as a single-char wildcard.
+    def test_depends_on_sql_has_no_wildcards(self):
+        # The (currently unreachable) SQL depends_on branch must not let a '_'
+        # or '%' in the dependency name act as a wildcard. It matches with
+        # instr(), a plain substring test, rather than LIKE.
         struct = {
             "field": "",
             "operation": "depends_on",
@@ -147,9 +148,9 @@ class TestQueryCorrectness(unittest.TestCase):
         }
         sql = self.db._query_struct_to_sql_str(struct)
 
-        # The underscore is escaped and an ESCAPE clause is emitted.
-        self.assertIn("a\\_b", sql)
-        self.assertIn("ESCAPE", sql)
+        self.assertNotIn("LIKE", sql)
+        self.assertIn("instr(", sql)
+        self.assertIn("';a_b,val;'", sql)
 
     # --- numeric op with a non-numeric param1: graceful fallback --------------
 
