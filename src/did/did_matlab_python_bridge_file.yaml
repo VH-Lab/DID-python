@@ -1047,7 +1047,7 @@ functions:
       empty, whitespace-padded, '.'/'..', any path separator, NUL, or
       anything fileparts / os.path.basename splits. The public form;
       SQLiteDB._is_safe_uid pre-existed for the same purpose (per
-      DID-python #58) and both now enforce the same predicate.
+      DID-python #58) and, since 2026-10-24, delegates here.
 
 # =========================================================================
 # Not tracked by a bridge entry

@@ -723,12 +723,11 @@ classes:
         python_name: _is_safe_uid
         kind: static
         decision_log: >
-          A module-level function in did/implementations/sqlitedb.py. MATLAB
-          delegates to did.file.isSafeUid; Python's _is_safe_uid is a
-          separate copy of the same predicate as did.file.is_safe_uid (see
-          the isSafeUid entry in did_matlab_python_bridge_file.yaml). The
-          is_safe_uid docstring says the sqlitedb one delegates to it; it
-          does not, though the two bodies agree today.
+          A module-level function in did/implementations/sqlitedb.py that
+          delegates to did.file.is_safe_uid, as MATLAB's delegates to
+          did.file.isSafeUid (see the isSafeUid entry in
+          did_matlab_python_bridge_file.yaml). It was a separate copy of the
+          same predicate until 2026-10-24.
 
       - name: containsTraversal
         python_name: ~
