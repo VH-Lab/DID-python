@@ -40,7 +40,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "ec95ef7"
+    matlab_last_sync_hash: "e4e02dc"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
@@ -73,9 +73,14 @@ classes:
       in did/database.py. Two deviations, neither of which changes a result:
       (1) negated terms stay one query each, because Python takes a negated
       term's complement in Python rather than in SQL (MATLAB batches them);
-      (2) terms with no SQL form are brute-forced one at a time, and a batch
-      whose SQL fails is retried one operand at a time so that each falls
-      back as it would on its own (MATLAB has no brute-force path).
+      (2) a batch whose SQL fails is retried one operand at a time so that
+      each falls back as it would on its own.
+      DID-matlab 4f4e9aa..e4e02dc merges DID-matlab#235 into that branch:
+      MATLAB now brute-forces the depends_on queries SQL cannot match exactly
+      (isBruteForceDependsOn) and keeps them out of its OR batches. Python
+      already did both -- _query_struct_to_sql_str returns None for them, so
+      _search_or_operands leaves them to _search_doc_ids -- so nothing more
+      is ported.
     sync_notes: >
       Schema validation was ported on 2026-08-28, closing what had been the
       largest capability gap between the two languages. Python previously had

@@ -150,6 +150,9 @@ class TestBatchedOr(unittest.TestCase):
             Query("demoC.value", "hasmember", 205),
             Query("demoA.value", "exact_number", "not a number"),
             Query("", "hasanysubfield_contains_string", "item1", "x"),
+            # no exact SQL form (empty name): brute-forced, as in DID-matlab
+            Query("", "depends_on", "", self.ids_a[3]),
+            Query("", "~depends_on", "", self.ids_a[3]),
         ]
         return negated + brute
 
