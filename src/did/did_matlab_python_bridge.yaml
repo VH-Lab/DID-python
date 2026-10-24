@@ -40,7 +40,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "c8adf741"
+    matlab_last_sync_hash: "2c08472c"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
@@ -998,6 +998,19 @@ classes:
       TestHasMemberQuoting) found that field_search did not match a number
       stored as a scalar (5 in 5 is a TypeError); that is fixed in
       field_search -- see the fieldsearch entry.
+
+      DID-matlab 2c9d8fa7 (2026-10-24, DID-matlab#237): search_doc_ids used to
+      strip the '~' of a '~or' and search it as a plain 'or'; a negated OR now
+      returns the documents of the branch (or the candidates, inside an AND)
+      minus the OR's matches. Python already did exactly that --
+      SQLiteDB._search_doc_ids takes universe - matched for a negated OR, and
+      _base_id_lookup_values treats a '~or' as no lookup -- so neither
+      did/database.py nor did/implementations/sqlitedb.py changes.
+      tests/test_negated_or.py pins the behaviour with the same cases as
+      MATLAB's did.unittest.TestNegatedOr.
+      DID-matlab 2c08472c merges main (2c9d8fa7, #237) into the #236 branch
+      (c8adf741); the merged database.m is exactly those two changes, both
+      covered above.
 
   # -----------------------------------------------------------------------
   # did.document
