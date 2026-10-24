@@ -12,6 +12,7 @@ import warnings
 from datetime import datetime, timezone
 
 from ..database import Database
+from ..datastructures import or_operands
 from ..file import is_safe_uid
 
 
@@ -1712,12 +1713,14 @@ class SQLiteDB(Database):
             if is_lookup and self._search_indexes_ready:
                 # base.id lookups ORed together: search all the ids at once
                 return self._search_base_ids(lookup_ids, branch_id, candidates)
-            # OR: union results from param1 and param2
-            p1 = search_struct.get("param1")
-            p2 = search_struct.get("param2")
-            ids1 = self._search_doc_ids(p1, branch_id, candidates) if p1 else []
-            ids2 = self._search_doc_ids(p2, branch_id, candidates) if p2 else []
-            result = list(set(ids1) | set(ids2))
+            # OR: union the results of its operands. A chain of ORs is
+            # flattened first (or_operands), so a long one built in a loop
+            # does not recurse once per term (issue #100).
+            matched = set()
+            for operand in or_operands(search_struct):
+                if operand:
+                    matched |= set(self._search_doc_ids(operand, branch_id, candidates))
+            result = list(matched)
             if negation:
                 if universe is None:
                     universe = self._do_get_doc_ids(branch_id)
