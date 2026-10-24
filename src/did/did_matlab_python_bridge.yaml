@@ -40,7 +40,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "0de9cf2"
+    matlab_last_sync_hash: "ec95ef7"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
@@ -62,6 +62,20 @@ classes:
       lookups, instead of recursing once per nested OR. Ported to
       SQLiteDB._search_doc_ids (DID-python #100 / #103); nothing changes in
       did/database.py.
+      DID-matlab ec95ef7 (2026-10-24, DID-matlab#233 / DID-python#104):
+      search_doc_ids hands an OR's operands to the new search_or_operands,
+      which searches those that are single SQL terms up to orBatchTerms
+      (maxOrBatchTerms = 200) at a time in one query -- UNIONed SELECTs over
+      a whole branch, one WHERE with the conditions ORed when restricted to
+      candidates -- and ORed base.id lookups among them by search_base_ids.
+      Ported to SQLiteDB._search_or_operands / _or_batch_terms /
+      _MAX_OR_BATCH_TERMS in did/implementations/sqlitedb.py; nothing changes
+      in did/database.py. Two deviations, neither of which changes a result:
+      (1) negated terms stay one query each, because Python takes a negated
+      term's complement in Python rather than in SQL (MATLAB batches them);
+      (2) terms with no SQL form are brute-forced one at a time, and a batch
+      whose SQL fails is retried one operand at a time so that each falls
+      back as it would on its own (MATLAB has no brute-force path).
     sync_notes: >
       Schema validation was ported on 2026-08-28, closing what had been the
       largest capability gap between the two languages. Python previously had
