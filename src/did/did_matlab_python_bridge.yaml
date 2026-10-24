@@ -40,7 +40,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "2c9d8fa7"
+    matlab_last_sync_hash: "74ae15f1"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
@@ -124,6 +124,25 @@ classes:
       did/database.py nor did/implementations/sqlitedb.py changes.
       tests/test_negated_or.py pins the behaviour with the same cases as
       MATLAB's did.unittest.TestNegatedOr.
+
+      DID-matlab c8adf741..74ae15f1 (DID-matlab#236, 2026-10-24):
+      query_struct_to_sql_str put a text 'hasmember' value into the SQL
+      unquoted (and as a double-quoted token, which SQLite reads as a column
+      when it names one), so 'value' matched every document and '1 OR 1=1'
+      was SQL injection; and the SQL could not see the members of an array
+      or cell, which doc2sql stores only as '[1 3] double'. MATLAB now
+      searches hasmember by brute force with fieldsearch, as Python always
+      has: the new protected static isBruteForceTerm (hasmember, and the
+      depends_on queries of isBruteForceDependsOn) sends a term to
+      brute_force_search, searched last in an AND and kept out of the OR
+      batches, and query_struct_to_sql_str's 'hasmember' case is an error.
+      That is what SQLiteDB already does (_query_struct_to_sql_str returns
+      None for hasmember; _SCAN_OPERATIONS ranks it last), so did/database.py
+      and did/implementations/sqlitedb.py do not change; the rule itself
+      changed in fieldsearch and field_search -- see the fieldsearch entry.
+      2c08472c merges DID-matlab main (2c9d8fa7, #237, above) into that
+      branch. tests/test_hasmember_quoting.py mirrors DID-matlab's
+      TestHasMemberQuoting.
     sync_notes: >
       Schema validation was ported on 2026-08-28, closing what had been the
       largest capability gap between the two languages. Python previously had

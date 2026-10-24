@@ -317,7 +317,7 @@ functions:
   - name: fieldsearch
     type: function
     matlab_path: "+did/+datastructures/fieldsearch.m"
-    matlab_last_sync_hash: "051f535"
+    matlab_last_sync_hash: "f4ed409e"
     status: ported
     python_path: "did/datastructures.py"
     python_name: "field_search"
@@ -330,6 +330,20 @@ functions:
       holds a non-struct value (depends_on = [] read back from a database)
       used to return early, skipping the negation; it now matches. Python's
       field_search already negated it; nothing to port.
+      DID-matlab f4ed409e (DID-matlab#236, 2026-10-24): 'hasmember' had a
+      different rule in each place. MATLAB's fieldsearch used
+      ismember(param1, value), which compares two texts character by
+      character; its SQL search matched an item of a comma-separated list;
+      field_search used `in` (a substring test, and a TypeError -- no match
+      -- on a scalar number). All three now match one rule, MATLAB's in the
+      local function fieldsearch/hasMember and Python's in _has_member: text
+      is a member of text that is the whole value or an item of its
+      comma-separated list (pattern (^|,\s*)M\s*(,|$)); anything is a
+      member of a list (MATLAB cell or numeric array) that holds an equal
+      element, and a number of an equal number; text is never a member of a
+      number, nor a number of text; a dict (MATLAB struct) has no members.
+      tests/test_hasmember_quoting.py test_rule runs the same table of
+      cases as DID-matlab's TestHasMemberQuoting/testRule.
 
   - name: orOperands
     type: function
