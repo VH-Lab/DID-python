@@ -521,3 +521,101 @@ class TestReplayRefusesADifferentDatabase:
         with pytest.raises(sqlitedb_module._ReplayDiverged, match="failed on replay"):
             db._replay(journal)
         db.dbid.rollback()
+
+
+class TestFileReplacedAfterTheFirstWrite:
+    """The swap SQLite does not see: after the transaction's first write.
+
+    SQLite's DBMOVED check runs only when a write transaction starts. A
+    file replaced later is not noticed, and COMMIT succeeds into the old,
+    now nameless file -- the write is lost with no error. SQLiteDB checks
+    that the path still names its file just before COMMIT.
+    """
+
+    def _swap_during_add(self, monkeypatch, action):
+        # _populate_files runs after the docs and doc_data INSERTs, so the
+        # write transaction is already open when the file goes.
+        original = SQLiteDB._populate_files
+
+        def populate_then_swap(self, *args, **kwargs):
+            action(self.connection)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(SQLiteDB, "_populate_files", populate_then_swap)
+
+    def test_sqlite_alone_loses_the_write(self, tmp_path):
+        # The failure, shown on a bare connection: no error, no data.
+        path = str(tmp_path / "bare.sqlite")
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE t (a)")
+        conn.commit()
+        conn.execute("INSERT INTO t VALUES (1)")
+        _move_file_under_handle(path)
+        conn.commit()  # succeeds
+        conn.close()
+        with sqlite3.connect(path) as check:
+            assert check.execute("SELECT * FROM t").fetchall() == []
+
+    def test_a_replaced_file_is_caught_and_the_write_lands(
+        self, db, sleeps, monkeypatch
+    ):
+        db.add_branch("main")
+        self._swap_during_add(monkeypatch, _move_file_under_handle)
+
+        db.add_docs([_doc("5" * 32)], branch_id="main", validate=False)
+
+        assert sleeps == [0.1]
+        assert "5" * 32 in _doc_ids_on_disk(db.connection)
+
+    def test_a_deleted_file_is_an_error_not_a_silent_loss(
+        self, db, sleeps, monkeypatch
+    ):
+        db.add_branch("main")
+        self._swap_during_add(monkeypatch, os.remove)
+
+        with pytest.raises(sqlite3.OperationalError, match="was replaced"):
+            db.add_docs([_doc("6" * 32)], branch_id="main", validate=False)
+        # Reopening made a new, empty database at the path; the replay read
+        # no branch there and was refused rather than written.
+        assert "6" * 32 not in _doc_ids_on_disk(db.connection)
+
+    def test_a_false_alarm_costs_one_replay_onto_the_same_file(
+        self, db, sleeps, monkeypatch
+    ):
+        # A volume with unstable inode numbers: the path seems to have moved
+        # once, but it is the same file. Nothing was committed before the
+        # check, so the replay lands the document exactly once.
+        db.add_branch("main")
+        real = SQLiteDB._file_identity
+        calls = {"n": 0}
+
+        def flaky(self):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return ("elsewhere", 0)
+            return real(self)
+
+        monkeypatch.setattr(SQLiteDB, "_file_identity", flaky)
+
+        db.add_docs([_doc("4" * 32)], branch_id="main", validate=False)
+
+        assert sleeps == [0.1]
+        with sqlite3.connect(db.connection) as check:
+            count = check.execute(
+                "SELECT COUNT(*) FROM docs WHERE doc_id = ?", ("4" * 32,)
+            ).fetchone()[0]
+        assert count == 1
+
+    def test_an_unchanged_file_is_not_replayed(self, db, sleeps):
+        db.add_branch("main")
+        handle = db.dbid
+        db.add_docs([_doc("3" * 32)], branch_id="main", validate=False)
+        assert sleeps == []
+        assert db.dbid is handle
+
+    def test_the_identity_follows_a_reopen(self, db, sleeps):
+        db.add_branch("main")
+        _move_file_under_handle(db.connection)
+        db.add_branch("b2", parent_branch_id="main")  # recovered by reopen
+        assert db._db_identity == db._file_identity()
+        assert not db._file_was_replaced()
