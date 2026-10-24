@@ -171,6 +171,12 @@ def _sql_like_escape(value):
 # did.database.maxSearchCandidates.
 _MAX_SEARCH_CANDIDATES = 1000
 
+# Most OR operands searched in one SQL query (see SQLiteDB._search_or_operands).
+# SQLite allows 500 SELECTs in a compound SELECT and an expression depth of
+# 1000 by default; this stays well below both. DID-matlab's
+# did.database.maxOrBatchTerms.
+_MAX_OR_BATCH_TERMS = 200
+
 # The doc_data indexes searches rely on -- see SQLiteDB._ensure_indexes. The
 # names are the same in DID-matlab (sqlitedb.searchIndexes).
 _SEARCH_INDEXES = (
@@ -1716,10 +1722,9 @@ class SQLiteDB(Database):
             # OR: union the results of its operands. A chain of ORs is
             # flattened first (or_operands), so a long one built in a loop
             # does not recurse once per term (issue #100).
-            matched = set()
-            for operand in or_operands(search_struct):
-                if operand:
-                    matched |= set(self._search_doc_ids(operand, branch_id, candidates))
+            matched = self._search_or_operands(
+                or_operands(search_struct), branch_id, candidates
+            )
             result = list(matched)
             if negation:
                 if universe is None:
@@ -1755,6 +1760,106 @@ class SQLiteDB(Database):
                 universe = self._do_get_doc_ids(branch_id)
             return list(set(universe) - set(matched))
 
+        return matched
+
+    def _or_batch_terms(self):
+        """The most OR operands searched in one SQL query.
+
+        See ``_search_or_operands``. If it is 1 or less, every operand of an
+        OR is searched by a query of its own. Mirrors DID-matlab's
+        did.database/orBatchTerms.
+        """
+        return _MAX_OR_BATCH_TERMS
+
+    def _search_or_operands(self, operands, branch_id, candidates=None):
+        """The set of documents that match any of an OR's *operands*.
+
+        *operands* are as ``or_operands`` returns them. The result is the
+        union of what ``_search_doc_ids`` returns for each, but the operands
+        that are single SQL terms are searched up to ``_or_batch_terms()`` at
+        a time in one SQL query rather than one query each (issue #104).
+
+        Over a whole branch, a batch is one SELECT per operand -- each exactly
+        the query the operand would run on its own -- combined with UNION.
+        SQLite plans each SELECT on its own, so each keeps its index ('isa'
+        keeps its distinct-superclass subquery). One WHERE with the operands'
+        conditions joined by OR returns the same documents, but the planner
+        then reads every row of doc_data: on 100,000 documents of 30 fields
+        that took ~1 s for 10 names and ~6 s for 100.
+
+        Restricted to *candidates*, it is the other way round: each term
+        reads every row of every candidate (~10 ms for 1,000 candidates),
+        whatever it searches for. So a batch is then one restricted query
+        (``_search_query_head(candidates)``) with the conditions joined by
+        OR, which reads those rows once: 1,000 names took 0.2 s that way,
+        against 10 s as 1,000 queries. CROSS JOIN and INDEXED BY fix the
+        plan, so the OR cannot make SQLite read the whole of doc_data.
+
+        Either way a document matches when one of its doc_data rows satisfies
+        one of the conditions, so the result is exactly the union of the
+        operands' results.
+
+        ORed base.id lookups among the operands are searched together by
+        ``_search_base_ids``. The other operands are searched one at a time by
+        ``_search_doc_ids``, as before: ANDs, negated ORs, negated terms
+        (whose negation is a complement taken in Python) and terms with no
+        SQL form (brute-forced). Mirrors DID-matlab's
+        did.database/search_or_operands.
+        """
+        batch_size = self._or_batch_terms()
+        restricted = candidates is not None
+        id_lookups = []
+        terms = []  # (operand, SQL condition) of the operands searched in batches
+        others = []
+        for operand in operands:
+            if not operand:
+                continue
+            item = operand
+            if isinstance(item, list) and len(item) == 1:
+                item = item[0]
+            if batch_size > 1 and isinstance(item, dict):
+                op = str(item.get("operation") or "").strip().lower()
+                if not op.startswith("~") and op != "or":
+                    is_lookup, ids = _base_id_lookup_values(item)
+                    if is_lookup and self._search_indexes_ready:
+                        id_lookups.extend(ids)
+                        continue
+                    try:
+                        condition = self._query_struct_to_sql_str(
+                            item, restricted=restricted
+                        )
+                    except (ValueError, TypeError):
+                        condition = None  # brute-forced by _search_doc_ids
+                    if condition is not None:
+                        terms.append((operand, condition))
+                        continue
+            others.append(operand)
+
+        matched = set()
+        if id_lookups:
+            matched.update(self._search_base_ids(id_lookups, branch_id, candidates))
+        for start in range(0, len(terms), batch_size):
+            batch = terms[start : start + batch_size]
+            if restricted:
+                conditions = " OR ".join(f"({condition})" for _, condition in batch)
+                query = self._search_query_head(candidates) + f" AND ({conditions})"
+                params = (branch_id,)
+            else:
+                head = self._search_query_head()
+                query = " UNION ".join(
+                    f"{head} AND {condition}" for _, condition in batch
+                )
+                params = (branch_id,) * len(batch)
+            try:
+                rows = self.do_run_sql_query(query, params)
+            except sqlite3.OperationalError:
+                # Search the operands one at a time, so that one whose SQL
+                # fails falls back to brute force, as on its own
+                others.extend(operand for operand, _ in batch)
+                continue
+            matched.update(row["doc_id"] for row in rows)
+        for operand in others:
+            matched.update(self._search_doc_ids(operand, branch_id, candidates))
         return matched
 
     @staticmethod
