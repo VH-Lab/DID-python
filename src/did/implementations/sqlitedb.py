@@ -12,6 +12,7 @@ import warnings
 from datetime import datetime, timezone
 
 from ..database import Database
+from ..file import is_safe_uid
 
 
 def _sqlite_regexp(pattern, string):
@@ -163,23 +164,17 @@ def _is_safe_uid(uid):
     """Is ``uid`` safe to use as a filename inside FileDir?
 
     A uid stands in for a file basename under ``<FileDir>/<uid>``, so any
-    value that would leave that directory once joined -- a path separator,
-    a dot segment, a NUL, an empty or whitespace-padded string -- has to
-    be refused. Otherwise a document whose ``file_list[i].locations[j].uid``
-    is ``"../../.ssh/authorized_keys"`` reaches ``os.path.join(file_dir, uid)``
+    value that would leave that directory once joined has to be refused.
+    Otherwise a document whose ``file_list[i].locations[j].uid`` is
+    ``"../../.ssh/authorized_keys"`` reaches ``os.path.join(file_dir, uid)``
     and either writes to, or reads from, an attacker-chosen path outside
     FileDir. See DID-python issue #58.
+
+    Delegates to :func:`did.file.is_safe_uid`, as MATLAB's
+    ``sqlitedb.isSafeUid`` delegates to ``did.file.isSafeUid``, so the
+    predicate lives in one place.
     """
-    if not isinstance(uid, str) or not uid:
-        return False
-    if uid.strip() != uid:
-        return False
-    if uid in (".", ".."):
-        return False
-    if "/" in uid or "\\" in uid or "\x00" in uid:
-        return False
-    # Catches any other separator the running OS honours (e.g. NT altsep).
-    return os.path.basename(uid) == uid
+    return is_safe_uid(uid)
 
 
 def _is_within(root, path):
