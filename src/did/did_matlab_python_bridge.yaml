@@ -40,7 +40,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "e4e02dc"
+    matlab_last_sync_hash: "c8adf741"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
@@ -985,6 +985,19 @@ classes:
       DID-matlab's TestDependsOnParity case for case.
       DID-matlab 124cf5e (same PR) only fixes how MATLAB's brute_force_search
       builds its did.query; nothing to port.
+      DID-matlab c8adf741 (DID-matlab#236, 2026-10-24): query_struct_to_sql_str
+      put a text 'hasmember' value into the SQL unquoted (and as a
+      double-quoted token, which SQLite reads as a column when it names
+      one), so 'value' matched every document and '1 OR 1=1' was SQL
+      injection; its text tests are now single-quoted literals, plus a
+      numeric comparison for a finite number. did/database.py and
+      SQLiteDB's SQL builder do not change: _query_struct_to_sql_str
+      returns None for hasmember, so Python brute-forces it with
+      field_search and never put the value into SQL. Writing the parity
+      test (tests/test_hasmember_quoting.py, which mirrors DID-matlab's
+      TestHasMemberQuoting) found that field_search did not match a number
+      stored as a scalar (5 in 5 is a TypeError); that is fixed in
+      field_search -- see the fieldsearch entry.
 
   # -----------------------------------------------------------------------
   # did.document

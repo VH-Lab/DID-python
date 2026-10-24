@@ -260,10 +260,18 @@ def field_search(a, search_struct):
             b = eq_len(np.array(value).shape, param1)
     elif op_lower == "hasmember":
         if is_there:
-            try:
-                b = param1 in value
-            except TypeError:
-                pass
+            if isinstance(value, (str, list, tuple, dict, set)):
+                try:
+                    b = param1 in value
+                except TypeError:
+                    pass
+            else:
+                # A scalar (a number read back from JSON) has one member,
+                # itself, as MATLAB's ismember(param1, value) has it
+                try:
+                    b = bool(param1 == value)
+                except (TypeError, ValueError):
+                    pass
     elif op_lower == "hasfield":
         b = is_there
     elif op_lower == "partial_struct":
