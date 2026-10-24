@@ -40,7 +40,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "2c08472c"
+    matlab_last_sync_hash: "f4ed409e"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
@@ -125,23 +125,20 @@ classes:
       tests/test_negated_or.py pins the behaviour with the same cases as
       MATLAB's did.unittest.TestNegatedOr.
 
-      DID-matlab c8adf741 (DID-matlab#236, 2026-10-24): query_struct_to_sql_str
-      put a text 'hasmember' value into the SQL unquoted (and as a
-      double-quoted token, which SQLite reads as a column when it names
-      one), so 'value' matched every document and '1 OR 1=1' was SQL
-      injection; its text tests are now single-quoted literals, plus a
-      numeric comparison for a finite number. did/database.py and
-      SQLiteDB's SQL builder do not change: _query_struct_to_sql_str
-      returns None for hasmember, so Python brute-forces it with
-      field_search and never put the value into SQL. Writing the parity
-      test (tests/test_hasmember_quoting.py, which mirrors DID-matlab's
-      TestHasMemberQuoting) found that field_search did not match a number
-      stored as a scalar (5 in 5 is a TypeError); that is fixed in
-      field_search -- see the fieldsearch entry.
-
-      DID-matlab 2c08472c merges main (2c9d8fa7, #237) into the #236 branch
-      (c8adf741); the merged database.m is exactly those two changes, both
-      covered above.
+      DID-matlab c8adf741..f4ed409e (DID-matlab#236, 2026-10-24):
+      query_struct_to_sql_str put a text 'hasmember' value into the SQL
+      unquoted (and as a double-quoted token, which SQLite reads as a column
+      when it names one), so 'value' matched every document and '1 OR 1=1'
+      was SQL injection. It now matches the rule fieldsearch and field_search
+      share (see the fieldsearch entry): a text member as a single-quoted
+      regex literal against text values only, a numeric member as a number
+      against numbers only, and on the field itself, no longer on its
+      subfields. 2c08472c merges DID-matlab main (2c9d8fa7, #237, above) into
+      that branch. did/database.py and SQLiteDB's SQL builder do not change:
+      _query_struct_to_sql_str returns None for hasmember, so Python
+      brute-forces it with field_search and never put the value into SQL.
+      tests/test_hasmember_quoting.py mirrors DID-matlab's
+      TestHasMemberQuoting.
     sync_notes: >
       Schema validation was ported on 2026-08-28, closing what had been the
       largest capability gap between the two languages. Python previously had

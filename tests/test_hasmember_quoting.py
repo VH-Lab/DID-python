@@ -1,13 +1,24 @@
-"""'hasmember' never reads its value as SQL (DID-matlab#236).
+"""'hasmember': one rule in field_search and in SQL (DID-matlab#236).
 
 DID-matlab's SQL search put a text 'hasmember' value into the SQL unquoted, so
 'value' matched every document and '1 OR 1=1' was SQL injection. Python never
 builds SQL for hasmember -- _query_struct_to_sql_str returns None, and the term
-is brute-forced with field_search -- so it was never affected. These tests pin
-the cases of DID-matlab's did.unittest.TestHasMemberQuoting: text values
-(including 'value', '1 OR 1=1' and values holding " and '), numbers and
-~hasmember, alone, inside an AND and inside an OR, compared with field_search
-and with the documents DID-matlab finds.
+is brute-forced with field_search -- so it was never affected. But DID-matlab's
+fieldsearch (ismember, which compares two texts character by character), its
+SQL search and field_search (``in``: a substring test) each matched another
+rule. All three now match one:
+
+- text is a member of text that is the whole value or an item of its
+  comma-separated list;
+- anything is a member of a list that holds an equal element, and a number
+  of an equal number;
+- text is never a member of a number, nor a number of text.
+
+test_rule checks field_search against the table of DID-matlab's
+did.unittest.TestHasMemberQuoting/testRule. The other tests pin the cases of
+that class: text values (including 'value', '1 OR 1=1' and values holding "
+and '), numbers and ~hasmember, alone, inside an AND and inside an OR,
+compared with field_search and with the documents DID-matlab finds.
 """
 
 import os
@@ -20,7 +31,7 @@ from did.document import Document
 from did.implementations.sqlitedb import SQLiteDB
 from did.query import Query
 
-NAMES = ["value", "1 OR 1=1", 'say "hi"', "x, value", "alpha", "n7", "O'Brien"]
+NAMES = ["value", "1 OR 1=1", 'say "hi"', "x, value", "alpha", "n7", "O'Brien", "5"]
 
 
 # The documents DID-matlab finds for each text value
@@ -32,7 +43,32 @@ TEXT_CASES = {
     "x, value": ("x, value",),
     "name17": (),
     "zzz": (),
+    "5": ("5",),
+    "": (),
 }
+
+# (value, member, is a member): DID-matlab's TestHasMemberQuoting/testRule
+RULE_CASES = [
+    ("value", "value", True),
+    ("x, value", "value", True),
+    ("x,value ,y", "value", True),
+    ("valuex", "value", False),
+    ("value", "x, value", False),
+    ("eulav", "value", False),  # MATLAB's ismember matched this
+    ("a.b", ".", False),  # the member is not a pattern
+    ("", "", True),
+    (5, 5, True),
+    ([1, 2, 3], 2, True),
+    ([1, 2, 3], 4, False),
+    (True, 1, True),
+    (["a", "b"], "b", True),
+    (["a", "b"], "a,b", False),
+    ([1, "a"], 1, True),
+    ("5", 5, False),
+    (5, "5", False),
+    ("a", 97, False),  # MATLAB's ismember matched this
+    ({"a": 1}, "a", False),
+]
 
 
 def _doc(name, value):
@@ -96,6 +132,28 @@ class TestHasMemberQuoting(unittest.TestCase):
 
     def complement(self, ids):
         return [i for i in self.ids if i not in ids]
+
+    def test_rule(self):
+        for k, (value, member, is_member) in enumerate(RULE_CASES, 1):
+            with self.subTest(case=k):
+                a = {"f": value}
+                s = {"field": "f", "operation": "hasmember", "param1": member}
+                self.assertEqual(field_search(a, s), is_member)
+                s["operation"] = "~hasmember"
+                self.assertEqual(field_search(a, s), not is_member)
+
+    def test_text_and_numbers_do_not_mix(self):
+        # base.name "5" is text; demoA.value 3 is a number
+        self.verify_search(_has_member("base.name", 5), [], "hasmember 5 in '5'")
+        self.verify_search(
+            _has_member("base.name", "5"), self.names_matching("5"), "'5' in '5'"
+        )
+        self.verify_search(_has_member("demoA.value", "3"), [], "'3' in 3")
+        self.verify_search(_has_member("demoA.value", 3), [self.ids[2]], "3 in 3")
+
+    def test_struct_field(self):
+        # A struct (base) has no members: its fields are not searched
+        self.verify_search(_has_member("base", "value"), [], "'value' in base")
 
     def test_text(self):
         for value, names in TEXT_CASES.items():

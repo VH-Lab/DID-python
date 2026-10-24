@@ -1,4 +1,5 @@
 import json
+import numbers
 import re
 
 import numpy as np
@@ -190,6 +191,37 @@ def or_operands(search_struct):
     return operands
 
 
+def _has_member(value, member):
+    """Is *member* a member of *value*, for field_search's 'hasmember'?
+
+    Text is a member of text that is the whole value or an item of its
+    comma-separated list (white space after a comma, and before one, is
+    ignored); anything is a member of a list that holds an equal element; a
+    number is a member of an equal number. Text is never a member of a
+    number, nor a number of text. This is what DID-matlab's fieldsearch and
+    its SQL search match (DID-matlab#236).
+    """
+
+    def is_number(x):
+        return isinstance(x, numbers.Real) and not isinstance(x, str)
+
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if isinstance(member, str):
+        if isinstance(value, str):
+            pattern = r"(^|,\s*)" + re.escape(member) + r"\s*(,|$)"
+            return re.search(pattern, value) is not None
+        if isinstance(value, (list, tuple)):
+            return any(isinstance(v, str) and v == member for v in value)
+        return False
+    if is_number(member):
+        if is_number(value):
+            return value == member
+        if isinstance(value, (list, tuple)):
+            return any(is_number(v) and v == member for v in value)
+    return False
+
+
 def field_search(a, search_struct):
     """
     Searches a dictionary to determine if it matches a search structure.
@@ -260,18 +292,7 @@ def field_search(a, search_struct):
             b = eq_len(np.array(value).shape, param1)
     elif op_lower == "hasmember":
         if is_there:
-            if isinstance(value, (str, list, tuple, dict, set)):
-                try:
-                    b = param1 in value
-                except TypeError:
-                    pass
-            else:
-                # A scalar (a number read back from JSON) has one member,
-                # itself, as MATLAB's ismember(param1, value) has it
-                try:
-                    b = bool(param1 == value)
-                except (TypeError, ValueError):
-                    pass
+            b = _has_member(value, param1)
     elif op_lower == "hasfield":
         b = is_there
     elif op_lower == "partial_struct":
