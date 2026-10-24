@@ -317,7 +317,7 @@ functions:
   - name: fieldsearch
     type: function
     matlab_path: "+did/+datastructures/fieldsearch.m"
-    matlab_last_sync_hash: "0de9cf2"
+    matlab_last_sync_hash: "051f535"
     status: ported
     python_path: "did/datastructures.py"
     python_name: "field_search"
@@ -326,6 +326,10 @@ functions:
       case 'or' loops over did.datastructures.orOperands instead of recursing
       once per nested OR, and stops at the first operand that matches;
       field_search does the same with or_operands (DID-python #100 / #103).
+      DID-matlab 051f535 (DID-matlab#235): ~hasanysubfield_* on a field that
+      holds a non-struct value (depends_on = [] read back from a database)
+      used to return early, skipping the negation; it now matches. Python's
+      field_search already negated it; nothing to port.
 
   - name: orOperands
     type: function
