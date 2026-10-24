@@ -219,6 +219,14 @@ class _SeriesMemberLocations(list):
 
 
 class SQLiteDB(Database):
+    """A DID database in a SQLite file, with ingested files in ``files/``.
+
+    Keep a database that is in use out of folders a sync client manages
+    (Dropbox, OneDrive, iCloud Drive, Google Drive): such clients replace,
+    overwrite or fork the file under an open connection. See "Where to keep
+    the database file" in docs/sqlitedb.md.
+    """
+
     def __init__(self, filename):
         super().__init__(connection=filename)
         self.dbid = None
