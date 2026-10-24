@@ -17,7 +17,6 @@ turn, returning the first it can reach. Three things were wrong here before
 import os
 import tempfile
 import unittest
-import warnings
 from unittest import mock
 
 from did.database import FileAccessError
@@ -349,20 +348,15 @@ class TestMatlabShapedDatabase(TestOpenDocLocations):
         This used to be hand-built. Since DID-python#45 add_docs produces the
         shape itself: a local location marked `ingest` is copied to
         <db dir>/files/<uid> and the original is deleted, as MATLAB's
-        do_add_doc does. Both files here point at the SAME original, so the
-        first is ingested and the second -- reached after the original is
-        gone -- ends with no ingested copy and no original, which is the case
-        test_a_file_with_no_ingested_copy_and_no_original_is_an_error needs.
+        do_add_doc does. Both files here point at the SAME original. The
+        original is deleted only once the document commits, so both are
+        ingested, each under its own uid.
         """
         original = self._local_file("original.bin", content)
         doc = Document("demoFile", **{"demoFile.value": 1})
         doc.add_file("filename1.ext", original)
         doc.add_file("filename2.ext", original)
-        with warnings.catch_warnings():
-            # filename2's ingest cannot succeed -- filename1's delete_original
-            # already removed the source. MATLAB warns there too.
-            warnings.simplefilter("ignore")
-            self.db.add_docs([doc])
+        self.db.add_docs([doc])
 
         # The files table should carry a row per file, and filename1's copy
         # should be sitting under its uid.
@@ -400,7 +394,18 @@ class TestMatlabShapedDatabase(TestOpenDocLocations):
 
     def test_a_file_with_no_ingested_copy_and_no_original_is_an_error(self):
         doc, _ = self._matlab_shaped_doc()
-        # filename2.ext shares the deleted original but was never ingested.
+        # filename2.ext shares the deleted original; take its ingested copy
+        # away too, so there is neither.
+        row = (
+            self.db.dbid.cursor()
+            .execute(
+                "SELECT f.cached_location FROM docs d, files f "
+                "WHERE d.doc_idx = f.doc_idx AND d.doc_id = ? AND f.filename = ?",
+                (doc.id(), "filename2.ext"),
+            )
+            .fetchone()
+        )
+        os.remove(row["cached_location"])
         with self.assertRaises(FileAccessError) as caught:
             self.db.open_doc(doc.id(), "filename2.ext")
         self.assertEqual(caught.exception.identifier, "DID:SQLITEDB:open")

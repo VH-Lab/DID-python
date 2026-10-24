@@ -125,10 +125,14 @@ def _journaled(method):
         if self._journal is not None:
             return method(self, *args, **kwargs)
         self._journal = []
+        self._pending_deletes = []
         try:
             return method(self, *args, **kwargs)
         finally:
+            # Whatever was not committed keeps its files (see
+            # _delete_after_commit).
             self._journal = None
+            self._pending_deletes = None
 
     return wrapper
 
@@ -227,6 +231,7 @@ class SQLiteDB(Database):
         self.dbid = None
         self._fields_cache = {}  # (class, field_name) -> field_idx
         self._journal = None  # statements of the current write operation
+        self._pending_deletes = None  # originals to delete once it commits
         self._db_identity = None  # (st_dev, st_ino) of the file opened
         self._open_db()
 
@@ -563,6 +568,38 @@ class SQLiteDB(Database):
         for entry in self._journal:
             entry["proxy"]._entry = None
         self._journal.clear()
+        pending, self._pending_deletes = self._pending_deletes or [], []
+        for path, what in pending:
+            self._delete_original(path, what)
+
+    def _delete_after_commit(self, path, what):
+        """Delete an ingested original once the write operation commits.
+
+        Inside a write operation the delete is queued and done by
+        _journal_committed, so a rollback leaves the only copy of the file
+        where it was. Outside one it happens at once, as before. Mirrors
+        DID-matlab's sqlitedb.deleteAfterCommit.
+        """
+        if self._pending_deletes is None:
+            self._delete_original(path, what)
+        else:
+            self._pending_deletes.append((path, what))
+
+    @staticmethod
+    def _delete_original(path, what):
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            # Already gone (two files can share one original): the point is
+            # that it must not be there afterwards. MATLAB's commitWrite
+            # suppresses MATLAB:DELETE:FileNotFound for the same case.
+            pass
+        except OSError as error:
+            warnings.warn(
+                f'Ingested {what} but could not delete the original "{path}": '
+                f"{error}",
+                stacklevel=3,
+            )
 
     def _record(self, proxy, method, sql, params):
         entry = {
@@ -691,6 +728,18 @@ class SQLiteDB(Database):
                 with contextlib.suppress(sqlite3.Error):
                     self.dbid.rollback()
             time.sleep(backoff)
+            if not os.path.exists(self.connection):
+                # Reopening would create a new, empty database at the path
+                # and replay into it. The database is gone; say so. Mirrors
+                # DID-matlab's DID:SQLITEDB:DatabaseFileGone.
+                print(
+                    f"DID:SQLITEDB the database file {self.connection} no "
+                    "longer exists; not reopening it, which would create a "
+                    "new, empty database there. Nothing from this operation "
+                    "was written.",
+                    file=sys.stderr,
+                )
+                raise err from FileNotFoundError(self.connection)
             # Suspended while reopening: _open_db commits on its own.
             self._journal = None
             try:
@@ -1310,14 +1359,7 @@ class SQLiteDB(Database):
         # Only now, with a copy safely in place. MATLAB deletes the original
         # solely on the success branch, for the same reason.
         if entry.get("delete_original") and not is_remote:
-            try:
-                os.remove(source_path)
-            except OSError as error:
-                warnings.warn(
-                    f'Ingested "{filename}" but could not delete the original '
-                    f'"{source_path}": {error}',
-                    stacklevel=2,
-                )
+            self._delete_after_commit(source_path, f'"{filename}"')
         return dest_path
 
     def _populate_files(self, cursor, doc_idx, document_obj, custom_file_handler=None):
@@ -2253,14 +2295,7 @@ class SQLiteDB(Database):
                     continue
 
                 if member.get("delete_original") and not is_remote:
-                    try:
-                        os.remove(source_path)
-                    except OSError as error:
-                        warnings.warn(
-                            f"Ingested series member but could not delete "
-                            f'the original "{source_path}": {error}',
-                            stacklevel=2,
-                        )
+                    self._delete_after_commit(source_path, "series member")
 
     def _open_series_member(self, series_locations, custom_file_handler):
         """Open a file series member: local first, then fetch through handler.
