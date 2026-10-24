@@ -47,6 +47,36 @@ classes:
     inherits: "abc.ABC"
     out_of_sync: false
     decision_log: >
+      Python Database class closely mirrors MATLAB did.database.
+      Schema validation (validate_docs, get_document_schema,
+      validate_doc_vs_schema, validate_field_type_and_value, checkfiles and
+      friends) was ported 2026-08-28 and brought the entry up to MATLAB
+      0142532, PR #153 included. exist_doc was ported 2026-08-30
+      (DID-python#42), onto SQLiteDB as open_doc is; a few MATLAB methods
+      (freeze_branch, is_branch_editable, display_branches, close_doc) are
+      still not ported. Deviation: MATLAB's add_docs also disables SQLite
+      journalling when validation is off; Python does not, since its sqlite3
+      connection is managed differently (see the sqlitedb open_db/close_db
+      note). Synchronized 2026-03-15; validation 2026-08-28.
+
+      DID-matlab#227 (bb39399, 2026-10-24) changed add_docs(..., 'Validate', false)
+      to set journal_mode=MEMORY instead of OFF, since each document is now
+      one transaction and ROLLBACK is undefined with the journal OFF.
+      Nothing to port: Python's add_docs has no such fast path and never
+      changes journal_mode. The rest of that commit is in sqlitedb.m; see
+      the sqlitedb entry.
+
+      DID-matlab a7ed185 (DID-matlab#235, 2026-10-24): query_struct_to_sql_str
+      matches depends_on with an anchored, case-sensitive instr on
+      meta.depends_on (';NAME,VALUE;', or ',VALUE;' for '*') instead of LIKE
+      "%NAME,VALUE;%", and search_doc_ids brute-forces (fieldsearch) a
+      depends_on whose name or value is empty or holds ',' / ';'. That is
+      what SQLiteDB's _depends_on_sql_clause already did (DID-python #101),
+      so nothing is ported; tests/test_depends_on_parity.py mirrors
+      DID-matlab's TestDependsOnParity case for case.
+      DID-matlab 124cf5e (same PR) only fixes how MATLAB's brute_force_search
+      builds its did.query; nothing to port.
+
       DID-matlab#229 (dae960b..83a2bda, 2026-10-24) made database.m's search
       fast. search_doc_ids searches the terms of an AND in rank order (base.id
       lookups, other terms, base.session_id, then the terms that test every
@@ -57,11 +87,13 @@ classes:
       In Python the SQL search is SQLiteDB's, not Database's, so the port is in
       did/implementations/sqlitedb.py -- see the sqlitedb entry. Nothing
       changes in did/database.py.
+
       DID-matlab 0de9cf2 (2026-10-24): search_doc_ids unions over
       did.datastructures.orOperands for an OR that is not all base.id
       lookups, instead of recursing once per nested OR. Ported to
       SQLiteDB._search_doc_ids (DID-python #100 / #103); nothing changes in
       did/database.py.
+
       DID-matlab ec95ef7 (2026-10-24, DID-matlab#233 / DID-python#104):
       search_doc_ids hands an OR's operands to the new search_or_operands,
       which searches those that are single SQL terms up to orBatchTerms
@@ -75,12 +107,23 @@ classes:
       term's complement in Python rather than in SQL (MATLAB batches them);
       (2) a batch whose SQL fails is retried one operand at a time so that
       each falls back as it would on its own.
+
       DID-matlab 4f4e9aa..e4e02dc merges DID-matlab#235 into that branch:
       MATLAB now brute-forces the depends_on queries SQL cannot match exactly
       (isBruteForceDependsOn) and keeps them out of its OR batches. Python
       already did both -- _query_struct_to_sql_str returns None for them, so
       _search_or_operands leaves them to _search_doc_ids -- so nothing more
       is ported.
+
+      DID-matlab 2c9d8fa7 (2026-10-24, DID-matlab#237): search_doc_ids used to
+      strip the '~' of a '~or' and search it as a plain 'or'; a negated OR now
+      returns the documents of the branch (or the candidates, inside an AND)
+      minus the OR's matches. Python already did exactly that --
+      SQLiteDB._search_doc_ids takes universe - matched for a negated OR, and
+      _base_id_lookup_values treats a '~or' as no lookup -- so neither
+      did/database.py nor did/implementations/sqlitedb.py changes.
+      tests/test_negated_or.py pins the behaviour with the same cases as
+      MATLAB's did.unittest.TestNegatedOr.
     sync_notes: >
       Schema validation was ported on 2026-08-28, closing what had been the
       largest capability gap between the two languages. Python previously had
@@ -955,46 +998,6 @@ classes:
           MATLAB Hidden alias for display_branches, which is itself not ported.
           Added to the bridge 2026-08-28.
 
-    decision_log: >
-      Python Database class closely mirrors MATLAB did.database.
-      Schema validation (validate_docs, get_document_schema,
-      validate_doc_vs_schema, validate_field_type_and_value, checkfiles and
-      friends) was ported 2026-08-28 and brought the entry up to MATLAB
-      0142532, PR #153 included. exist_doc was ported 2026-08-30
-      (DID-python#42), onto SQLiteDB as open_doc is; a few MATLAB methods
-      (freeze_branch, is_branch_editable, display_branches, close_doc) are
-      still not ported. Deviation: MATLAB's add_docs also disables SQLite
-      journalling when validation is off; Python does not, since its sqlite3
-      connection is managed differently (see the sqlitedb open_db/close_db
-      note). Synchronized 2026-03-15; validation 2026-08-28.
-
-      DID-matlab#227 (bb39399, 2026-10-24) changed add_docs(..., 'Validate', false)
-      to set journal_mode=MEMORY instead of OFF, since each document is now
-      one transaction and ROLLBACK is undefined with the journal OFF.
-      Nothing to port: Python's add_docs has no such fast path and never
-      changes journal_mode. The rest of that commit is in sqlitedb.m; see
-      the sqlitedb entry.
-
-      DID-matlab a7ed185 (DID-matlab#235, 2026-10-24): query_struct_to_sql_str
-      matches depends_on with an anchored, case-sensitive instr on
-      meta.depends_on (';NAME,VALUE;', or ',VALUE;' for '*') instead of LIKE
-      "%NAME,VALUE;%", and search_doc_ids brute-forces (fieldsearch) a
-      depends_on whose name or value is empty or holds ',' / ';'. That is
-      what SQLiteDB's _depends_on_sql_clause already did (DID-python #101),
-      so nothing is ported; tests/test_depends_on_parity.py mirrors
-      DID-matlab's TestDependsOnParity case for case.
-      DID-matlab 124cf5e (same PR) only fixes how MATLAB's brute_force_search
-      builds its did.query; nothing to port.
-
-      DID-matlab 2c9d8fa7 (2026-10-24, DID-matlab#237): search_doc_ids used to
-      strip the '~' of a '~or' and search it as a plain 'or'; a negated OR now
-      returns the documents of the branch (or the candidates, inside an AND)
-      minus the OR's matches. Python already did exactly that --
-      SQLiteDB._search_doc_ids takes universe - matched for a negated OR, and
-      _base_id_lookup_values treats a '~or' as no lookup -- so neither
-      did/database.py nor did/implementations/sqlitedb.py changes.
-      tests/test_negated_or.py pins the behaviour with the same cases as
-      MATLAB's did.unittest.TestNegatedOr.
 
   # -----------------------------------------------------------------------
   # did.document
