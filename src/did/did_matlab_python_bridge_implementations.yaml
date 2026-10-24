@@ -29,7 +29,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "83a2bda"
+    matlab_last_sync_hash: "f35bbb4"
     status: ported
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
@@ -55,6 +55,10 @@ classes:
       applies negation as a complement in Python rather than in SQL, so a
       negated term with candidates is the complement within the candidates
       rather than within the branch -- the same set once intersected.
+      DID-matlab f35bbb4 (2026-10-24): ensure_search_indexes announces each
+      index before building it (with the approximate doc_data row count),
+      reports the time it took, and reports a build that failed; ported to
+      _ensure_indexes, which prints the same lines to stderr.
     sync_notes: >
       MATLAB 14439fb (2026-06-12, audit 6.1-3) added a private
       escapeSqlLiteral() helper and applied it at the 14 sites where
