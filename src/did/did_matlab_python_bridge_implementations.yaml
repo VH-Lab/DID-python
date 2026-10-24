@@ -29,13 +29,32 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "bb39399"
+    matlab_last_sync_hash: "83a2bda"
     status: ported
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
     inherits_matlab: "did.database"
     inherits_python: "Database"
     out_of_sync: false
+    decision_log: >
+      DID-matlab#229 (dae960b..83a2bda, 2026-10-24): fast id and isa searches,
+      ported to SQLiteDB (_search_doc_ids, _search_query_head,
+      _search_base_ids, _query_struct_to_sql_str, _ensure_indexes). MATLAB
+      adopted the index names Python already created -- doc_data_doc_idx ON
+      doc_data(doc_idx), doc_data_field_value ON doc_data(field_idx, value) --
+      so a database touched by both carries one copy of each. Both languages
+      now add them on open, leave a read-only file without them, and only then
+      (_search_indexes_ready / hasSearchIndexes) restrict terms to candidates,
+      collapse ORed base.id lookups, and match 'isa' against the distinct
+      superclass lists. Three deviations, none of which changes a result:
+      (1) Python also ranks the operations it brute-forces
+      (hasanysubfield_*, hassize, partial_struct) with regexp /
+      contains_string / hasmember as last-in-an-AND, since a brute-force term
+      loads every document it tests; (2) a brute-force term given candidates
+      loads only those documents (MATLAB has no brute-force path); (3) Python
+      applies negation as a complement in Python rather than in SQL, so a
+      negated term with candidates is the complement within the candidates
+      rather than within the branch -- the same set once intersected.
     sync_notes: >
       MATLAB 14439fb (2026-06-12, audit 6.1-3) added a private
       escapeSqlLiteral() helper and applied it at the 14 sites where

@@ -164,6 +164,95 @@ def _sql_like_escape(value):
     return text
 
 
+# Most document ids one search query lists when it checks a search term
+# against candidate documents (see SQLiteDB._search_doc_ids); also the most
+# ORed base.id values looked up in one query. DID-matlab's
+# did.database.maxSearchCandidates.
+_MAX_SEARCH_CANDIDATES = 1000
+
+# The doc_data indexes searches rely on -- see SQLiteDB._ensure_indexes. The
+# names are the same in DID-matlab (sqlitedb.searchIndexes).
+_SEARCH_INDEXES = (
+    ("doc_data_value", "value"),
+    ("doc_data_field_value", "field_idx, value"),
+    ("doc_data_doc_idx", "doc_idx"),
+)
+
+# Operations that test every value they see -- in SQL or by loading every
+# document (brute force) -- and so are searched last in an AND, against the
+# documents the other terms left. DID-matlab ranks regexp, contains_string
+# and hasmember this way; the rest are the operations only Python sends to
+# brute force.
+_SCAN_OPERATIONS = frozenset(
+    {
+        "regexp",
+        "contains_string",
+        "hasmember",
+        "hasanysubfield_exact_string",
+        "hasanysubfield_contains_string",
+        "hassize",
+        "partial_struct",
+    }
+)
+
+
+def _sql_string_list(values):
+    """A comma-separated list of single-quoted SQL string literals."""
+    return ",".join(f"'{_sql_escape(v)}'" for v in values)
+
+
+def _base_id_lookup_values(search_struct):
+    """Is a search structure a lookup of documents by base.id?
+
+    Returns ``(True, ids)`` if *search_struct* is a ``base.id`` exact_string
+    match for a non-empty id, or an OR of such matches nested to any depth;
+    otherwise ``(False, [])``. Negated operations are not lookups. An OR's
+    operands are lists; a one-element list is its element, a longer one is an
+    AND and not a lookup. The tree is walked with a stack, not recursion, so a
+    query built as ``q = q | Query("base.id", ...)`` in a loop cannot run into
+    the recursion limit. Mirrors DID-matlab's did.database.baseIdLookupValues.
+    """
+    found = []
+    pending = [search_struct]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, list):
+            if len(item) != 1:
+                return False, []
+            item = item[0]
+        if not isinstance(item, dict):
+            return False, []
+        op = str(item.get("operation") or "").strip().lower()
+        if op == "exact_string":
+            value = item.get("param1")
+            if (
+                item.get("field") != "base.id"
+                or not isinstance(value, str)
+                or not value
+            ):
+                return False, []
+            found.append(value)
+        elif op == "or":
+            pending.extend([item.get("param2"), item.get("param1")])
+        else:
+            return False, []
+    return True, found
+
+
+def _search_rank(item):
+    """Where a term of an AND is searched -- see SQLiteDB._search_doc_ids."""
+    if _base_id_lookup_values(item)[0]:
+        return 1
+    if not isinstance(item, dict):
+        return 2
+    op = str(item.get("operation") or "").lstrip("~").strip().lower()
+    if op in _SCAN_OPERATIONS:
+        return 4
+    if item.get("field") == "base.session_id":
+        return 3
+    return 2
+
+
 def _is_safe_uid(uid):
     """Is ``uid`` safe to use as a filename inside FileDir?
 
@@ -233,6 +322,8 @@ class SQLiteDB(Database):
         self._journal = None  # statements of the current write operation
         self._pending_deletes = None  # originals to delete once it commits
         self._db_identity = None  # (st_dev, st_ino) of the file opened
+        # Do the _SEARCH_INDEXES exist? Set by _ensure_indexes.
+        self._search_indexes_ready = False
         self._open_db()
 
         # Create FileDir now, as DID-MATLAB's sqlitedb constructor does:
@@ -287,17 +378,39 @@ class SQLiteDB(Database):
         Run on every open (``IF NOT EXISTS``) so databases downloaded before
         this fix benefit on next use. (docs.doc_id and fields.field_name are
         already covered by UNIQUE constraints.)
+
+        DID-matlab creates the same indexes, under the same names
+        (``_SEARCH_INDEXES``), and adds them to a database it opens without
+        them. ``_search_doc_ids`` relies on two of them -- it names
+        ``doc_data_doc_idx`` with ``INDEXED BY`` -- so it uses them only once
+        they are known to exist (``_search_indexes_ready``).
+
+        A database that cannot be written to (a read-only file, or one locked
+        by another writer) is left as it is, as DID-matlab leaves it: the
+        indexes only speed searches up, and without them searches run as they
+        did before.
         """
-        cursor = self.dbid.cursor()
-        cursor.execute('CREATE INDEX IF NOT EXISTS "doc_data_value" ON doc_data(value)')
-        cursor.execute(
-            'CREATE INDEX IF NOT EXISTS "doc_data_field_value" '
-            "ON doc_data(field_idx, value)"
-        )
-        cursor.execute(
-            'CREATE INDEX IF NOT EXISTS "doc_data_doc_idx" ON doc_data(doc_idx)'
-        )
-        self._commit()
+        self._search_indexes_ready = False
+        try:
+            existing = {
+                row[0]
+                for row in self.dbid.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'index'"
+                )
+            }
+            missing = [idx for idx in _SEARCH_INDEXES if idx[0] not in existing]
+            if missing:
+                cursor = self.dbid.cursor()
+                for name, columns in missing:
+                    cursor.execute(
+                        f'CREATE INDEX IF NOT EXISTS "{name}" ON doc_data({columns})'
+                    )
+                self.dbid.commit()
+        except sqlite3.Error:
+            with contextlib.suppress(sqlite3.Error):
+                self.dbid.rollback()
+            return
+        self._search_indexes_ready = True
 
     def _close_db(self):
         if self.dbid:
@@ -1421,24 +1534,52 @@ class SQLiteDB(Database):
         doc_ids = self._search_doc_ids(search_params, branch_id)
         return doc_ids
 
-    def _search_doc_ids(self, search_struct, branch_id):
+    def _search_doc_ids(self, search_struct, branch_id, candidates=None):
         """Recursively search for doc_ids matching the search structure.
 
         Matches MATLAB's search_doc_ids: struct arrays are AND'd, 'or' operations
         are unioned, leaf queries go through SQL.
+
+        If *candidates* (a list of document ids) is given, only those documents
+        are considered, so the result is a subset of them. Once one term of an
+        AND has narrowed the result to at most ``_MAX_SEARCH_CANDIDATES``
+        documents, the remaining terms are checked against those documents
+        only. The terms of an AND are searched in this order (see
+        ``_search_rank``): base.id lookups first, as they match at most a few
+        documents; then the other terms, in the order given; then
+        base.session_id terms, as one session usually holds most of a
+        database; and last the terms that test every value they see
+        (``_SCAN_OPERATIONS``). So ``isa daqsystem AND base.session_id = S AND
+        base.name regexp ...`` finds the few daqsystem documents, then checks
+        their session, then runs the regexp on their names only -- instead of
+        each term returning, or testing, every document of the branch.
+
+        Restricting to candidates needs the search indexes; without them
+        (``_search_indexes_ready`` false) every term is searched over the whole
+        branch, as before. Mirrors DID-matlab's did.database/search_doc_ids.
         """
+        if not self._search_indexes_ready:
+            candidates = None
+        if candidates is not None and not candidates:
+            return []
+
         if isinstance(search_struct, list):
             if not search_struct:
                 return []
-            # AND: intersect results from all sub-queries
+            # AND: intersect results from all sub-queries, the most selective
+            # first (sorted is stable: the given order is kept within a rank)
             result = None
-            for item in search_struct:
-                ids = self._search_doc_ids(item, branch_id)
+            for item in sorted(search_struct, key=_search_rank):
+                ids = self._search_doc_ids(item, branch_id, candidates)
                 if result is None:
                     result = set(ids)
                 else:
                     result &= set(ids)
-            return list(result) if result else []
+                if not result:
+                    return []  # no document matches every term - skip the rest
+                if len(result) <= _MAX_SEARCH_CANDIDATES:
+                    candidates = list(result)
+            return list(result)
 
         if not isinstance(search_struct, dict):
             return []
@@ -1451,57 +1592,129 @@ class SQLiteDB(Database):
             op = op[1:]
         op_lower = op.lower()
 
+        # The documents a negated term is the complement within
+        if candidates is not None:
+            universe = candidates
+        else:
+            universe = None  # every document of the branch, fetched on demand
+
         if op_lower == "or":
+            is_lookup, lookup_ids = _base_id_lookup_values(search_struct)
+            if is_lookup and self._search_indexes_ready:
+                # base.id lookups ORed together: search all the ids at once
+                return self._search_base_ids(lookup_ids, branch_id, candidates)
             # OR: union results from param1 and param2
             p1 = search_struct.get("param1")
             p2 = search_struct.get("param2")
-            ids1 = self._search_doc_ids(p1, branch_id) if p1 else []
-            ids2 = self._search_doc_ids(p2, branch_id) if p2 else []
+            ids1 = self._search_doc_ids(p1, branch_id, candidates) if p1 else []
+            ids2 = self._search_doc_ids(p2, branch_id, candidates) if p2 else []
             result = list(set(ids1) | set(ids2))
             if negation:
-                all_ids = set(self._do_get_doc_ids(branch_id))
-                result = list(all_ids - set(result))
+                if universe is None:
+                    universe = self._do_get_doc_ids(branch_id)
+                result = list(set(universe) - set(result))
             return result
 
         # Leaf query: build SQL and execute
         try:
-            sql_clause = self._query_struct_to_sql_str(search_struct)
+            sql_clause = self._query_struct_to_sql_str(
+                search_struct, restricted=candidates is not None
+            )
         except (ValueError, TypeError):
             # A numeric operation (exact_number/lessthan/greaterthan/...) was
             # given a non-numeric param1, so the float() conversion failed.
             # Fall back to brute force rather than aborting the whole search.
-            return self._brute_force_search(search_struct, branch_id)
+            return self._brute_force_search(search_struct, branch_id, candidates)
         if sql_clause is None:
             # Fallback to brute-force for unsupported operations
-            return self._brute_force_search(search_struct, branch_id)
+            return self._brute_force_search(search_struct, branch_id, candidates)
 
-        query = (
-            "SELECT DISTINCT docs.doc_id FROM docs, branch_docs, doc_data, fields "
-            "WHERE docs.doc_idx = doc_data.doc_idx "
-            "AND docs.doc_idx = branch_docs.doc_idx "
-            "AND branch_docs.branch_id = ? "
-            "AND fields.field_idx = doc_data.field_idx "
-            f"AND {sql_clause}"
-        )
+        query = self._search_query_head(candidates) + f" AND {sql_clause}"
 
         try:
             rows = self.do_run_sql_query(query, (branch_id,))
             matched = [row["doc_id"] for row in rows]
         except sqlite3.OperationalError:
             # Fallback on SQL error
-            return self._brute_force_search(search_struct, branch_id)
+            return self._brute_force_search(search_struct, branch_id, candidates)
 
         if negation:
-            all_ids = set(self._do_get_doc_ids(branch_id))
-            return list(all_ids - set(matched))
+            if universe is None:
+                universe = self._do_get_doc_ids(branch_id)
+            return list(set(universe) - set(matched))
 
         return matched
 
-    def _query_struct_to_sql_str(self, search_struct):
+    @staticmethod
+    def _search_query_head(candidates=None):
+        """The SELECT ... WHERE of a search query, before its term.
+
+        Takes the branch id as its one bound parameter. If *candidates* (a list
+        of document ids) is given, only those documents are considered, and
+        the tables are joined with CROSS JOIN, which makes SQLite loop over
+        them in the order written: each candidate is found through the unique
+        docs.doc_id index, and its doc_data rows through doc_data_doc_idx,
+        named with INDEXED BY. Left to choose, the query planner (which has no
+        table statistics to go on) can start from every document of the
+        branch, or reach doc_data through an index on the searched value --
+        for base.session_id, one row per document in the session, for every
+        candidate. Mirrors DID-matlab's did.database/get_sql_query_str.
+        """
+        if candidates is None:
+            tables = "docs, branch_docs, doc_data, fields"
+        else:
+            tables = (
+                "docs CROSS JOIN branch_docs CROSS JOIN fields "
+                "CROSS JOIN doc_data INDEXED BY doc_data_doc_idx"
+            )
+        query = (
+            f"SELECT DISTINCT docs.doc_id FROM {tables} "
+            "WHERE docs.doc_idx = doc_data.doc_idx "
+            "AND docs.doc_idx = branch_docs.doc_idx "
+            "AND branch_docs.branch_id = ? "
+            "AND fields.field_idx = doc_data.field_idx"
+        )
+        if candidates is not None:
+            query += f" AND docs.doc_id IN ({_sql_string_list(candidates)})"
+        return query
+
+    def _search_base_ids(self, ids, branch_id, candidates=None):
+        """Find the documents whose base.id is one of *ids*.
+
+        Equivalent to ORing a base.id exact_string query for each of *ids*, in
+        one query per ``_MAX_SEARCH_CANDIDATES`` ids rather than one per id. A
+        document's doc_id is its base.id, so *ids* also serve as the candidate
+        documents, and are looked up through the docs.doc_id index. The
+        doc_data condition is kept so that the result is exactly what the ORed
+        exact_string queries return. Mirrors DID-matlab's
+        did.database/search_base_ids.
+        """
+        ids = sorted(set(ids))
+        if candidates is not None:
+            allowed = set(candidates)
+            ids = [i for i in ids if i in allowed]
+        matched = []
+        for start in range(0, len(ids), _MAX_SEARCH_CANDIDATES):
+            chunk = ids[start : start + _MAX_SEARCH_CANDIDATES]
+            query = (
+                self._search_query_head(chunk)
+                + " AND fields.field_name = 'base.id'"
+                + f" AND doc_data.value IN ({_sql_string_list(chunk)})"
+            )
+            matched.extend(
+                row["doc_id"] for row in self.do_run_sql_query(query, (branch_id,))
+            )
+        return matched
+
+    def _query_struct_to_sql_str(self, search_struct, restricted=False):
         """Convert a single query struct to a SQL WHERE clause fragment.
 
         Returns None if the operation is not supported in SQL.
         Matches MATLAB's query_struct_to_sql_str.
+
+        *restricted* is true when the query is limited to a list of candidate
+        documents (see ``_search_query_head``); it changes how 'isa' is
+        matched.
         """
         field = search_struct.get("field", "")
         operation = search_struct.get("operation", "")
@@ -1583,10 +1796,33 @@ class SQLiteDB(Database):
             classname_re = _sql_escape(
                 _re.escape("" if param1 is None else str(param1))
             )
+            superclass_pattern = f"'(^|, ){classname_re}(,|$)'"
+            superclass_match = (
+                f"regexp({superclass_pattern}, doc_data.value) IS NOT NULL"
+            )
+            if not restricted and self._search_indexes_ready:
+                # Over a whole branch, running the regexp on every document's
+                # superclass list took seconds (~5 s for 100,000 documents in
+                # DID-matlab). Most documents share one of a few dozen
+                # superclass lists, so match the regexp against the distinct
+                # lists only -- read in order from the doc_data_field_value
+                # index -- and then find the documents holding a matching list
+                # through the same index. LIMIT -1 keeps SQLite from merging
+                # the inner DISTINCT query into the outer one, which would run
+                # the regexp on every row again. Negation is applied by the
+                # caller, so this clause is always the positive match.
+                superclass_match = (
+                    "doc_data.value IN ("
+                    "SELECT superclasses FROM ("
+                    "SELECT DISTINCT sc.value AS superclasses "
+                    "FROM doc_data sc, fields scf "
+                    "WHERE scf.field_name = 'meta.superclass' "
+                    "AND sc.field_idx = scf.field_idx LIMIT -1) "
+                    f"WHERE regexp({superclass_pattern}, superclasses) IS NOT NULL)"
+                )
             return (
                 f"((fields.field_name = 'meta.class' AND doc_data.value = '{classname}') "
-                f"OR (fields.field_name = 'meta.superclass' AND "
-                f"regexp('(^|, ){classname_re}(,|$)', doc_data.value) IS NOT NULL))"
+                f"OR (fields.field_name = 'meta.superclass' AND {superclass_match}))"
             )
 
         elif op_lower == "depends_on":
@@ -1629,11 +1865,18 @@ class SQLiteDB(Database):
 
         return None
 
-    def _brute_force_search(self, search_struct, branch_id):
-        """Fall back to brute-force field_search for unsupported SQL operations."""
+    def _brute_force_search(self, search_struct, branch_id, candidates=None):
+        """Fall back to brute-force field_search for unsupported SQL operations.
+
+        Loads and tests every document of the branch -- or, if *candidates*
+        (a list of document ids) is given, only those.
+        """
         from ..datastructures import field_search
 
-        doc_ids = self._do_get_doc_ids(branch_id)
+        if candidates is not None:
+            doc_ids = list(candidates)
+        else:
+            doc_ids = self._do_get_doc_ids(branch_id)
         docs = self.get_docs(doc_ids, OnMissing="ignore")
         if docs is None:
             docs = []
