@@ -175,9 +175,25 @@ classes:
       nothing is written, and the original error is raised; it is not
       retried. Two things found while porting: SQLite reports DBMOVED at a
       transaction's FIRST WRITE, not at COMMIT, so that is where recovery
-      usually happens; and a file swapped out after that first write is not
-      detected at all -- COMMIT "succeeds" into the unlinked file -- which no
-      retry in either language can see.
+      usually happens; and SQLite does not detect a file swapped out after
+      that first write at all -- COMMIT "succeeds" into the unlinked file and
+      the write is lost without an error.
+
+      PYTHON-ONLY ADDITION (2026-10-24), closing that second gap. _open_db
+      records the (st_dev, st_ino) of the file it opened, and _commit, inside
+      a journaled write operation, checks that the path still names that
+      file before committing (_file_was_replaced; a deleted file counts as
+      replaced). If it does not, the handle is treated as poisoned and the
+      transaction recovered as above -- reopened, replayed against the file
+      now at the path, verified, committed -- instead of being committed to
+      a file nobody can reach. Only a window of microseconds between the
+      check and the COMMIT remains. It is the comparison SQLite's unix VFS
+      makes for DBMOVED, at the one moment SQLite does not; one stat per
+      commit (~1 us locally, against ~1.8 ms for the commit). A volume with
+      unstable inode numbers can trip it falsely, which costs one replay
+      onto the same file, since nothing has been committed yet. MATLAB has
+      the same gap, narrower because each mksqlite statement commits on its
+      own; this check is not in DID-matlab.
       do_run_sql_query, outside a write operation, keeps its own retry: only
       when no transaction is open, reopening first for READONLY; inside an
       unjournaled transaction the error is raised at once.

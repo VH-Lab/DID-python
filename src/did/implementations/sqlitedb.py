@@ -224,6 +224,7 @@ class SQLiteDB(Database):
         self.dbid = None
         self._fields_cache = {}  # (class, field_name) -> field_idx
         self._journal = None  # statements of the current write operation
+        self._db_identity = None  # (st_dev, st_ino) of the file opened
         self._open_db()
 
         # Create FileDir now, as DID-MATLAB's sqlitedb constructor does:
@@ -254,6 +255,9 @@ class SQLiteDB(Database):
 
         if is_new:
             self._create_db_tables()
+        # Which file the connection holds, so a later COMMIT can tell whether
+        # the path still names it -- see _file_was_replaced.
+        self._db_identity = self._file_identity()
         # Always ensure the search-critical indexes exist — including on
         # databases created before this fix (idempotent).
         self._ensure_indexes()
@@ -459,6 +463,11 @@ class SQLiteDB(Database):
         what is re-run is the whole transaction, replayed and verified by
         :meth:`_recover_transaction`, and then committed.
         """
+        if self._journal is not None and self._file_was_replaced():
+            # Not on this handle: it would commit to the replaced file.
+            self._recover_transaction(self._replaced_file_error(), commit=True)
+            self._journal_committed()
+            return
         try:
             self.dbid.commit()
         except sqlite3.Error as err:
@@ -493,6 +502,41 @@ class SQLiteDB(Database):
                     break
         self._report_sql_error(last_err)
         raise last_err
+
+    def _file_identity(self):
+        """``(st_dev, st_ino)`` of the file at the path, or None if absent."""
+        try:
+            info = os.stat(self.connection)
+        except OSError:
+            return None
+        return (info.st_dev, info.st_ino)
+
+    def _file_was_replaced(self):
+        """Does the path no longer name the file this connection opened?
+
+        SQLite checks this itself (SQLITE_READONLY_DBMOVED) only when a write
+        transaction starts. A file replaced after that -- by a sync client, a
+        restore, a copy-then-rename -- is not noticed, and COMMIT succeeds
+        into the old file, which no longer has a name: the write is lost
+        without an error. Checked just before COMMIT, it is caught while
+        nothing has been committed. It is the same comparison SQLite's unix
+        VFS makes (the path's inode against the open file's), costs one
+        stat, and a deleted file counts as replaced. A volume that reports
+        unstable inode numbers can trip it falsely; that costs one replay
+        onto the same file, since nothing was committed yet.
+        """
+        if self._db_identity is None:
+            return False
+        return self._file_identity() != self._db_identity
+
+    def _replaced_file_error(self):
+        # Worded as SQLite words DBMOVED, so it is classified the same way.
+        return sqlite3.OperationalError(
+            "attempt to write a readonly database (the database file at "
+            f"{self.connection!r} was replaced while it was open, so this "
+            "connection would have committed to a file that no longer has a "
+            "name)"
+        )
 
     def _rollback(self):
         """Roll back, if there is still a connection to roll back.
@@ -653,6 +697,9 @@ class SQLiteDB(Database):
                 try:
                     cursors = self._replay(journal)
                     if commit:
+                        if self._file_was_replaced():
+                            # Replaced again while we replayed: go round.
+                            raise self._replaced_file_error()
                         self.dbid.commit()
                 except _ReplayDiverged as diverged:
                     with contextlib.suppress(sqlite3.Error):
