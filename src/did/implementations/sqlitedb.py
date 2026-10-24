@@ -1,4 +1,5 @@
 import contextlib
+import functools
 import os
 import re as _re
 import shutil
@@ -39,6 +40,100 @@ _BUSY_TIMEOUT = 30.0
 # Seconds to wait between attempts at a transient BUSY / READONLY failure --
 # the schedule DID-matlab's run_sql_noOpen uses.
 _RETRY_BACKOFFS = (0.1, 0.2, 0.5, 1, 2, 4)
+
+
+class _ReplayDiverged(Exception):
+    """A replayed transaction saw a different database than the original."""
+
+
+class _JournalCursor:
+    """A cursor that records what each of its statements did.
+
+    Used inside a write operation (see :func:`_journaled`) so that, when the
+    connection is poisoned part-way through, the transaction can be replayed
+    on a fresh connection and checked against what it saw the first time --
+    see :meth:`SQLiteDB._recover_transaction`. Each statement's entry holds
+    its SQL and parameters, its rowcount, the lastrowid of an INSERT, and
+    every row the caller fetched.
+    """
+
+    def __init__(self, db, cursor):
+        self._db = db
+        self._cursor = cursor
+        self._entry = None
+
+    def execute(self, sql, params=()):
+        return self._db._journaled_execute(self, "execute", sql, params)
+
+    def executemany(self, sql, seq_of_params):
+        # Materialized so the same parameters can be replayed.
+        return self._db._journaled_execute(
+            self, "executemany", sql, list(seq_of_params)
+        )
+
+    def _seen(self, rows, complete):
+        if self._entry is not None:
+            self._entry["rows"].extend(tuple(row) for row in rows)
+            if complete:
+                self._entry["complete"] = True
+
+    def fetchone(self):
+        row = self._cursor.fetchone()
+        self._seen([] if row is None else [row], row is None)
+        return row
+
+    def fetchall(self):
+        rows = self._cursor.fetchall()
+        self._seen(rows, True)
+        return rows
+
+    def fetchmany(self, size=None):
+        rows = self._cursor.fetchmany(self._cursor.arraysize if size is None else size)
+        self._seen(rows, not rows)
+        return rows
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        row = self.fetchone()
+        if row is None:
+            raise StopIteration
+        return row
+
+    @property
+    def lastrowid(self):
+        return self._cursor.lastrowid
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    def close(self):
+        self._cursor.close()
+
+
+def _journaled(method):
+    """Record the SQL a write operation runs, so it can be recovered.
+
+    Re-entrant: an operation called from inside another shares its journal.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if self._journal is not None:
+            return method(self, *args, **kwargs)
+        self._journal = []
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._journal = None
+
+    return wrapper
+
+
+def _is_insert(sql):
+    return sql.lstrip().upper().startswith(("INSERT", "REPLACE"))
 
 
 # Escape character used in LIKE patterns (see _sql_like_escape / ESCAPE clauses).
@@ -128,6 +223,7 @@ class SQLiteDB(Database):
         super().__init__(connection=filename)
         self.dbid = None
         self._fields_cache = {}  # (class, field_name) -> field_idx
+        self._journal = None  # statements of the current write operation
         self._open_db()
 
         # Create FileDir now, as DID-MATLAB's sqlitedb constructor does:
@@ -351,20 +447,29 @@ class SQLiteDB(Database):
         return cursor.fetchall()
 
     def _commit(self):
-        """Commit, retrying a transient BUSY / READONLY failure with backoff.
+        """Commit, recovering a transient BUSY / READONLY failure.
 
         In DID-matlab every statement autocommits, so the statement retry in
         run_sql_noOpen covers the write that reaches the disk. Here writes
         are grouped into a transaction and reach the disk at COMMIT, so the
-        commit is retried too. It is never reopened: that would discard the
-        transaction. If SQLite has already rolled the transaction back there
-        is nothing left to commit, and the error is raised for the caller.
+        commit is retried too. A BUSY commit is waited out on the same
+        connection while the transaction is still open. A READONLY commit
+        inside a journaled write operation is recovered the way MATLAB
+        recovers a READONLY statement -- reopen, then re-run -- except that
+        what is re-run is the whole transaction, replayed and verified by
+        :meth:`_recover_transaction`, and then committed.
         """
         try:
             self.dbid.commit()
-            return
         except sqlite3.Error as err:
             last_err = err
+        else:
+            self._journal_committed()
+            return
+        if self._journal is not None and self._is_readonly_error(last_err):
+            self._recover_transaction(last_err, commit=True)
+            self._journal_committed()
+            return
         if self._is_retryable_sql_error(last_err):
             for attempt, backoff in enumerate(_RETRY_BACKOFFS, start=1):
                 if not self.dbid.in_transaction:
@@ -379,11 +484,226 @@ class SQLiteDB(Database):
                 time.sleep(backoff)
                 try:
                     self.dbid.commit()
-                    return
                 except sqlite3.Error as err:
                     last_err = err
+                else:
+                    self._journal_committed()
+                    return
                 if not self._is_retryable_sql_error(last_err):
                     break
+        self._report_sql_error(last_err)
+        raise last_err
+
+    def _rollback(self):
+        """Roll back, if there is still a connection to roll back.
+
+        After a recovery whose every reopen failed there may be none; the
+        error that caused that is the one the caller should see.
+        """
+        if self.dbid is not None:
+            self.dbid.rollback()
+
+    def _journal_cursor(self):
+        """A cursor for a write operation: recording, when one is journaled."""
+        if self._journal is None:
+            return self.dbid.cursor()
+        return _JournalCursor(self, self.dbid.cursor())
+
+    def _journal_committed(self):
+        """What the journal held is on disk now; a later replay starts here."""
+        if self._journal is None:
+            return
+        for entry in self._journal:
+            entry["proxy"]._entry = None
+        self._journal.clear()
+
+    def _record(self, proxy, method, sql, params):
+        entry = {
+            "method": method,
+            "sql": sql,
+            "params": params,
+            "rowcount": proxy._cursor.rowcount,
+            # Only an INSERT that inserted has a lastrowid of its own: after
+            # executemany, or an INSERT OR IGNORE that ignored, sqlite3
+            # reports a stale value (or None) that no later statement used.
+            "lastrowid": (
+                proxy._cursor.lastrowid
+                if method == "execute"
+                and _is_insert(sql)
+                and proxy._cursor.rowcount > 0
+                else None
+            ),
+            "rows": [],
+            "complete": False,
+            "proxy": proxy,
+        }
+        self._journal.append(entry)
+        proxy._entry = entry
+
+    def _journaled_execute(self, proxy, method, sql, params):
+        """Run one statement of a journaled write operation.
+
+        A READONLY failure here is the poisoned-handle case (typically
+        SQLITE_READONLY_DBMOVED), which SQLite reports at the first write of
+        a transaction. It is recovered by :meth:`_recover_transaction`, which
+        replays what came before on a fresh connection and then runs this
+        statement there.
+        """
+        try:
+            getattr(proxy._cursor, method)(sql, params)
+        except sqlite3.Error as err:
+            if not self._is_readonly_error(err):
+                raise
+            self._recover_transaction(err, pending=(proxy, method, sql, params))
+            return proxy
+        self._record(proxy, method, sql, params)
+        return proxy
+
+    def _replay(self, journal):
+        """Re-run ``journal`` on the current connection, checking each result.
+
+        Every statement must do what it did the first time: the same
+        rowcount, the same lastrowid for an INSERT (later statements were
+        built from it), and the same rows for anything the caller read. Any
+        difference means the database changed in between -- another writer,
+        or a different file now at the path -- and the decisions the
+        operation made from those reads no longer hold, so the replay is
+        refused rather than committed.
+        """
+        cursors = []
+        for number, entry in enumerate(journal, start=1):
+            cursor = self.dbid.cursor()
+            try:
+                getattr(cursor, entry["method"])(entry["sql"], entry["params"])
+            except sqlite3.Error as err:
+                if self._is_retryable_sql_error(err):
+                    raise  # transient: the next attempt may get through
+                # It succeeded the first time; failing now (a UNIQUE row
+                # that is already there, a missing table) is a difference.
+                raise _ReplayDiverged(
+                    f"statement {number} failed on replay: {err}"
+                ) from err
+            if cursor.rowcount != entry["rowcount"]:
+                raise _ReplayDiverged(
+                    f"statement {number} changed {cursor.rowcount} rows on "
+                    f"replay, {entry['rowcount']} the first time"
+                )
+            if entry["lastrowid"] is not None and (
+                cursor.lastrowid != entry["lastrowid"]
+            ):
+                raise _ReplayDiverged(
+                    f"statement {number} inserted row {cursor.lastrowid} on "
+                    f"replay, {entry['lastrowid']} the first time"
+                )
+            seen = entry["rows"]
+            if entry["complete"]:
+                again = [tuple(row) for row in cursor.fetchall()]
+            elif seen:
+                again = [tuple(row) for row in cursor.fetchmany(len(seen))]
+            else:
+                again = []
+            if again != seen:
+                raise _ReplayDiverged(
+                    f"statement {number} read different rows on replay"
+                )
+            cursors.append((entry, cursor))
+        return cursors
+
+    def _recover_transaction(self, err, pending=None, commit=False):
+        """Reopen, replay the journaled transaction, and carry on.
+
+        DID-matlab reopens the connection before retrying a READONLY
+        statement (da83fa3): a poisoned handle -- SQLITE_READONLY_DBMOVED,
+        SQLite believing the file moved out from under it -- is cleared by
+        reopening, never by waiting. mksqlite autocommits each statement, so
+        there the failed statement is all there is to re-run. Here it is part
+        of a transaction whose earlier statements die with the handle, so all
+        of them are replayed on the fresh connection and verified (see
+        :meth:`_replay`) before the operation continues. Only SQL is
+        replayed: files the operation already copied stay where they are,
+        which is why the operation itself is not simply run again.
+
+        ``pending`` is the statement that failed, run after the replay; with
+        ``commit`` the replayed transaction is committed. On the same backoff
+        schedule as the statement retry; a replay that diverges is never
+        retried, and the original error is raised.
+        """
+        journal = self._journal
+        last_err = err
+        for attempt, backoff in enumerate(_RETRY_BACKOFFS, start=1):
+            if self.debug:
+                print(
+                    f"DID:SQLITEDB readonly inside a write operation (attempt "
+                    f"{attempt}/{len(_RETRY_BACKOFFS)}, {backoff:g} s backoff): "
+                    f"reopening and replaying {len(journal)} statement(s)",
+                    file=sys.stderr,
+                )
+            # Let go of the dead transaction first, so its locks do not hold
+            # other writers up for the length of the backoff.
+            if self.dbid is not None:
+                with contextlib.suppress(sqlite3.Error):
+                    self.dbid.rollback()
+            time.sleep(backoff)
+            # Suspended while reopening: _open_db commits on its own.
+            self._journal = None
+            try:
+                self._reopen_db()
+                if self.dbid is None:
+                    continue
+                try:
+                    cursors = self._replay(journal)
+                    if commit:
+                        self.dbid.commit()
+                except _ReplayDiverged as diverged:
+                    with contextlib.suppress(sqlite3.Error):
+                        self.dbid.rollback()
+                    print(
+                        "DID:SQLITEDB could not recover the write operation: "
+                        f"{diverged}. Nothing from it was written.",
+                        file=sys.stderr,
+                    )
+                    self._report_sql_error(err)
+                    raise err from diverged
+                except sqlite3.Error as replay_err:
+                    with contextlib.suppress(sqlite3.Error):
+                        self.dbid.rollback()
+                    last_err = replay_err
+                    if not self._is_retryable_sql_error(replay_err):
+                        break
+                    continue
+            finally:
+                self._journal = journal
+
+            # The caller's cursors now point at the fresh connection, each at
+            # the result of its last statement.
+            for entry, cursor in cursors:
+                entry["proxy"]._cursor = cursor
+            if pending is not None:
+                proxy, method, sql, params = pending
+                proxy._cursor = self.dbid.cursor()
+                try:
+                    getattr(proxy._cursor, method)(sql, params)
+                except sqlite3.Error as pending_err:
+                    if not self._is_readonly_error(pending_err):
+                        # An ordinary failure of the statement itself, as it
+                        # would have been the first time: the transaction
+                        # stays open for the caller, just as SQLite leaves it.
+                        raise
+                    last_err = pending_err
+                    continue
+                self._record(proxy, method, sql, params)
+            if self.debug:
+                print(
+                    f"DID:SQLITEDB write operation recovered on attempt "
+                    f"{attempt}/{len(_RETRY_BACKOFFS)} (after reopen)",
+                    file=sys.stderr,
+                )
+            return
+        if self.dbid is None:
+            # Every reopen failed. Leave a connection behind if the path has
+            # come back, so the caller's rollback does not hide this error.
+            with contextlib.suppress(sqlite3.Error, OSError):
+                self._open_db()
         self._report_sql_error(last_err)
         raise last_err
 
@@ -498,10 +818,11 @@ class SQLiteDB(Database):
         rows = self.do_run_sql_query("SELECT DISTINCT branch_id FROM branches")
         return [row["branch_id"] for row in rows]
 
+    @_journaled
     def _do_add_branch(self, branch_id, parent_branch_id):
         import time
 
-        cursor = self.dbid.cursor()
+        cursor = self._journal_cursor()
 
         # Handle empty string parent as NULL
         if parent_branch_id == "":
@@ -657,6 +978,7 @@ class SQLiteDB(Database):
 
         return props
 
+    @_journaled
     def _do_add_doc(
         self,
         document_obj,
@@ -676,7 +998,7 @@ class SQLiteDB(Database):
             )
 
         doc_id = document_obj.id()
-        cursor = self.dbid.cursor()
+        cursor = self._journal_cursor()
 
         # Validate branch existence BEFORE any INSERT. Previously the docs and
         # doc_data rows were inserted first and the missing branch was only
@@ -788,7 +1110,7 @@ class SQLiteDB(Database):
         except Exception:
             # Every failure path rolls back so no partial rows survive into the
             # next transaction, and the fields cache is restored to match.
-            self.dbid.rollback()
+            self._rollback()
             self._fields_cache = cache_before
             raise
 
@@ -2551,8 +2873,9 @@ class SQLiteDB(Database):
             except OSError:
                 pass
 
+    @_journaled
     def _do_remove_doc(self, document_id, branch_id, **kwargs):
-        cursor = self.dbid.cursor()
+        cursor = self._journal_cursor()
 
         # Check if branch exists
         cursor.execute("SELECT 1 FROM branches WHERE branch_id = ?", (branch_id,))
@@ -2590,7 +2913,7 @@ class SQLiteDB(Database):
                 # As in _do_add_doc: a failure part-way through must not leave
                 # the branch_docs delete sitting in an open transaction for the
                 # next commit on this connection to pick up.
-                self.dbid.rollback()
+                self._rollback()
                 raise
 
             # Only once the rows are committed - see _reclaim_unreferenced_doc.
@@ -2603,6 +2926,7 @@ class SQLiteDB(Database):
             elif on_missing != "ignore":
                 raise ValueError(f"Document id '{document_id}' not found for removal.")
 
+    @_journaled
     def _do_delete_branch(self, branch_id):
         """Delete a branch, reclaiming any document it was the last to hold.
 
@@ -2613,7 +2937,7 @@ class SQLiteDB(Database):
         holds is left completely alone. Deleting documents from one branch
         does not delete them from other branches.
         """
-        cursor = self.dbid.cursor()
+        cursor = self._journal_cursor()
         cached_paths = []
         try:
             # Note which documents this branch holds BEFORE dropping its rows:
@@ -2641,7 +2965,7 @@ class SQLiteDB(Database):
 
             self._commit()
         except Exception:
-            self.dbid.rollback()
+            self._rollback()
             raise
 
         # Only once the rows are committed - see _reclaim_unreferenced_doc.

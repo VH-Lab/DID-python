@@ -153,27 +153,38 @@ classes:
       UserWrite), and a temp-file write probe of the directory -- but print
       the time as ISO-8601 UTC rather than MATLAB's local datestr.
 
-      DEVIATION -- where the retry may run. mksqlite autocommits every
-      statement, so in MATLAB a failed statement is the whole unit of work
-      and re-running it (even after a reopen) is safe. SQLiteDB groups each
-      add/remove/branch operation into one sqlite3 transaction. Rolling back
-      or reopening mid-transaction would silently discard the statements
-      already pending, and a retried tail would then commit a partial
-      operation. So do_run_sql_query retries only when the connection had no
-      uncommitted work before the statement; inside a transaction the error
-      is reported (with diagnostics) and raised at once, and the caller's
-      existing rollback runs.
+      DEVIATION -- what is re-run after a reopen. mksqlite autocommits
+      every statement, so in MATLAB a failed statement is the whole unit of
+      work and re-running it after a reopen is safe. SQLiteDB groups each
+      add/remove/branch operation into one sqlite3 transaction, and a
+      poisoned handle takes the transaction's earlier statements with it.
+      Since 2026-10-23 (da83fa3's reopen, carried into the transaction
+      case) the four write operations -- _do_add_branch,
+      _do_add_doc, _do_remove_doc, _do_delete_branch -- run through a
+      journaling cursor (_JournalCursor, @_journaled) that records each
+      statement's SQL, parameters, rowcount, an INSERT's lastrowid and every
+      row the operation read. On a READONLY inside one -- at a statement or
+      at COMMIT -- _recover_transaction rolls the dead transaction back,
+      waits on the same backoff schedule, reopens, replays the journal and
+      checks each statement against what it did the first time, then runs
+      the failed statement (or commits). Only SQL is replayed: files the
+      operation copied, or deleted with delete_original, before the failure
+      are not touched again, which is why the operation is not simply re-run.
+      A replay that differs -- another writer took the next doc_idx, a
+      different file is now at the path, a statement fails -- is refused,
+      nothing is written, and the original error is raised; it is not
+      retried. Two things found while porting: SQLite reports DBMOVED at a
+      transaction's FIRST WRITE, not at COMMIT, so that is where recovery
+      usually happens; and a file swapped out after that first write is not
+      detected at all -- COMMIT "succeeds" into the unlinked file -- which no
+      retry in either language can see.
+      do_run_sql_query, outside a write operation, keeps its own retry: only
+      when no transaction is open, reopening first for READONLY; inside an
+      unjournaled transaction the error is raised at once.
 
-      DEVIATION -- the commit is retried too. Because Python's writes reach
-      the disk at COMMIT rather than at each statement, that is where a
-      slow-drive failure lands here. Every commit now goes through
-      _commit(), which retries a BUSY / READONLY COMMIT on the same schedule
-      while the transaction is still open. It never reopens -- that would
-      lose the transaction -- so a genuinely poisoned handle (DBMOVED) is not
-      recovered at COMMIT: the error is raised and the operation rolled back.
-      Replaying a whole operation after a reopen would cover that case, but
-      _do_add_doc also copies ingested files, so it is not obviously
-      idempotent; not attempted.
+      BUSY at COMMIT is still waited out on the same connection while the
+      transaction stays open, never replayed: a lock clears with time, and
+      the transaction is intact.
 
       DEVIATION -- classification. Like MATLAB, BUSY vs READONLY is judged
       from the error message (sqlite3.Error.sqlite_errorcode would be exact

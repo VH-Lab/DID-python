@@ -18,10 +18,12 @@ fake sleep is the hook that releases the lock "while we waited".
 """
 
 import os
+import shutil
 import sqlite3
 
 import pytest
 
+from did.document import Document
 from did.implementations import sqlitedb as sqlitedb_module
 from did.implementations.sqlitedb import SQLiteDB
 
@@ -267,3 +269,255 @@ class TestReadonlyDiagnostics:
         monkeypatch.setattr(sqlitedb_module.tempfile, "NamedTemporaryFile", refuse)
         diag = db._collect_readonly_diagnostics()
         assert "db dir writable: NO (Read-only file system)" in diag
+
+
+def _move_file_under_handle(path):
+    """Replace the database with a byte-identical copy at the same path.
+
+    The open connection still holds the old inode, so its next write fails
+    with SQLITE_READONLY_DBMOVED ("attempt to write a readonly database") --
+    the poisoned handle da83fa3 reopens to clear. No mocking: this is the
+    real SQLite failure.
+    """
+    shutil.copyfile(path, path + ".moved")
+    os.replace(path + ".moved", path)
+
+
+def _doc(idhex, value=1):
+    return Document(
+        {
+            "base": {"id": idhex, "datestamp": "2020-01-01"},
+            "document_class": {"class_name": "thing"},
+            "demoA": {"value": value},
+        }
+    )
+
+
+def _doc_ids_on_disk(path):
+    with sqlite3.connect(path) as check:
+        return {row[0] for row in check.execute("SELECT doc_id FROM docs")}
+
+
+class TestPoisonedHandleRecovery:
+    """A READONLY inside a write operation: reopen, replay, carry on."""
+
+    def test_the_failure_is_real(self, db):
+        db.add_branch("main")
+        _move_file_under_handle(db.connection)
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            db.dbid.execute("INSERT INTO branches VALUES ('x', NULL, 0)")
+
+    def test_add_doc_is_recovered_after_the_file_moved(self, db, sleeps):
+        db.add_branch("main")
+        poisoned = db.dbid
+        _move_file_under_handle(db.connection)
+
+        db.add_docs([_doc("a" * 32)], branch_id="main", validate=False)
+
+        assert sleeps == [0.1]
+        assert db.dbid is not poisoned
+        assert "a" * 32 in _doc_ids_on_disk(db.connection)
+        got = db.get_docs("a" * 32, branch_id="main")
+        assert got.document_properties["demoA"]["value"] == 1
+
+    def test_add_branch_is_recovered(self, db, sleeps):
+        db.add_branch("main")
+        _move_file_under_handle(db.connection)
+
+        db.add_branch("b2", parent_branch_id="main")
+
+        assert sleeps == [0.1]
+        assert {"main", "b2"} <= _branch_ids(db.connection)
+
+    def test_remove_doc_is_recovered(self, db, sleeps):
+        db.add_branch("main")
+        db.add_docs([_doc("b" * 32)], branch_id="main", validate=False)
+        _move_file_under_handle(db.connection)
+
+        db.remove_docs(["b" * 32], branch_id="main")
+
+        assert sleeps == [0.1]
+        assert "b" * 32 not in _doc_ids_on_disk(db.connection)
+
+    def test_the_journal_ends_with_the_operation(self, db, sleeps):
+        db.add_branch("main")
+        _move_file_under_handle(db.connection)
+        db.add_docs([_doc("c" * 32)], branch_id="main", validate=False)
+        assert db._journal is None
+        # The next operation replays nothing from the last one.
+        _move_file_under_handle(db.connection)
+        db.add_docs([_doc("d" * 32, 2)], branch_id="main", validate=False)
+        assert {"c" * 32, "d" * 32} <= _doc_ids_on_disk(db.connection)
+
+    def test_a_replay_that_reads_a_different_database_is_refused(
+        self, db, sleeps, capsys
+    ):
+        # The file now at the path is an older copy, without the branch the
+        # operation already checked for on the poisoned handle. Committing a
+        # replay against it would write a document into a branch that does
+        # not exist there, so it is refused and nothing is written.
+        snapshot = db.connection + ".before"
+        shutil.copyfile(db.connection, snapshot)
+        db.add_branch("main")
+        os.replace(snapshot, db.connection)
+
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            db.add_docs([_doc("e" * 32)], branch_id="main", validate=False)
+
+        assert sleeps == [0.1]  # diverged: not retried
+        assert "e" * 32 not in _doc_ids_on_disk(db.connection)
+        assert "read different rows on replay" in capsys.readouterr().err
+
+    def test_without_a_journal_a_readonly_handle_is_not_replayed(self, db, sleeps):
+        # Outside a write operation, do_run_sql_query's own retry applies.
+        assert db._journal is None
+        db.add_branch("main")
+        _move_file_under_handle(db.connection)
+        db.do_run_sql_query(INSERT_BRANCH, ("x", None, 0.0))
+        db._commit()
+        assert "x" in _branch_ids(db.connection)
+
+
+class TestRecoveryThatCannotReopen:
+    def test_the_original_error_reaches_the_caller(self, db, sleeps, monkeypatch):
+        db.add_branch("main")
+        db.dbid = _ReadonlyAtCommit(db.dbid)
+        real_open = SQLiteDB._open_db
+
+        def refuse(self):
+            raise sqlite3.OperationalError("unable to open database file")
+
+        monkeypatch.setattr(SQLiteDB, "_open_db", refuse)
+        with pytest.raises(sqlite3.OperationalError):
+            db.add_docs([_doc("7" * 32)], branch_id="main", validate=False)
+        assert len(sleeps) == 6  # every attempt tried to reopen
+
+        monkeypatch.setattr(SQLiteDB, "_open_db", real_open)
+        db._open_db()
+        assert "7" * 32 not in _doc_ids_on_disk(db.connection)
+
+
+class _ReadonlyAtCommit:
+    """A connection whose next COMMITs fail READONLY, as a poisoned one does.
+
+    SQLite reports DBMOVED at a transaction's first write, so a READONLY that
+    reaches COMMIT comes from elsewhere (a hot journal, a remount); it cannot
+    be produced on demand, so this one is a stand-in around a real handle.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def commit(self):
+        # Every time: waiting never clears a poisoned handle, only a reopen.
+        raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+class TestReadonlyCommitRecovery:
+    def test_a_readonly_commit_is_replayed_on_a_fresh_connection(self, db, sleeps):
+        db.add_branch("main")
+        db.dbid = _ReadonlyAtCommit(db.dbid)
+
+        db.add_docs([_doc("f" * 32)], branch_id="main", validate=False)
+
+        assert sleeps == [0.1]
+        assert isinstance(db.dbid, sqlite3.Connection)  # reopened
+        assert "f" * 32 in _doc_ids_on_disk(db.connection)
+
+    def test_files_ingested_before_the_commit_are_not_needed_again(self, db, sleeps):
+        # The ingest copies the file into FileDir and, with delete_original,
+        # deletes the source -- all before COMMIT. Running the operation
+        # again would fail on the missing source; replaying its SQL does not
+        # need the file at all.
+        db.add_branch("main")
+        source = os.path.join(os.path.dirname(db.connection), "source.bin")
+        with open(source, "wb") as handle:
+            handle.write(b"payload")
+        doc = Document("demoFile", **{"demoFile.value": 1})
+        doc.add_file("filename1.ext", "placeholder", ingest=0, delete_original=0)
+        doc.add_file("filename2.ext", "placeholder", ingest=0, delete_original=0)
+        _, info, _ = doc.is_in_file_list("filename1.ext")
+        info["locations"] = [
+            {
+                "location": source,
+                "location_type": "file",
+                "uid": "u-local",
+                "ingest": 1,
+                "delete_original": 1,
+                "parameters": "",
+            }
+        ]
+        db.dbid = _ReadonlyAtCommit(db.dbid)
+
+        db.add_docs([doc], branch_id="main", validate=False)
+
+        assert sleeps == [0.1]
+        assert not os.path.exists(source)
+        file_obj = db.open_doc(doc.id(), "filename1.ext")
+        file_obj.fopen()
+        try:
+            assert file_obj.fread() == b"payload"
+        finally:
+            file_obj.fclose()
+
+    def test_a_busy_commit_is_still_waited_out_not_replayed(self, db, sleeps):
+        db.add_branch("main")
+        reader = sqlite3.connect(db.connection, isolation_level=None)
+        reader.execute("BEGIN")
+        reader.execute("SELECT * FROM branches").fetchall()
+        sleeps.on_sleep.append(reader.rollback)
+        handle = db.dbid
+
+        db.add_docs([_doc("1" * 32)], branch_id="main", validate=False)
+
+        assert db.dbid is handle
+        assert "1" * 32 in _doc_ids_on_disk(db.connection)
+        reader.close()
+
+
+class TestReplayRefusesADifferentDatabase:
+    """A replay that does not do what the original did is never committed."""
+
+    def test_another_writer_in_between_is_refused(self, db, sleeps, capsys):
+        # While we wait to reopen, another connection adds a document. Our
+        # replayed INSERT then gets a different doc_idx, so every doc_data
+        # row built from the first one would point at the wrong document.
+        db.add_branch("main")
+        db.dbid = _ReadonlyAtCommit(db.dbid)
+        other = SQLiteDB(db.connection)
+        sleeps.on_sleep.append(
+            lambda: other.add_docs([_doc("8" * 32)], "main", validate=False)
+        )
+
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            db.add_docs([_doc("9" * 32)], branch_id="main", validate=False)
+
+        on_disk = _doc_ids_on_disk(db.connection)
+        assert "8" * 32 in on_disk
+        assert "9" * 32 not in on_disk
+        assert sleeps == [0.1]  # a divergence is not retried
+        assert "inserted row" in capsys.readouterr().err
+        other._close_db()
+
+    def test_a_statement_that_fails_on_replay_is_divergence(self, db, sleeps):
+        # Replaying a journal that is already on disk: its first INSERT now
+        # hits a UNIQUE row. That is reported as divergence, not as the
+        # IntegrityError, so the caller still sees the original failure.
+        db.add_branch("main")
+        journal = []
+        original = db._journal_committed
+
+        def capture():
+            journal.extend(dict(entry) for entry in db._journal)
+            original()
+
+        db._journal_committed = capture
+        db.add_branch("b2", parent_branch_id="main")
+        db._journal_committed = original
+
+        with pytest.raises(sqlitedb_module._ReplayDiverged, match="failed on replay"):
+            db._replay(journal)
+        db.dbid.rollback()
