@@ -40,7 +40,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "e4e02dc"
+    matlab_last_sync_hash: "2c9d8fa7"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
@@ -985,6 +985,16 @@ classes:
       DID-matlab's TestDependsOnParity case for case.
       DID-matlab 124cf5e (same PR) only fixes how MATLAB's brute_force_search
       builds its did.query; nothing to port.
+
+      DID-matlab 2c9d8fa7 (2026-10-24, DID-matlab#237): search_doc_ids used to
+      strip the '~' of a '~or' and search it as a plain 'or'; a negated OR now
+      returns the documents of the branch (or the candidates, inside an AND)
+      minus the OR's matches. Python already did exactly that --
+      SQLiteDB._search_doc_ids takes universe - matched for a negated OR, and
+      _base_id_lookup_values treats a '~or' as no lookup -- so neither
+      did/database.py nor did/implementations/sqlitedb.py changes.
+      tests/test_negated_or.py pins the behaviour with the same cases as
+      MATLAB's did.unittest.TestNegatedOr.
 
   # -----------------------------------------------------------------------
   # did.document
