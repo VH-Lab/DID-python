@@ -40,12 +40,23 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "bb39399"
+    matlab_last_sync_hash: "83a2bda"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
     inherits: "abc.ABC"
     out_of_sync: false
+    decision_log: >
+      DID-matlab#229 (dae960b..83a2bda, 2026-10-24) made database.m's search
+      fast. search_doc_ids searches the terms of an AND in rank order (base.id
+      lookups, other terms, base.session_id, then the terms that test every
+      value) and checks each later term against the documents found so far;
+      ORed base.id lookups become one query (search_base_ids); and 'isa'
+      matches its regex against the distinct superclass lists only. All of it
+      relies on the doc_data indexes that sqlitedb creates (hasSearchIndexes).
+      In Python the SQL search is SQLiteDB's, not Database's, so the port is in
+      did/implementations/sqlitedb.py -- see the sqlitedb entry. Nothing
+      changes in did/database.py.
     sync_notes: >
       Schema validation was ported on 2026-08-28, closing what had been the
       largest capability gap between the two languages. Python previously had
