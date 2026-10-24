@@ -975,6 +975,17 @@ classes:
       changes journal_mode. The rest of that commit is in sqlitedb.m; see
       the sqlitedb entry.
 
+      DID-matlab a7ed185 (DID-matlab#235, 2026-10-24): query_struct_to_sql_str
+      matches depends_on with an anchored, case-sensitive instr on
+      meta.depends_on (';NAME,VALUE;', or ',VALUE;' for '*') instead of LIKE
+      "%NAME,VALUE;%", and search_doc_ids brute-forces (fieldsearch) a
+      depends_on whose name or value is empty or holds ',' / ';'. That is
+      what SQLiteDB's _depends_on_sql_clause already did (DID-python #101),
+      so nothing is ported; tests/test_depends_on_parity.py mirrors
+      DID-matlab's TestDependsOnParity case for case.
+      DID-matlab 124cf5e (same PR) only fixes how MATLAB's brute_force_search
+      builds its did.query; nothing to port.
+
   # -----------------------------------------------------------------------
   # did.document
   # -----------------------------------------------------------------------
@@ -1473,7 +1484,7 @@ classes:
   - name: query
     type: class
     matlab_path: "+did/query.m"
-    matlab_last_sync_hash: "3aa892d"
+    matlab_last_sync_hash: "a7ed185"
     status: ported
     python_path: "did/query.py"
     python_class: "Query"
@@ -1567,6 +1578,11 @@ classes:
       Query operations are fully synchronized. All MATLAB query
       operations (regexp, exact_string, depends_on, isa, etc.)
       are supported in Python. Synchronized 2026-03-15.
+
+      DID-matlab a7ed185 (DID-matlab#235) only adds help text to query.m:
+      depends_on's '*' is the only name wildcard, and name and value are
+      matched exactly and case-sensitively. Python's Query already resolves
+      depends_on that way; no code change.
 
   # -----------------------------------------------------------------------
   # did.ido
