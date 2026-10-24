@@ -307,6 +307,11 @@ classes:
     inherits_matlab: "handle"
     out_of_sync: false
     decision_log: >
+      SYNCHRONIZED 2026-08-29. Previously a partial port: read_row returned
+      raw bytes and insertRow, deleteRow, writeEntry, writeTable, findRow and
+      compare were absent. The full typed path is now present in both
+      languages over one shared little-endian on-disk layout.
+
       SYNCHRONIZED 2026-09-08 (DID-python#66). resetLockState is now
       ported (see the method entry below) and the fileCache error paths
       that MATLAB commit 4a0f9a5 hardened are matched on the Python side:
@@ -517,12 +522,6 @@ classes:
 
           2026-10-23: the unsorted path reads the column once instead of
           reopening the file per row. Same result; the same change as DID-matlab#221.
-
-    decision_log: >
-      SYNCHRONIZED 2026-08-29. Previously a partial port: read_row returned
-      raw bytes and insertRow, deleteRow, writeEntry, writeTable, findRow and
-      compare were absent. The full typed path is now present in both
-      languages over one shared little-endian on-disk layout.
 
   # -----------------------------------------------------------------------
   # did.file.fileCache
