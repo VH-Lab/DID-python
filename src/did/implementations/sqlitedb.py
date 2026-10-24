@@ -389,6 +389,15 @@ class SQLiteDB(Database):
         by another writer) is left as it is, as DID-matlab leaves it: the
         indexes only speed searches up, and without them searches run as they
         did before.
+
+        Building them is a one-time cost, but not a small one:
+        doc_data_field_value holds a copy of every field value, so for a large
+        dataset (100,000 documents can be tens of millions of doc_data rows)
+        on a slow or synced drive it can take minutes. Each index is announced
+        on stderr before it is built, with the approximate number of rows, and
+        timed -- otherwise the open just appears to hang. A database that
+        already has them opens without printing anything. Mirrors DID-matlab's
+        sqlitedb/ensure_search_indexes.
         """
         self._search_indexes_ready = False
         try:
@@ -398,18 +407,45 @@ class SQLiteDB(Database):
                     "SELECT name FROM sqlite_master WHERE type = 'index'"
                 )
             }
-            missing = [idx for idx in _SEARCH_INDEXES if idx[0] not in existing]
-            if missing:
-                cursor = self.dbid.cursor()
-                for name, columns in missing:
-                    cursor.execute(
-                        f'CREATE INDEX IF NOT EXISTS "{name}" ON doc_data({columns})'
-                    )
-                self.dbid.commit()
         except sqlite3.Error:
-            with contextlib.suppress(sqlite3.Error):
-                self.dbid.rollback()
-            return
+            return  # cannot even read the schema - search without the indexes
+        for name, columns in _SEARCH_INDEXES:
+            if name in existing:
+                continue
+            # max(rowid) is read straight from the end of the table's b-tree,
+            # so this estimate costs nothing (count(*) would scan)
+            try:
+                num_rows = self.dbid.execute(
+                    "SELECT max(rowid) FROM doc_data"
+                ).fetchone()[0]
+            except sqlite3.Error:
+                num_rows = None
+            print(
+                f"DID: adding search index {name} to {self.connection} "
+                f"(about {num_rows or 0:,} rows). This happens once per database "
+                "and can take several minutes for a large one...",
+                file=sys.stderr,
+            )
+            started = time.perf_counter()
+            try:
+                self.dbid.execute(
+                    f'CREATE INDEX IF NOT EXISTS "{name}" ON doc_data({columns})'
+                )
+                self.dbid.commit()
+            except sqlite3.Error as err:
+                with contextlib.suppress(sqlite3.Error):
+                    self.dbid.rollback()
+                print(
+                    f"DID: could not add search index {name} ({err}); "
+                    "searches will run without it.",
+                    file=sys.stderr,
+                )
+                return
+            print(
+                f"DID: added search index {name} in "
+                f"{time.perf_counter() - started:.1f} s.",
+                file=sys.stderr,
+            )
         self._search_indexes_ready = True
 
     def _close_db(self):

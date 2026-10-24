@@ -20,6 +20,8 @@ returned: a lookup that returns a row per document of the session is the slow
 path however quickly it happens to run on a small test database.
 """
 
+import contextlib
+import io
 import os
 import sqlite3
 import statistics
@@ -162,16 +164,29 @@ class TestSearchIndexes(unittest.TestCase):
             older.dbid.commit()
             older._close_db()
 
-            reopened = SQLiteDB(path)
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                reopened = SQLiteDB(path)
             try:
                 names = self.index_names(reopened)
                 for name in SEARCH_INDEXES:
                     self.assertIn(name, names, f"opening must add {name}")
+                    # building an index on a large database can take minutes,
+                    # so each one is announced and timed, not built silently
+                    self.assertIn(f"adding search index {name}", stderr.getvalue())
+                    self.assertIn(f"added search index {name} in ", stderr.getvalue())
                 self.assertTrue(reopened._search_indexes_ready)
                 q = _id_query(doc.id()) & _session_query(self.session)
                 self.assertEqual(reopened.search(q, branch_id="a"), [doc.id()])
             finally:
                 reopened._close_db()
+
+            # ...and only once: a database that has them opens quietly
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                again = SQLiteDB(path)
+            again._close_db()
+            self.assertNotIn("search index", stderr.getvalue())
 
     def test_read_only_database_without_indexes_still_searches(self):
         with tempfile.TemporaryDirectory() as tmp:
