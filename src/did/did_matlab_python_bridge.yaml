@@ -40,7 +40,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "83a2bda"
+    matlab_last_sync_hash: "0de9cf2"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
@@ -57,6 +57,11 @@ classes:
       In Python the SQL search is SQLiteDB's, not Database's, so the port is in
       did/implementations/sqlitedb.py -- see the sqlitedb entry. Nothing
       changes in did/database.py.
+      DID-matlab 0de9cf2 (2026-10-24): search_doc_ids unions over
+      did.datastructures.orOperands for an OR that is not all base.id
+      lookups, instead of recursing once per nested OR. Ported to
+      SQLiteDB._search_doc_ids (DID-python #100 / #103); nothing changes in
+      did/database.py.
     sync_notes: >
       Schema validation was ported on 2026-08-28, closing what had been the
       largest capability gap between the two languages. Python previously had

@@ -162,6 +162,34 @@ def struct_partial_match(a, b):
     return True
 
 
+def or_operands(search_struct):
+    """The operands of an OR search structure, with nested ORs flattened.
+
+    ``q1 | q2 | q3 ...`` built in a loop nests one OR per term:
+    ``or(or(or(q1, q2), q3), ...)``. Evaluating that by recursion costs a
+    stack frame or more per term, and a few hundred terms overrun Python's
+    recursion limit (issue #100). This walks the chain with a stack instead
+    and returns the operands in their left-to-right order, so the caller can
+    evaluate them in a loop.
+
+    An operand that is itself an OR (a dict, or a one-element list holding
+    one) is flattened into the chain; a negated OR ('~or') is not -- it is
+    one operand, as its negation applies to its whole result. Operands are
+    returned as given, empty ones included: what an empty operand means is
+    the caller's, as before.
+    """
+    operands = []
+    pending = [search_struct.get("param2"), search_struct.get("param1")]
+    while pending:
+        item = pending.pop()
+        inner = item[0] if isinstance(item, list) and len(item) == 1 else item
+        if isinstance(inner, dict) and str(inner.get("operation", "")).lower() == "or":
+            pending.extend([inner.get("param2"), inner.get("param1")])
+        else:
+            operands.append(item)
+    return operands
+
+
 def field_search(a, search_struct):
     """
     Searches a dictionary to determine if it matches a search structure.
@@ -268,7 +296,8 @@ def field_search(a, search_struct):
                         b = True
                         break
     elif op_lower == "or":
-        b = field_search(a, param1) or field_search(a, param2)
+        # A long OR chain is a deep tree; flatten it rather than recurse
+        b = any(field_search(a, operand) for operand in or_operands(search_struct))
     elif op_lower == "depends_on":
         # param1 = dependency name, param2 = dependency value
         if "depends_on" in a:

@@ -92,13 +92,83 @@ class Query:
 
     @staticmethod
     def _resolve_search_structure(ss):
-        """Recursively resolve a search structure."""
-        if isinstance(ss, list):
-            return [Query._resolve_single(item) for item in ss]
-        return Query._resolve_single(ss)
+        """Resolve a search structure: a list (an AND) or a single item.
+
+        A chain of ORs built in a loop (``q = q | ...``) nests one level per
+        term, so this walks the structure with an explicit stack rather than
+        by recursion, which ran out of stack after about 1,000 terms (issue
+        #100). Each node is rebuilt once all its children are: a list from
+        its resolved items, an OR from its resolved operands, anything else
+        by :meth:`_resolve_leaf`. The result is what the recursive
+        definition gives -- see :meth:`_resolve_single` for the per-node rule.
+        """
+        # A node is (object, kind). "struct" is anything an OR operand or the
+        # top level may be (a list is an AND of items); "single" is one item.
+        done = {}  # (id(object), kind) -> resolved
+        keep_alive = []  # objects whose id() is a key in done
+        stack = [(ss, "struct")]
+        while stack:
+            node, kind = stack[-1]
+            key = (id(node), kind)
+            if key in done:
+                stack.pop()
+                continue
+            children = Query._resolve_children(node, kind)
+            pending = [c for c in children if (id(c[0]), c[1]) not in done]
+            if pending:
+                stack.extend(reversed(pending))
+                continue
+            stack.pop()
+            keep_alive.append(node)
+            done[key] = Query._resolve_node(node, kind, done)
+        return done[(id(ss), "struct")]
+
+    @staticmethod
+    def _is_or(item):
+        return (
+            isinstance(item, dict)
+            and str(item.get("operation", "")).removeprefix("~").lower() == "or"
+        )
+
+    @staticmethod
+    def _resolve_children(node, kind):
+        """The nodes that must be resolved before *node* can be."""
+        if kind == "struct":
+            if isinstance(node, list):
+                return [(item, "single") for item in node]
+            return [(node, "single")]
+        if Query._is_or(node):
+            return [
+                (node.get(p), "struct") for p in ("param1", "param2") if node.get(p)
+            ]
+        return []
+
+    @staticmethod
+    def _resolve_node(node, kind, done):
+        """Resolve *node*, whose children are already resolved in *done*."""
+        if kind == "struct":
+            if isinstance(node, list):
+                return [done[(id(item), "single")] for item in node]
+            return done[(id(node), "single")]
+        if Query._is_or(node):
+            p1, p2 = node.get("param1"), node.get("param2")
+            return {
+                "field": node.get("field", ""),
+                "operation": node.get("operation", ""),
+                "param1": done[(id(p1), "struct")] if p1 else p1,
+                "param2": done[(id(p2), "struct")] if p2 else p2,
+            }
+        return Query._resolve_leaf(node)
 
     @staticmethod
     def _resolve_single(item):
+        """Resolve one item: an OR's operands in turn, or a leaf operation."""
+        if Query._is_or(item):
+            return Query._resolve_search_structure(item)
+        return Query._resolve_leaf(item)
+
+    @staticmethod
+    def _resolve_leaf(item):
         if not isinstance(item, dict):
             return item
 
@@ -137,16 +207,5 @@ class Query:
                 "param2": param2_list,
             }
             return resolved
-
-        elif op_lower == "or":
-            # Recursively resolve OR sub-structures
-            p1 = item.get("param1")
-            p2 = item.get("param2")
-            return {
-                "field": item.get("field", ""),
-                "operation": operation,
-                "param1": Query._resolve_search_structure(p1) if p1 else p1,
-                "param2": Query._resolve_search_structure(p2) if p2 else p2,
-            }
 
         return item

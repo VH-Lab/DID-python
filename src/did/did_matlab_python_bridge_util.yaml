@@ -317,11 +317,28 @@ functions:
   - name: fieldsearch
     type: function
     matlab_path: "+did/+datastructures/fieldsearch.m"
-    matlab_last_sync_hash: "3aa892d"
+    matlab_last_sync_hash: "0de9cf2"
     status: ported
     python_path: "did/datastructures.py"
     python_name: "field_search"
-    decision_log: "Exact match. Synchronized 2026-03-15."
+    decision_log: >
+      Exact match. Synchronized 2026-03-15. DID-matlab 0de9cf2 (2026-10-24):
+      case 'or' loops over did.datastructures.orOperands instead of recursing
+      once per nested OR, and stops at the first operand that matches;
+      field_search does the same with or_operands (DID-python #100 / #103).
+
+  - name: orOperands
+    type: function
+    matlab_path: "+did/+datastructures/orOperands.m"
+    matlab_last_sync_hash: "0de9cf2"
+    status: ported
+    python_path: "did/datastructures.py"
+    python_name: "or_operands"
+    decision_log: >
+      Added in both languages together (DID-python #100 / #103, DID-matlab
+      0de9cf2): flattens a chain of nested ORs into its operands, left to
+      right, with a stack; a nested '~or' stays one operand. MATLAB returns a
+      cell array, Python a list.
 
   - name: findclosest
     type: function
