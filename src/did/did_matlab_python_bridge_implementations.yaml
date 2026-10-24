@@ -194,6 +194,27 @@ classes:
       onto the same file, since nothing has been committed yet. MATLAB has
       the same gap, narrower because each mksqlite statement commits on its
       own; this check is not in DID-matlab.
+
+      DID-matlab#227 (2026-10-24) brought MATLAB to the same design: each
+      write operation is one transaction (beginWrite/commitWrite, BEGIN
+      IMMEDIATE), journaled and replayed after a reopen (recoverTransaction,
+      replayJournal), with the same pre-commit replaced-file check
+      (fileWasReplaced, unix dev:inode via Java). Synced here: two things it
+      does that Python did not. (1) delete_original sources are deleted only
+      once the operation commits (_delete_after_commit, flushed by
+      _journal_committed), so a rollback no longer leaves the only copy of a
+      file unreferenced in FileDir; reclaimed cached copies already waited
+      for the commit. A source two files share is deleted once, and a
+      missing one is not a warning, as MATLAB suppresses
+      MATLAB:DELETE:FileNotFound. (2) _recover_transaction does not reopen a
+      database file that no longer exists -- that created a new, empty
+      database there -- and raises the original error with a
+      FileNotFoundError as its cause (MATLAB: DID:SQLITEDB:DatabaseFileGone).
+      Remaining differences: MATLAB begins with BEGIN IMMEDIATE, Python's
+      sqlite3 with a deferred BEGIN at the first write; MATLAB checks
+      changes() after each write where Python compares cursor.rowcount; and
+      MATLAB restores fields_cache in abandonWrite where Python restores
+      _fields_cache in each operation's except path. Same effect each time.
       do_run_sql_query, outside a write operation, keeps its own retry: only
       when no transaction is open, reopening first for READONLY; inside an
       unjournaled transaction the error is raised at once.

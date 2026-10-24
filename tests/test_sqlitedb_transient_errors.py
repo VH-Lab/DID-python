@@ -573,11 +573,12 @@ class TestFileReplacedAfterTheFirstWrite:
         db.add_branch("main")
         self._swap_during_add(monkeypatch, os.remove)
 
-        with pytest.raises(sqlite3.OperationalError, match="was replaced"):
+        with pytest.raises(sqlite3.OperationalError, match="was replaced") as caught:
             db.add_docs([_doc("6" * 32)], branch_id="main", validate=False)
-        # Reopening made a new, empty database at the path; the replay read
-        # no branch there and was refused rather than written.
-        assert "6" * 32 not in _doc_ids_on_disk(db.connection)
+        assert isinstance(caught.value.__cause__, FileNotFoundError)
+        # Not reopened: that would have created a new, empty database at the
+        # path and replayed into it.
+        assert not os.path.exists(db.connection)
 
     def test_a_false_alarm_costs_one_replay_onto_the_same_file(
         self, db, sleeps, monkeypatch
@@ -619,3 +620,51 @@ class TestFileReplacedAfterTheFirstWrite:
         db.add_branch("b2", parent_branch_id="main")  # recovered by reopen
         assert db._db_identity == db._file_identity()
         assert not db._file_was_replaced()
+
+
+class TestOriginalsAreDeletedAfterCommit:
+    """delete_original waits for the commit, so a rollback keeps the file."""
+
+    def _file_doc(self, db):
+        source = os.path.join(os.path.dirname(db.connection), "source.bin")
+        with open(source, "wb") as handle:
+            handle.write(b"payload")
+        doc = Document("demoFile", **{"demoFile.value": 1})
+        doc.add_file("filename1.ext", "placeholder", ingest=0, delete_original=0)
+        doc.add_file("filename2.ext", "placeholder", ingest=0, delete_original=0)
+        _, info, _ = doc.is_in_file_list("filename1.ext")
+        info["locations"] = [
+            {
+                "location": source,
+                "location_type": "file",
+                "uid": "u-local",
+                "ingest": 1,
+                "delete_original": 1,
+                "parameters": "",
+            }
+        ]
+        return doc, source
+
+    def test_a_rolled_back_add_keeps_the_original(self, db, monkeypatch):
+        db.add_branch("main")
+        doc, source = self._file_doc(db)
+
+        def refuse(self):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(SQLiteDB, "_commit", refuse)
+        with pytest.raises(sqlite3.OperationalError, match="disk I/O"):
+            db.add_docs([doc], branch_id="main", validate=False)
+        assert os.path.exists(source), "a rollback must not delete the original"
+        assert doc.id() not in _doc_ids_on_disk(db.connection)
+
+        monkeypatch.undo()
+        db.add_docs([doc], branch_id="main", validate=False)
+        assert not os.path.exists(source), "deleted once the add commits"
+        assert doc.id() in _doc_ids_on_disk(db.connection)
+
+    def test_nothing_is_left_queued_after_an_operation(self, db):
+        db.add_branch("main")
+        doc, _ = self._file_doc(db)
+        db.add_docs([doc], branch_id="main", validate=False)
+        assert db._pending_deletes is None
