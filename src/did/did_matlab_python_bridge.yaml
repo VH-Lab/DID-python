@@ -40,7 +40,7 @@ classes:
   - name: database
     type: class
     matlab_path: "+did/database.m"
-    matlab_last_sync_hash: "8bea92c"
+    matlab_last_sync_hash: "bb39399"
     status: ported
     python_path: "did/database.py"
     python_class: "Database"
@@ -933,7 +933,7 @@ classes:
       connection is managed differently (see the sqlitedb open_db/close_db
       note). Synchronized 2026-03-15; validation 2026-08-28.
 
-      DID-matlab#227 (2026-10-24) changed add_docs(..., 'Validate', false)
+      DID-matlab#227 (bb39399, 2026-10-24) changed add_docs(..., 'Validate', false)
       to set journal_mode=MEMORY instead of OFF, since each document is now
       one transaction and ROLLBACK is undefined with the journal OFF.
       Nothing to port: Python's add_docs has no such fast path and never

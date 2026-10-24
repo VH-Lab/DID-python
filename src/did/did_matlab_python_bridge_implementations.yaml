@@ -29,7 +29,7 @@ classes:
   - name: sqlitedb
     type: class
     matlab_path: "+did/+implementations/sqlitedb.m"
-    matlab_last_sync_hash: "da83fa3"
+    matlab_last_sync_hash: "bb39399"
     status: ported
     python_path: "did/implementations/sqlitedb.py"
     python_class: "SQLiteDB"
@@ -195,7 +195,7 @@ classes:
       the same gap, narrower because each mksqlite statement commits on its
       own; this check is not in DID-matlab.
 
-      DID-matlab#227 (2026-10-24) brought MATLAB to the same design: each
+      DID-matlab#227 (bb39399, 2026-10-24) brought MATLAB to the same design: each
       write operation is one transaction (beginWrite/commitWrite, BEGIN
       IMMEDIATE), journaled and replayed after a reopen (recoverTransaction,
       replayJournal), with the same pre-commit replaced-file check
