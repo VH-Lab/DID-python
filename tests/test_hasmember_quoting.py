@@ -1,4 +1,4 @@
-"""'hasmember': one rule in field_search and in SQL (DID-matlab#236).
+"""'hasmember': one rule, searched by brute force (DID-matlab#236).
 
 DID-matlab's SQL search put a text 'hasmember' value into the SQL unquoted, so
 'value' matched every document and '1 OR 1=1' was SQL injection. Python never
@@ -6,7 +6,8 @@ builds SQL for hasmember -- _query_struct_to_sql_str returns None, and the term
 is brute-forced with field_search -- so it was never affected. But DID-matlab's
 fieldsearch (ismember, which compares two texts character by character), its
 SQL search and field_search (``in``: a substring test) each matched another
-rule. All three now match one:
+rule. All three now match one, and DID-matlab searches hasmember by brute
+force with fieldsearch, as Python always has:
 
 - text is a member of text that is the whole value or an item of its
   comma-separated list;
@@ -159,6 +160,50 @@ class TestHasMemberQuoting(unittest.TestCase):
                 self.verify_search(q, [], f"hasmember {member}")
                 q = _has_member("demoA.value", member, True)
                 self.verify_search(q, self.ids, f"~hasmember {member}")
+
+    def test_missing_field(self):
+        # No document has demoB.value: ~hasmember matches every one
+        self.verify_search(_has_member("demoB.value", 1), [], "missing field")
+        self.verify_search(_has_member("demoB.value", 1, True), self.ids, "~missing")
+
+    def test_list_fields(self):
+        # DID-matlab's doc2sql stores these as '[1 3] double' / '[1 2] cell',
+        # which its SQL could not search; brute force can, in both languages
+        with tempfile.TemporaryDirectory() as tmp:
+            db = SQLiteDB(os.path.join(tmp, "list_fields.sqlite"))
+            db.add_branch("a")
+            docs = [
+                _doc("numbers", [1, 2, 3]),
+                _doc("other", [4, 5]),
+                _doc("names", ["alpha", "beta"]),
+            ]
+            ids = [d.id() for d in docs]
+            db.add_docs(docs, branch_id="a", validate=False)
+            cases = [
+                ("demoA.value", 2, [0]),
+                ("demoA.value", 5, [1]),
+                ("demoA.value", 6, []),
+                ("demoA.value", "beta", [2]),
+                ("demoA.value", "gamma", []),
+                ("base.name", "other", [1]),
+            ]
+            try:
+                for field, member, matching in cases:
+                    for negate in (False, True):
+                        with self.subTest(field=field, member=member, negate=negate):
+                            q = _has_member(field, member, negate)
+                            rows = [i for i in range(3) if (i in matching) != negate]
+                            expected = sorted(ids[i] for i in rows)
+                            self.assertEqual(sorted(db.search(q)), expected)
+                            s = q.to_search_structure()
+                            by_field_search = sorted(
+                                d.id()
+                                for d in docs
+                                if field_search(d.document_properties, s)
+                            )
+                            self.assertEqual(by_field_search, expected)
+            finally:
+                db._close_db()
 
     def test_struct_field(self):
         # A struct (base) has no members: its fields are not searched
