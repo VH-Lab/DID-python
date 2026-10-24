@@ -330,6 +330,14 @@ functions:
       holds a non-struct value (depends_on = [] read back from a database)
       used to return early, skipping the negation; it now matches. Python's
       field_search already negated it; nothing to port.
+      DID-matlab#236 (2026-10-24, no change to fieldsearch.m): hasmember on a
+      scalar value -- a number read back from JSON -- raised TypeError in
+      field_search (5 in 5) and so never matched, where MATLAB's
+      ismember(5, 5) does. field_search now compares a scalar with ==.
+      Remaining deviation: for a text value MATLAB's ismember tests each
+      character of param1 for membership in the value, Python's `in` tests
+      for a substring; tests/test_hasmember_quoting.py uses values on which
+      the two agree.
 
   - name: orOperands
     type: function

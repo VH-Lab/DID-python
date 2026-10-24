@@ -1,0 +1,182 @@
+"""'hasmember' never reads its value as SQL (DID-matlab#236).
+
+DID-matlab's SQL search put a text 'hasmember' value into the SQL unquoted, so
+'value' matched every document and '1 OR 1=1' was SQL injection. Python never
+builds SQL for hasmember -- _query_struct_to_sql_str returns None, and the term
+is brute-forced with field_search -- so it was never affected. These tests pin
+the cases of DID-matlab's did.unittest.TestHasMemberQuoting: text values
+(including 'value', '1 OR 1=1' and values holding " and '), numbers and
+~hasmember, alone, inside an AND and inside an OR, compared with field_search
+and with the documents DID-matlab finds.
+"""
+
+import os
+import tempfile
+import unittest
+import uuid
+
+from did.datastructures import field_search
+from did.document import Document
+from did.implementations.sqlitedb import SQLiteDB
+from did.query import Query
+
+NAMES = ["value", "1 OR 1=1", 'say "hi"', "x, value", "alpha", "n7", "O'Brien"]
+
+
+# The documents DID-matlab finds for each text value
+TEXT_CASES = {
+    "value": ("value", "x, value"),
+    "1 OR 1=1": ("1 OR 1=1",),
+    'say "hi"': ('say "hi"',),
+    "O'Brien": ("O'Brien",),
+    "x, value": ("x, value",),
+    "name17": (),
+    "zzz": (),
+}
+
+
+def _doc(name, value):
+    return Document(
+        {
+            "base": {
+                "id": uuid.uuid4().hex,
+                "session_id": "s1",
+                "name": name,
+                "datestamp": "2026-10-24T00:00:00.000Z",
+            },
+            "document_class": {
+                "class_name": "demoA",
+                "superclasses": [{"class_name": "base"}],
+            },
+            "depends_on": [],
+            "demoA": {"value": value},
+        }
+    )
+
+
+def _has_member(field, value, negate=False):
+    return Query(field, ("~" if negate else "") + "hasmember", value)
+
+
+def _or_of(queries):
+    q = queries[0]
+    for other in queries[1:]:
+        q = q | other
+    return q
+
+
+class TestHasMemberQuoting(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmpdir = tempfile.TemporaryDirectory()
+        cls.db = SQLiteDB(os.path.join(cls.tmpdir.name, "hasmember.sqlite"))
+        cls.db.add_branch("a")
+        cls.docs = [_doc(name, i) for i, name in enumerate(NAMES, 1)]
+        cls.ids = [d.id() for d in cls.docs]
+        cls.db.add_docs(cls.docs, branch_id="a", validate=False)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db._close_db()
+        cls.tmpdir.cleanup()
+
+    def expected(self, query):
+        s = query.to_search_structure()
+        return sorted(
+            d.id() for d in self.docs if field_search(d.document_properties, s)
+        )
+
+    def verify_search(self, query, ids, msg):
+        found = sorted(self.db.search(query))
+        self.assertEqual(found, self.expected(query), f"{msg}: vs. field_search")
+        self.assertEqual(found, sorted(ids), f"{msg}: vs. DID-matlab")
+
+    def names_matching(self, *names):
+        return [self.ids[NAMES.index(n)] for n in names]
+
+    def complement(self, ids):
+        return [i for i in self.ids if i not in ids]
+
+    def test_text(self):
+        for value, names in TEXT_CASES.items():
+            ids = self.names_matching(*names)
+            with self.subTest(value=value):
+                self.verify_search(
+                    _has_member("base.name", value), ids, f"hasmember {value!r}"
+                )
+                self.verify_search(
+                    _has_member("base.name", value, True),
+                    self.complement(ids),
+                    f"~hasmember {value!r}",
+                )
+
+    def test_number(self):
+        for value in (3, 5, 99):
+            ids = [self.ids[value - 1]] if value <= len(NAMES) else []
+            with self.subTest(value=value):
+                self.verify_search(
+                    _has_member("demoA.value", value), ids, f"hasmember {value}"
+                )
+                self.verify_search(
+                    _has_member("demoA.value", value, True),
+                    self.complement(ids),
+                    f"~hasmember {value}",
+                )
+
+    def test_in_an_and(self):
+        every_doc = Query("demoA.value", "lessthan", 100)
+        for value, names in TEXT_CASES.items():
+            ids = self.names_matching(*names)
+            with self.subTest(value=value):
+                self.verify_search(
+                    every_doc & _has_member("base.name", value),
+                    ids,
+                    f"... AND hasmember {value!r}",
+                )
+                self.verify_search(
+                    every_doc & _has_member("base.name", value, True),
+                    self.complement(ids),
+                    f"... AND ~hasmember {value!r}",
+                )
+        self.verify_search(
+            every_doc & _has_member("demoA.value", 5), [self.ids[4]], "... AND 5"
+        )
+
+    def test_in_an_or(self):
+        terms = [
+            (
+                _has_member("base.name", "value"),
+                self.names_matching("value", "x, value"),
+            ),
+            (_has_member("base.name", "1 OR 1=1"), self.names_matching("1 OR 1=1")),
+            (_has_member("base.name", 'say "hi"'), self.names_matching('say "hi"')),
+            (
+                _has_member("base.name", "O'Brien", True),
+                self.complement(self.names_matching("O'Brien")),
+            ),
+            (_has_member("demoA.value", 6), [self.ids[5]]),
+            (_has_member("demoA.value", 2, True), self.complement([self.ids[1]])),
+        ]
+        alpha = Query("base.name", "exact_string", "alpha")
+        for k, (q, ids) in enumerate(terms):
+            other, other_ids = terms[(k + 1) % len(terms)]
+            with self.subTest(term=k):
+                self.verify_search(
+                    q | alpha,
+                    sorted(set(ids) | set(self.names_matching("alpha"))),
+                    "... OR alpha",
+                )
+                self.verify_search(
+                    q | other, sorted(set(ids) | set(other_ids)), "... OR hasmember"
+                )
+        everything = sorted(set().union(*(ids for _, ids in terms)))
+        self.verify_search(_or_of([q for q, _ in terms]), everything, "an OR of all")
+        self.verify_search(
+            Query("demoA.value", "lessthan", 100) & _or_of([q for q, _ in terms]),
+            everything,
+            "... AND an OR of all",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
