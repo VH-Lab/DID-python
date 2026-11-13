@@ -188,6 +188,13 @@ class Database(abc.ABC):
     #: ``did.database.add_docs`` ``OnDuplicate {mustBeMember(...)} = 'error'``.
     _ON_DUPLICATE_CHOICES = ("ignore", "warn", "error")
 
+    #: Allowed values for the ``OnDeletedId`` option of ``add_docs``:
+    #: ``"error"`` refuses a retired document id (one removed from every
+    #: branch); ``"restore"`` un-retires it and adds the document. Use
+    #: ``"restore"`` only for the same document coming back, never to give an
+    #: old id to a new document (VH-Lab/NDI-matlab#1238).
+    _ON_DELETED_ID_CHOICES = ("error", "restore")
+
     def add_docs(
         self,
         document_objs,
@@ -195,9 +202,15 @@ class Database(abc.ABC):
         validate=True,
         OnDuplicate="error",
         custom_file_handler=None,
+        OnDeletedId="error",
         **kwargs,
     ):
         """Add documents to a branch.
+
+        ``OnDeletedId`` mirrors MATLAB's name-value argument of the same name:
+        ``"error"`` (default) refuses a document whose id was retired by an
+        earlier removal from every branch; ``"restore"`` un-retires the id and
+        adds the document, for the same document being restored.
 
         ``custom_file_handler`` mirrors MATLAB's ``customFileHandler``
         name-value argument: a callable used to retrieve a file whose location
@@ -225,6 +238,16 @@ class Database(abc.ABC):
                 "OnDuplicate must be one of "
                 f"{self._ON_DUPLICATE_CHOICES}; got {OnDuplicate!r}."
             )
+
+        if str(OnDeletedId).lower() not in self._ON_DELETED_ID_CHOICES:
+            raise ValueError(
+                "OnDeletedId must be one of "
+                f"{self._ON_DELETED_ID_CHOICES}; got {OnDeletedId!r}."
+            )
+        # Passed on only when not the default, so a _do_add_doc written
+        # before the option existed keeps working for every other caller.
+        if str(OnDeletedId).lower() != "error":
+            kwargs["OnDeletedId"] = OnDeletedId
 
         # Ensure all input docs pass schema validation (unless requested not to)
         if validate:

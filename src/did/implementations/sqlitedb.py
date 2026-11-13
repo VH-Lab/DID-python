@@ -1313,6 +1313,7 @@ class SQLiteDB(Database):
         branch_id,
         OnDuplicate="error",
         custom_file_handler=None,
+        OnDeletedId="error",
         **kwargs,
     ):
         import json
@@ -1323,6 +1324,12 @@ class SQLiteDB(Database):
             raise ValueError(
                 "OnDuplicate must be one of "
                 f"{self._ON_DUPLICATE_CHOICES}; got {OnDuplicate!r}."
+            )
+        on_deleted = str(OnDeletedId).lower()
+        if on_deleted not in self._ON_DELETED_ID_CHOICES:
+            raise ValueError(
+                "OnDeletedId must be one of "
+                f"{self._ON_DELETED_ID_CHOICES}; got {OnDeletedId!r}."
             )
 
         doc_id = document_obj.id()
@@ -1351,12 +1358,23 @@ class SQLiteDB(Database):
         # they must not be re-used under DID's branch model, and because both
         # languages have to agree about whether this is legal on a database
         # file they share.
+        #
+        # OnDeletedId="restore" is the exception, for the SAME document
+        # coming back (NDI re-downloading from the cloud a document deleted
+        # locally, VH-Lab/NDI-matlab#1238). The id is un-retired inside the
+        # try block below, so a failure rolls that back with everything else.
+        restore_deleted_id = False
         if self._is_deleted_doc_id(cursor, doc_id):
-            raise ValueError(
-                f"Cannot add document '{doc_id}' - a document with this id was "
-                f"previously removed from every branch. Document ids are never "
-                f"re-used; generate a new id for a new document."
-            )
+            if on_deleted == "restore":
+                restore_deleted_id = True
+            else:
+                raise ValueError(
+                    f"Cannot add document '{doc_id}' - a document with this id was "
+                    f"previously removed from every branch. Document ids are never "
+                    f"re-used; generate a new id for a new document, or pass "
+                    f"OnDeletedId='restore' if this is the same document being "
+                    f"restored."
+                )
 
         # Snapshot the fields cache so a rollback also unwinds any field_idx
         # entries _populate_doc_data added for fields whose INSERTs get rolled
@@ -1365,6 +1383,8 @@ class SQLiteDB(Database):
         cache_before = dict(self._fields_cache)
 
         try:
+            if restore_deleted_id:
+                cursor.execute("DELETE FROM deleted_docs WHERE doc_id = ?", (doc_id,))
             cursor.execute("SELECT doc_idx FROM docs WHERE doc_id = ?", (doc_id,))
             row = cursor.fetchone()
 
