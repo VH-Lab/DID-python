@@ -144,6 +144,51 @@ class TestDocumentReclamation(unittest.TestCase):
             self.db._do_add_doc(doc, "a")
         self.assertIn("previously removed", str(caught.exception))
 
+    def test_removed_doc_can_be_restored_on_request(self):
+        """VH-Lab/NDI-matlab#1238: the same document coming back is let in."""
+        doc = Document("demoA", **{"demoA.value": 1})
+        self.db.add_docs([doc], "a")
+        self.db.remove_docs(doc.id(), "a")
+
+        self.db.add_docs([doc], "a", OnDeletedId="restore")
+        self.assertIn(doc.id(), self.db.get_doc_ids("a"))
+        self.assertFalse(
+            self.query("SELECT doc_id FROM deleted_docs WHERE doc_id = ?", (doc.id(),)),
+            "restoring the document must un-retire its id",
+        )
+
+        # Removed again, it is retired again, and the default still refuses
+        self.db.remove_docs(doc.id(), "a")
+        with self.assertRaises(ValueError):
+            self.db.add_docs([doc], "a")
+
+    def test_failed_restore_leaves_id_retired(self):
+        """The un-retirement rolls back with the rest of a failed add."""
+        doc = Document("demoA", **{"demoA.value": 1})
+        self.db.add_docs([doc], "a")
+        self.db.remove_docs(doc.id(), "a")
+
+        def fail(*args, **kwargs):
+            raise RuntimeError("injected failure")
+
+        original = self.db._populate_doc_data
+        self.db._populate_doc_data = fail
+        try:
+            with self.assertRaises(RuntimeError):
+                self.db.add_docs([doc], "a", OnDeletedId="restore")
+        finally:
+            self.db._populate_doc_data = original
+        self.assertTrue(
+            self.query("SELECT doc_id FROM deleted_docs WHERE doc_id = ?", (doc.id(),)),
+            "a restore that fails must leave the id retired",
+        )
+
+    def test_invalid_on_deleted_id_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.db.add_docs(
+                [Document("demoA", **{"demoA.value": 1})], "a", OnDeletedId="bogus"
+            )
+
     def test_retirement_survives_reopening_the_file(self):
         """The id is retired in the database, not just in memory."""
         doc = Document("demoA")
